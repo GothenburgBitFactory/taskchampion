@@ -1,0 +1,348 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>TaskChampion</title>
+        
+        <meta name="robots" content="noindex" />
+        
+        
+
+
+        <!-- Custom HTML head -->
+        
+
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        
+        <link rel="icon" href="favicon.svg">
+        
+        
+        <link rel="shortcut icon" href="favicon.png">
+        
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        
+        <link rel="stylesheet" href="css/print.css" media="print">
+        
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        
+        <link rel="stylesheet" href="fonts/fonts.css">
+        
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+
+        
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="spacer"></li><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">3.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">3.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">3.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">3.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">4.1.</strong> Planned Functionality</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        
+                    </div>
+
+                    <h1 class="menu-title">TaskChampion</h1>
+
+                    <div class="right-buttons">
+                        
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        
+                        
+                    </div>
+                </div>
+
+                
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1><a class="header" href="#installation" id="installation">Installation</a></h1>
+<p>As this is currently in development, installation is by cloning the repository and running &quot;cargo build&quot;.</p>
+<h1><a class="header" href="#usage" id="usage">Usage</a></h1>
+<p>The main interface to your tasks is the <code>task</code> command, which supports various subcommands.
+You can find a quick list of all subcommands with <code>task help</code>.</p>
+<h1><a class="header" href="#data-model" id="data-model">Data Model</a></h1>
+<p>A client manages a single offline instance of a single user's task list, called a replica.
+This section covers the structure of that data.
+Note that this data model is visible only on the client; the server does not have access to client data.</p>
+<h1><a class="header" href="#replica-storage" id="replica-storage">Replica Storage</a></h1>
+<p>Each replica has a storage backend.
+The interface for this backend is given in <code>crate::taskstorage::TaskStorage</code> and <code>TaskStorageTxn</code>.</p>
+<p>The storage is transaction-protected, with the expectation of a serializable isolation level.
+The storage contains the following information:</p>
+<ul>
+<li><code>tasks</code>: a set of tasks, indexed by UUID</li>
+<li><code>base_version</code>: the number of the last version sync'd from the server (a single integer)</li>
+<li><code>operations</code>: all operations performed since base_version</li>
+<li><code>working_set</code>: a mapping from integer -&gt; UUID, used to keep stable small-integer indexes into the tasks for users' convenience.  This data is not synchronized with the server and does not affect any consistency guarantees.</li>
+</ul>
+<h2><a class="header" href="#tasks" id="tasks">Tasks</a></h2>
+<p>The tasks are stored as an un-ordered collection, keyed by task UUID.
+Each task in the database has represented by a key-value map.
+See <a href="./tasks.html">Tasks</a> for details on the content of that map.</p>
+<h2><a class="header" href="#operations" id="operations">Operations</a></h2>
+<p>Every change to the task database is captured as an operation.
+In other words, operations act as deltas between database states.
+Operations are crucial to synchronization of replicas, using a technique known as Operational Transforms.</p>
+<p>Each operation has one of the forms </p>
+<ul>
+<li><code>Create(uuid)</code></li>
+<li><code>Delete(uuid)</code></li>
+<li><code>Update(uuid, property, value, timestamp)</code></li>
+</ul>
+<p>The Create form creates a new task.
+It is invalid to create a task that already exists.</p>
+<p>Similarly, the Delete form deletes an existing task.
+It is invalid to delete a task that does not exist.</p>
+<p>The Update form updates the given property of the given task, where property and value are both strings.
+Value can also be <code>None</code> to indicate deletion of a property.
+It is invalid to update a task that does not exist.
+The timestamp on updates serves as additional metadata and is used to resolve conflicts.</p>
+<h1><a class="header" href="#task-database" id="task-database">Task Database</a></h1>
+<p>The task database is a layer of abstraction above the replica storage layer, responsible for maintaining some important invariants.
+While the storage is pluggable, there is only one implementation of the task database.</p>
+<h2><a class="header" href="#reading-data" id="reading-data">Reading Data</a></h2>
+<p>The task database provides read access to the data in the replica's storage through a variety of methods on the struct.
+Each read operation is executed in a transaction, so data may not be consistent between read operations.
+In practice, this is not an issue for TaskChampion's purposes.</p>
+<h2><a class="header" href="#working-set" id="working-set">Working Set</a></h2>
+<p>The task database maintains the working set.
+The working set maps small integers to current tasks, for easy reference by command-line users.
+This is done in such a way that the task numbers remain stable until the working set is rebuilt, at which point gaps in the numbering, such as for completed tasks, are removed by shifting all higher-numbered tasks downward.</p>
+<p>The working set is not replicated, and is not considered a part of any consistency guarantees in the task database.</p>
+<h2><a class="header" href="#modifying-data" id="modifying-data">Modifying Data</a></h2>
+<p>Modifications to the data set are made by applying operations.
+Operations are described in <a href="./storage.html">Replica Storage</a>.</p>
+<p>Each operation is added to the list of operations in the storage, and simultaneously applied to the tasks in that storage.
+Operations are checked for validity as they are applied.</p>
+<h1><a class="header" href="#tasks-1" id="tasks-1">Tasks</a></h1>
+<p>Tasks are stored internally as a key/value map with string keys and values.
+All fields are optional: the <code>Create</code> operation creates an empty task.
+Display layers should apply appropriate defaults where necessary.</p>
+<h2><a class="header" href="#atomicity" id="atomicity">Atomicity</a></h2>
+<p>The synchronization process does not support read-modify-write operations.
+For example, suppose tags are updated by reading a list of tags, adding a tag, and writing the result back.
+This would be captured as an <code>Update</code> operation containing the amended list of tags.
+Suppose two such <code>Update</code> operations are made in different replicas and must be reconciled:</p>
+<ul>
+<li><code>Update(&quot;d394be59-60e6-499e-b7e7-ca0142648409&quot;, &quot;tags&quot;, &quot;oldtag,newtag1&quot;, &quot;2020-11-23T14:21:22Z&quot;)</code></li>
+<li><code>Update(&quot;d394be59-60e6-499e-b7e7-ca0142648409&quot;, &quot;tags&quot;, &quot;oldtag,newtag2&quot;, &quot;2020-11-23T15:08:57Z&quot;)</code></li>
+</ul>
+<p>The result of this reconciliation will be <code>oldtag,newtag2</code>, while the user almost certainly intended <code>oldtag,newtag1,newtag2</code>.</p>
+<p>The key names given below avoid this issue, allowing user updates such as adding a tag or deleting a dependency to be represented in a single <code>Update</code> operation.</p>
+<h2><a class="header" href="#representations" id="representations">Representations</a></h2>
+<p>Integers are stored in decimal notation.</p>
+<p>Timestamps are stored as UNIX epoch timestamps, in the form of an integer.</p>
+<h2><a class="header" href="#keys" id="keys">Keys</a></h2>
+<p>The following keys, and key formats, are defined:</p>
+<ul>
+<li><code>status</code> - one of <code>P</code> for a pending task (the default), <code>C</code> for completed or <code>D</code> for deleted</li>
+<li><code>description</code> - the one-line summary of the task</li>
+<li><code>modified</code> - the time of the last modification of this task</li>
+</ul>
+<p>The following are not yet implemented:</p>
+<ul>
+<li><code>dep.&lt;uuid&gt;</code> - indicates this task depends on <code>&lt;uuid&gt;</code> (value is an empty string)</li>
+<li><code>tag.&lt;tag&gt;</code> - indicates this task has tag <code>&lt;tag&gt;</code> (value is an empty string)</li>
+<li><code>annotation.&lt;timestamp&gt;</code> - value is an annotation created at the given time</li>
+</ul>
+<h1><a class="header" href="#synchronization-and-the-sync-server" id="synchronization-and-the-sync-server">Synchronization and the Sync Server</a></h1>
+<p>This section covers <em>synchronization</em> of <em>replicas</em> containing the same set of tasks.
+A replica is can perform all operations locally without connecting to a sync server, then share those operations with other replicas when it connects.
+Sync is a critical feature of TaskChampion, allowing users to consult and update the same task list on multiple devices, without requiring constant connection.</p>
+<p>This is a complex topic, and the section is broken into several chapters, beginning at the lower levels of the implementation and working up.</p>
+<h1><a class="header" href="#planned-functionality" id="planned-functionality">Planned Functionality</a></h1>
+<p>This section is a bit of a to-do list for additional functionality to add to the synchronzation system.
+Each feature has some discussion of how it might be implemented.</p>
+<h2><a class="header" href="#snapshots" id="snapshots">Snapshots</a></h2>
+<p>As designed, storage required on the server would grow with time, as would the time required for new clients to update to the latest version.
+As an optimization, the server also stores &quot;snapshots&quot; containing a full copy of the task database at a given version.
+Based on configurable heuristics, it may delete older operations and snapshots, as long as enough data remains for active clients to synchronize and for new clients to initialize.</p>
+<p>Since snapshots must be computed by clients, the server may &quot;request&quot; a snapshot when providing the latest version to a client.
+This request comes with a number indicating how much it 'wants&quot; the snapshot.
+Clients which can easily generate and transmit a snapshot should be generous to the server, while clients with more limited resources can wait until the server's requests are more desperate.
+The intent is, where possible, to request snapshots created on well-connected desktop clients over mobile and low-power clients.</p>
+<h2><a class="header" href="#encryption-and-signing" id="encryption-and-signing">Encryption and Signing</a></h2>
+<p>From the server's perspective, all data except for version numbers are opaque binary blobs.
+Clients encrypt and sign these blobs using a symmetric key known only to the clients.
+This secures the data at-rest on the server.
+Note that privacy is not complete, as the server still has some information about users, including source and frequency of synchronization transactions and size of those transactions.</p>
+<h2><a class="header" href="#backups" id="backups">Backups</a></h2>
+<p>In this design, the server is little more than an authenticated storage for encrypted blobs provided by the client.
+To allow for failure or data loss on the server, clients are expected to cache these blobs locally for a short time (a week), along with a server-provided HMAC signature.
+When data loss is detected -- such as when a client expects the server to have a version N or higher, and the server only has N-1, the client can send those blobs to the server.
+The server can validate the HMAC and, if successful, add the blobs to its datastore.</p>
+<h2><a class="header" href="#expiration" id="expiration">Expiration</a></h2>
+<p>Deleted tasks remain in the task database, and are simply hidden in most views.
+All tasks have an expiration time after which they may be flushed, preventing unbounded increase in task database size.
+However, purging of a task does not satisfy the necessary OT guarantees, so some further formal design work is required before this is implemented.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+
+                        
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+
+                
+            </nav>
+
+        </div>
+
+        
+
+        
+
+        
+
+        
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+
+        
+
+        
+        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+
+        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+
+        
+        
+        <script type="text/javascript">
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+        
+        
+
+    </body>
+</html>
