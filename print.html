@@ -97,7 +97,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="spacer"></li><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">3.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">3.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">3.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">3.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">4.1.</strong> Planned Functionality</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="spacer"></li><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">3.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">3.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">3.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">3.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">4.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">4.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">4.3.</strong> Planned Functionality</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -261,6 +261,169 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 A replica is can perform all operations locally without connecting to a sync server, then share those operations with other replicas when it connects.
 Sync is a critical feature of TaskChampion, allowing users to consult and update the same task list on multiple devices, without requiring constant connection.</p>
 <p>This is a complex topic, and the section is broken into several chapters, beginning at the lower levels of the implementation and working up.</p>
+<h1><a class="header" href="#synchronization-model" id="synchronization-model">Synchronization Model</a></h1>
+<p>The <a href="./taskdb.html">task database</a> also implements synchronization.
+Synchronization occurs between disconnected replicas, mediated by a server.
+The replicas never communicate directly with one another.
+The server does not have access to the task data; it sees only opaque blobs of data with a small amount of metadata.</p>
+<p>The synchronization process is a critical part of the task database's functionality, and it cannot function efficiently without occasional synchronization operations</p>
+<h2><a class="header" href="#operational-transforms" id="operational-transforms">Operational Transforms</a></h2>
+<p>Synchronization is based on <a href="https://en.wikipedia.org/wiki/Operational_transformation">operational transformation</a>.
+This section will assume some familiarity with the concept.</p>
+<h2><a class="header" href="#state-and-operations" id="state-and-operations">State and Operations</a></h2>
+<p>At a given time, the set of tasks in a replica's storage is the essential &quot;state&quot; of that replica.
+All modifications to that state occur via operations, as defined in <a href="./storage.html">Replica Storage</a>.
+We can draw a network, or graph, with the nodes representing states and the edges representing operations.
+For example:</p>
+<pre><code class="language-text">  o -- State: {abc-d123: 'get groceries', priority L}
+  |
+  | -- Operation: set abc-d123 priority to H
+  |
+  o -- State: {abc-d123: 'get groceries', priority H}
+</code></pre>
+<p>For those familiar with distributed version control systems, a state is analogous to a revision, while an operation is analogous to a commit.</p>
+<p>Fundamentally, synchronization involves all replicas agreeing on a single, linear sequence of operations and the state that those operations create.
+Since the replicas are not connected, each may have additional operations that have been applied locally, but which have not yet been agreed on.
+The synchronization process uses operational transformation to &quot;linearize&quot; those operations.
+This process is analogous (vaguely) to rebasing a sequence of Git commits.</p>
+<h3><a class="header" href="#versions" id="versions">Versions</a></h3>
+<p>Occasionally, database states are given a name (that takes the form of a UUID).
+The system as a whole (all replicas) constructs a branch-free sequence of versions and the operations that separate each version from the next.
+The version with the nil UUID is implicitly the empty database.</p>
+<p>The server stores the operations to change a state from a &quot;parent&quot; version to a &quot;child&quot; version, and provides that information as needed to replicas.
+Replicas use this information to update their local task databases, and to generate new versions to send to the server.</p>
+<p>Replicas generate a new version to transmit local changes to the server.
+The changes are represented as a sequence of operations with the state resulting from the final operation corresponding to the version.
+In order to keep the versions in a single sequence, the server will only accept a proposed version from a replica if its parent version matches the latest version on the server.</p>
+<p>In the non-conflict case (such as with a single replica), then, a replica's synchronization process involves gathering up the operations it has accumulated since its last synchronization; bundling those operations into a version; and sending that version to the server.</p>
+<h3><a class="header" href="#replica-invariant" id="replica-invariant">Replica Invariant</a></h3>
+<p>The replica's <a href="./storage.html">storage</a> contains the current state in <code>tasks</code>, the as-yet un-synchronized operations in <code>operations</code>, and the last version at which synchronization occurred in <code>base_version</code>.</p>
+<p>The replica's un-synchronized operations are already reflected in its local <code>tasks</code>, so the following invariant holds:</p>
+<blockquote>
+<p>Applying <code>operations</code> to the set of tasks at <code>base_version</code> gives a set of tasks identical
+to <code>tasks</code>.</p>
+</blockquote>
+<h3><a class="header" href="#transformation" id="transformation">Transformation</a></h3>
+<p>When the latest version on the server contains operations that are not present in the replica, then the states have diverged.
+For example:</p>
+<pre><code class="language-text">  o  -- version N
+ w|\a
+  o o
+ x|  \b
+  o   o
+ y|    \c
+  o     o -- replica's local state
+ z|
+  o -- version N+1
+</code></pre>
+<p>(diagram notation: <code>o</code> designates a state, lower-case letters designate operations, and versions are presented as if they were numbered sequentially)</p>
+<p>In this situation, the replica must &quot;rebase&quot; the local operations onto the latest version from the server and try again.
+This process is performed using operational transformation (OT).
+The result of this transformation is a sequence of operations based on the latest version, and a sequence of operations the replica can apply to its local task database to reach the same state
+Continuing the example above, the resulting operations are shown with <code>'</code>:</p>
+<pre><code class="language-text">  o  -- version N
+ w|\a
+  o o
+ x|  \b
+  o   o
+ y|    \c
+  o     o -- replica's intermediate local state
+ z|     |w'
+  o-N+1 o
+ a'\    |x'
+    o   o
+   b'\  |y'
+      o o
+     c'\|z'
+        o  -- version N+2
+</code></pre>
+<p>The replica applies w' through z' locally, and sends a' through c' to the server as the operations to generate version N+2.
+Either path through this graph, a-b-c-w'-x'-y'-z' or a'-b'-c'-w-x-y-z, must generate <em>precisely</em> the same final state at version N+2.
+Careful selection of the operations and the transformation function ensure this.</p>
+<p>See the comments in the source code for the details of how this transformation process is implemented.</p>
+<h2><a class="header" href="#synchronization-process" id="synchronization-process">Synchronization Process</a></h2>
+<p>To perform a synchronization, the replica first requests the child version of <code>base_version</code> from the server (GetChildVersion).
+It applies that version to its local <code>tasks</code>, rebases its local <code>operations</code> as described above, and updates <code>base_version</code>.
+The replica repeats this process until the server indicates no additional child versions exist.
+If there are no un-synchronized local operations, the process is complete.</p>
+<p>Otherwise, the replica creates a new version containing its local operations, giving its <code>base_version</code> as the parent version, and transmits that to the server (AddVersion).
+In most cases, this will succeed, but if another replica has created a new version in the interim, then the new version will conflict with that other replica's new version and the server will respond with the new expected parent version.
+In this case, the process repeats.
+If the server indicates a conflict twice with the same expected base version, that is an indication that the replica has diverged (something serious has gone wrong).</p>
+<h2><a class="header" href="#servers" id="servers">Servers</a></h2>
+<p>A replica depends on periodic synchronization for performant operation.
+Without synchronization, its list of pending operations would grow indefinitely, and tasks could never be expired.
+So all replicas, even &quot;singleton&quot; replicas which do not replicate task data with any other replica, must synchronize periodically.</p>
+<p>TaskChampion provides a <code>LocalServer</code> for this purpose.
+It implements the <code>get_child_version</code> and <code>add_version</code> operations as described, storing data on-disk locally, all within the <code>task</code> binary.</p>
+<h1><a class="header" href="#server-replica-protocol" id="server-replica-protocol">Server-Replica Protocol</a></h1>
+<p>The server-replica protocol is defined abstractly in terms of request/response transactions from the replica to the server.
+This is made concrete in an HTTP representation.</p>
+<p>The protocol builds on the model presented in the previous chapter, and in particular on the synchronization process.</p>
+<h2><a class="header" href="#clients" id="clients">Clients</a></h2>
+<p>From the server's perspective, replicas are indistinguishable, so this protocol uses the term &quot;client&quot; to refer generically to all replicas replicating a single task history.</p>
+<h2><a class="header" href="#server" id="server">Server</a></h2>
+<p>For each client, the server is responsible for storing the task history, in the form of a branch-free sequence of versions.</p>
+<p>For each client, it stores a set of versions as well as the latest version ID, defaulting to the nil UUID.
+Each version has a version ID, a parent version ID, and a history segment (opaque data containing the operations for that version).
+The server should maintain the following invariants:</p>
+<ol>
+<li>Given a client c, c.latestVersion is nil or exists in the set of versions.</li>
+<li>Given versions v1 and v2 for a client, with v1.versionId != v2.versionId and v1.parentVersionId != nil, v1.parentVersionId != v2.parentVersionId.
+In other words, versions do not branch.</li>
+</ol>
+<p>Note that versions form a linked list beginning with the version stored in he client. 
+This linked list need not continue back to a version with v.parentVersionId = nil.
+It may end at any point when v.parentVersionId is not found in the set of Versions.
+This observation allows the server to discard older versions.</p>
+<h2><a class="header" href="#transactions" id="transactions">Transactions</a></h2>
+<h3><a class="header" href="#addversion" id="addversion">AddVersion</a></h3>
+<p>The AddVersion transaction requests that the server add a new version to the client's task history.
+The request contains the following;</p>
+<ul>
+<li>parent version ID</li>
+<li>history segment</li>
+</ul>
+<p>The server determines whether the new version is acceptable, atomically with respect to other requests for the same client.
+If it has no versions for the client, it accepts the version.
+If it already has one or more versions for the client, then it accepts the version only if the given parent version ID matches its stored latest parent ID.</p>
+<p>If the version is accepted, the server generates a new version ID for it.
+The version is added to the set of versions for the client, the client's latest version ID is set to the new version ID.
+The new version ID is returned in the response to the client.</p>
+<p>If the version is not accepted, the server makes no changes, but responds to the client with a conflict indication containing the latest version ID.
+The client may then &quot;rebase&quot; its operations and try again.
+Note that if a client receives two conflict responses with the same parent version ID, it is an indication that the client's version history has diverged from that on the server.</p>
+<h3><a class="header" href="#getchildversion" id="getchildversion">GetChildVersion</a></h3>
+<p>The GetChildVersion transaction is a read-only request for a version.
+The request consists of a parent version ID.
+The server searches its set of versions for a version with the given parent ID.
+If found, it returns the version's</p>
+<ul>
+<li>version ID,</li>
+<li>parent version ID (matching that in the request), and</li>
+<li>history segment.</li>
+</ul>
+<p>If not found, the server returns a negative response.</p>
+<h2><a class="header" href="#http-representation" id="http-representation">HTTP Representation</a></h2>
+<p>The transactions above are realized for an HTTP server at <code>&lt;origin&gt;</code> using the HTTP requests and responses described here.
+The <code>origin</code> <em>should</em> be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.</p>
+<p>The replica identifies itself to the server using a <code>clientId</code> in the form of a UUID.</p>
+<h3><a class="header" href="#addversion-1" id="addversion-1">AddVersion</a></h3>
+<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/client/&lt;clientId&gt;/add-version/&lt;parentVersionId&gt;</code>.
+The request body contains the history segment, optionally encoded using any encoding supported by actix-web.
+The content-type must be <code>application/vnd.taskchampion.history-segment</code>.</p>
+<p>The success response is a 200 OK with an empty body.
+The new version ID appears in the <code>X-Version-Id</code> header.</p>
+<p>On conflict, the response is a 409 CONFLICT with an empty body.
+The expected parent version ID appears in the <code>X-Parent-Version-Id</code> header.</p>
+<p>Other error responses (4xx or 5xx) may be returned and should be treated appropriately to their meanings in the HTTP specification.</p>
+<h3><a class="header" href="#getchildversion-1" id="getchildversion-1">GetChildVersion</a></h3>
+<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/client/&lt;clientId&gt;/get-child-version/&lt;parentVersionId&gt;</code>.
+The response is 404 NOT FOUND if no such version exists.
+Otherwise, the response is a 200 OK.
+The version's history segment is returned in the response body, with content-type <code>application/vnd.taskchampion.history-segment</code>.
+The version ID appears in the <code>X-Version-Id</code> header.
+The response body may be encoded, in accordance with any <code>Accept-Encoding</code> header in the request.</p>
 <h1><a class="header" href="#planned-functionality" id="planned-functionality">Planned Functionality</a></h1>
 <p>This section is a bit of a to-do list for additional functionality to add to the synchronzation system.
 Each feature has some discussion of how it might be implemented.</p>
