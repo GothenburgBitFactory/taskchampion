@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">1.2.</strong> Usage</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html" class="active"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.1.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.1.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.1.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.1.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.1.4.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.2.</strong> Running the Sync Server</a></li><li class="chapter-item expanded "><a href="debugging.html"><strong aria-hidden="true">1.3.</strong> Debugging</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html" class="active"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -169,6 +169,7 @@ This is made concrete in an HTTP representation.</p>
 <p>The protocol builds on the model presented in the previous chapter, and in particular on the synchronization process.</p>
 <h2><a class="header" href="#clients" id="clients">Clients</a></h2>
 <p>From the server's perspective, replicas are indistinguishable, so this protocol uses the term &quot;client&quot; to refer generically to all replicas replicating a single task history.</p>
+<p>Each client is identified and authenticated with a &quot;client key&quot;, known only to the server and to the replicas replicating the task history.</p>
 <h2><a class="header" href="#server" id="server">Server</a></h2>
 <p>For each client, the server is responsible for storing the task history, in the form of a branch-free sequence of versions.</p>
 <p>For each client, it stores a set of versions as well as the latest version ID, defaulting to the nil UUID.
@@ -214,9 +215,10 @@ If found, it returns the version's</p>
 <h2><a class="header" href="#http-representation" id="http-representation">HTTP Representation</a></h2>
 <p>The transactions above are realized for an HTTP server at <code>&lt;origin&gt;</code> using the HTTP requests and responses described here.
 The <code>origin</code> <em>should</em> be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.</p>
-<p>The replica identifies itself to the server using a <code>clientId</code> in the form of a UUID.</p>
+<p>The replica identifies itself to the server using a <code>clientKey</code> in the form of a UUID.
+This value is passed with every request in the <code>X-Client-Id</code> header, in its dashed-hex format.</p>
 <h3><a class="header" href="#addversion-1" id="addversion-1">AddVersion</a></h3>
-<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/client/&lt;clientId&gt;/add-version/&lt;parentVersionId&gt;</code>.
+<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/client/add-version/&lt;parentVersionId&gt;</code>.
 The request body contains the history segment, optionally encoded using any encoding supported by actix-web.
 The content-type must be <code>application/vnd.taskchampion.history-segment</code>.</p>
 <p>The success response is a 200 OK with an empty body.
@@ -225,7 +227,7 @@ The new version ID appears in the <code>X-Version-Id</code> header.</p>
 The expected parent version ID appears in the <code>X-Parent-Version-Id</code> header.</p>
 <p>Other error responses (4xx or 5xx) may be returned and should be treated appropriately to their meanings in the HTTP specification.</p>
 <h3><a class="header" href="#getchildversion-1" id="getchildversion-1">GetChildVersion</a></h3>
-<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/client/&lt;clientId&gt;/get-child-version/&lt;parentVersionId&gt;</code>.
+<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/client/get-child-version/&lt;parentVersionId&gt;</code>.
 The response is 404 NOT FOUND if no such version exists.
 Otherwise, the response is a 200 OK.
 The version's history segment is returned in the response body, with content-type <code>application/vnd.taskchampion.history-segment</code>.

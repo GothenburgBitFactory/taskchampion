@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Usage - TaskChampion</title>
+        <title>Reports - TaskChampion</title>
         
         
 
@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="usage.html" class="active"><strong aria-hidden="true">1.2.</strong> Usage</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.1.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.1.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html" class="active"><strong aria-hidden="true">1.1.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.1.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.1.4.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.2.</strong> Running the Sync Server</a></li><li class="chapter-item expanded "><a href="debugging.html"><strong aria-hidden="true">1.3.</strong> Debugging</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -163,49 +163,78 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1><a class="header" href="#usage" id="usage">Usage</a></h1>
-<h2><a class="header" href="#task" id="task"><code>task</code></a></h2>
-<p>The main interface to your tasks is the <code>task</code> command, which supports various subcommands.
-You can find a quick list of all subcommands with <code>task help</code>.</p>
-<p>Note that the <code>task</code> interface does not match that of TaskWarrior.</p>
-<h3><a class="header" href="#configuration" id="configuration">Configuration</a></h3>
-<p>The <code>task</code> command will work out-of-the-box with no configuration file, using default values.</p>
-<p>Configuration is read from <code>taskchampion.yaml</code> in your config directory.
-On Linux systems, that directory is <code>~/.config</code>.
-On OS X, it's <code>~/Library/Preferences</code>.
-On Windows, it's <code>AppData/Roaming</code> in your home directory.
-The path can be overridden by setting <code>$TASKCHAMPION_CONFIG</code>.</p>
-<p>Individual configuration parameters can be overridden by environemnt variables, converted to upper-case and prefixed with <code>TASKCHAMPION_</code>, e.g., <code>TASKCHAMPION_DATA_DIR</code>.
-Nested configuration parameters cannot be overridden by environment variables.</p>
-<p>The following configuration parameters are available:</p>
-<ul>
-<li><code>data_dir</code> - path to a directory containing the replica's task data (which will be created if necessary).
-Default: <code>taskchampion</code> in the local data directory</li>
-<li><code>server_origin</code> - Origin of the taskchampion sync server, e.g., <code>https://taskchampion.example.com</code></li>
-<li><code>server_client_id</code> -  Client ID to identify this replica to the sync server (a UUID)</li>
-</ul>
-<h2><a class="header" href="#taskchampion-sync-server" id="taskchampion-sync-server"><code>taskchampion-sync-server</code></a></h2>
-<p>Run <code>taskchampion-sync-server</code> to start the sync server.
-Use <code>--port</code> to specify the port it should listen on, and <code>--data-dir</code> to specify the directory which it should store its data.
-It only serves HTTP; the expectation is that a frontend proxy will be used for HTTPS support.</p>
-<h2><a class="header" href="#debugging" id="debugging">Debugging</a></h2>
-<p>Both <code>task</code> and <code>taskchampio-sync-server</code> use <a href="https://docs.rs/env_logger">env-logger</a> and can be configured to log at various levels with the <code>RUST_LOG</code> environment variable.
-For example:</p>
-<pre><code class="language-shell">$ RUST_LOG=taskchampion=trace task add foo
+                        <h1><a class="header" href="#reports" id="reports">Reports</a></h1>
+<p>As a to-do list manager, listing tasks is an important TaskChampion feature.
+Reports are tabular displays of tasks, and allow very flexible filtering, sorting, and customization of columns.</p>
+<p>TaskChampion includes several &quot;built-in&quot; reports, as well as supporting custom reports in the <a href="./config-file.html">configuration file</a>.</p>
+<h2><a class="header" href="#built-in-reports" id="built-in-reports">Built-In Reports</a></h2>
+<p>The <code>next</code> report is the default, and lists all pending tasks:</p>
+<pre><code class="language-text">$ task
+Id Description              Active Tags              
+1  learn about TaskChampion        +next
+2  buy wedding gift         *      +buy
 </code></pre>
+<p>The <code>Id</code> column contains short numeric IDs that are assigned to pending tasks.
+These IDs are easy to type, such as to mark task 2 done (<code>task 2 done</code>).</p>
+<p>The <code>list</code> report lists all tasks, with a similar set of columns.</p>
+<h2><a class="header" href="#custom-reports" id="custom-reports">Custom Reports</a></h2>
+<p>Custom reports are defined in the configuration file's <code>reports</code> property.
+This is a mapping from each report's name to its definition.
+Each definition has the following properties:</p>
+<ul>
+<li><code>filter</code> - criteria for the tasks to include in the report</li>
+<li><code>sort</code> - how to order the tasks</li>
+<li><code>columns</code> - the columns of information to display for each task</li>
+</ul>
+<p>The filter is a list of filter arguments, just like those that can be used on the command line.
+See the <code>task help</code> output for more details on this syntax.
+For example:</p>
+<pre><code class="language-yaml">reports:
+  garden:
+    filter:
+      - &quot;status:pending&quot;
+      - &quot;+garden&quot;
+</code></pre>
+<p>The sort order is defined by an array of objects containing a <code>sort_by</code> property and an optional <code>ascending</code> property.
+Tasks are compared by the first criterion, and if that is equal by the second, and so on.
+For example:</p>
+<pre><code class="language-yaml">reports:
+  garden:
+    sort:
+      - sort_by: description
+      - sort_by: uuid
+        ascending: false
+</code></pre>
+<p>If <code>ascending</code> is given, it can be <code>true</code> for the default sort order, or <code>false</code> for the reverse.</p>
+<p>The available values of <code>sort_by</code> are</p>
+<p>(TODO: generate automatically)</p>
+<p>Finally, the configuration specifies the list of columns to display in the <code>columns</code> property.
+Each element has a <code>label</code> and a <code>property</code>:</p>
+<pre><code class="language-yaml">reports:
+    garden:
+        columns:
+          - label: Id
+            property: id
+          - label: Description
+            property: description
+          - label: Tags
+            property: tags
+</code></pre>
+<p>The avaliable properties are:</p>
+<p>(TODO: generate automatically)</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
-                            <a rel="prev" href="installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="config-file.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
                         
 
                         
-                            <a rel="next" href="internals.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="tags.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -217,13 +246,13 @@ For example:</p>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
-                    <a rel="prev" href="installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="config-file.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
                 
 
                 
-                    <a rel="next" href="internals.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="tags.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 
