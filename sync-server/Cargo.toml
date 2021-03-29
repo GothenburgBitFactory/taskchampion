@@ -12,7 +12,7 @@ actix-web = "^3.3.0"
 anyhow = "1.0"
 futures = "^0.3.8"
 serde = "^1.0.125"
-kv = {version = "^0.10.0", features = ["msgpack-value"]}
+kv = {version = "^0.22.0", features = ["msgpack-value"]}
 clap = "^2.33.0"
 log = "^0.4.14"
 env_logger = "^0.8.3"
