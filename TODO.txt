@@ -1,0 +1,10 @@
+* signin as separate operation
+* does this prohibit "migrating" a local sync to remote, since we can't
+  create items with a preselected uid?  or can we? or can they be looked up by
+  name?
+* change server API to use VersionId = String (WIP)
+
+Testing
+* Integration Tests
+  - take an account as input, do nothing if not specified
+  - set up a local instance and run it in worker
