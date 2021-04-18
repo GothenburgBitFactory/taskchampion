@@ -1,10 +1,8 @@
-use uuid::Uuid;
-
-/// Versions are referred to with sha2 hashes.
-pub type VersionId = Uuid;
+/// Versions are referred to via opaque strings
+pub type VersionId = String;
 
 /// The distinguished value for "no version"
-pub const NO_VERSION_ID: VersionId = Uuid::nil();
+pub const NO_VERSION_ID: VersionId = String::new();
 
 /// A segment in the history of this task database, in the form of a sequence of operations.  This
 /// data is pre-encoded, and from the protocol level appears as a sequence of bytes.

@@ -2,7 +2,6 @@ use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, VersionId, NO_VERSION_ID,
 };
 use std::collections::HashMap;
-use uuid::Uuid;
 
 struct Version {
     version_id: VersionId,
@@ -47,7 +46,7 @@ impl Server for TestServer {
         }
 
         // invent a new ID for this version
-        let version_id = Uuid::new_v4();
+        let version_id = format!("{}-child", parent_version_id);
 
         self.versions.insert(
             parent_version_id,

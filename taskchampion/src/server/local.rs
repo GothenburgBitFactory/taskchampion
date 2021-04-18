@@ -1,7 +1,6 @@
 use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, VersionId, NO_VERSION_ID,
 };
-use crate::utils::Key;
 use kv::msgpack::Msgpack;
 use kv::{Bucket, Config, Error, Integer, Serde, Store, ValueBuf};
 use serde::{Deserialize, Serialize};
@@ -18,8 +17,8 @@ struct Version {
 pub struct LocalServer<'t> {
     store: Store,
     // NOTE: indexed by parent_version_id!
-    versions_bucket: Bucket<'t, Key, ValueBuf<Msgpack<Version>>>,
-    latest_version_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<Uuid>>>,
+    versions_bucket: Bucket<'t, VersionId, ValueBuf<Msgpack<Version>>>,
+    latest_version_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<VersionId>>>,
 }
 
 impl<'t> LocalServer<'t> {
@@ -34,11 +33,12 @@ impl<'t> LocalServer<'t> {
         let store = Store::new(config)?;
 
         // versions are stored indexed by VersionId (uuid)
-        let versions_bucket = store.bucket::<Key, ValueBuf<Msgpack<Version>>>(Some("versions"))?;
+        let versions_bucket =
+            store.bucket::<VersionId, ValueBuf<Msgpack<Version>>>(Some("versions"))?;
 
         // this bucket contains the latest version at key 0
         let latest_version_bucket =
-            store.int_bucket::<ValueBuf<Msgpack<Uuid>>>(Some("latest_version"))?;
+            store.int_bucket::<ValueBuf<Msgpack<VersionId>>>(Some("latest_version"))?;
 
         Ok(LocalServer {
             store,
@@ -64,7 +64,7 @@ impl<'t> LocalServer<'t> {
         txn.set(
             &self.latest_version_bucket,
             0.into(),
-            Msgpack::to_value_buf(version_id as Uuid)?,
+            Msgpack::to_value_buf(version_id as VersionId)?,
         )?;
         txn.commit()?;
         Ok(())
@@ -76,7 +76,7 @@ impl<'t> LocalServer<'t> {
     ) -> anyhow::Result<Option<Version>> {
         let txn = self.store.read_txn()?;
 
-        let version = match txn.get(&self.versions_bucket, parent_version_id.into()) {
+        let version = match txn.get(&self.versions_bucket, parent_version_id) {
             Ok(buf) => buf,
             Err(Error::NotFound) => return Ok(None),
             Err(e) => return Err(e.into()),
@@ -90,7 +90,7 @@ impl<'t> LocalServer<'t> {
         let mut txn = self.store.write_txn()?;
         txn.set(
             &self.versions_bucket,
-            version.parent_version_id.into(),
+            version.parent_version_id.clone(),
             Msgpack::to_value_buf(version)?,
         )?;
         txn.commit()?;
@@ -119,14 +119,14 @@ impl<'t> Server for LocalServer<'t> {
         }
 
         // invent a new ID for this version
-        let version_id = Uuid::new_v4();
+        let version_id = Uuid::new_v4().to_string();
 
         self.add_version_by_parent_version_id(Version {
-            version_id,
+            version_id: version_id.clone(),
             parent_version_id,
             history_segment,
         })?;
-        self.set_latest_version_id(version_id)?;
+        self.set_latest_version_id(version_id.clone())?;
 
         Ok(AddVersionResult::Ok(version_id))
     }
@@ -192,7 +192,7 @@ mod test {
         let tmp_dir = TempDir::new("test")?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let history = b"1234".to_vec();
-        let parent_version_id = Uuid::new_v4() as VersionId;
+        let parent_version_id = Uuid::new_v4().to_string();
 
         // This is OK because the server has no latest_version_id yet
         match server.add_version(parent_version_id, history.clone())? {
@@ -220,7 +220,7 @@ mod test {
         let tmp_dir = TempDir::new("test")?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let history = b"1234".to_vec();
-        let parent_version_id = Uuid::new_v4() as VersionId;
+        let parent_version_id = Uuid::new_v4().to_string();
 
         // add a version
         if let AddVersionResult::ExpectedParentVersion(_) =

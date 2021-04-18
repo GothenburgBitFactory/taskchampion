@@ -10,7 +10,7 @@ pub struct KvStorage<'t> {
     store: Store,
     tasks_bucket: Bucket<'t, Key, ValueBuf<Msgpack<TaskMap>>>,
     numbers_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<u64>>>,
-    uuids_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<Uuid>>>,
+    versions_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<VersionId>>>,
     operations_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<Operation>>>,
     working_set_bucket: Bucket<'t, Integer, ValueBuf<Msgpack<Uuid>>>,
 }
@@ -24,7 +24,7 @@ impl<'t> KvStorage<'t> {
         let mut config = Config::default(directory);
         config.bucket("tasks", None);
         config.bucket("numbers", None);
-        config.bucket("uuids", None);
+        config.bucket("versions", None);
         config.bucket("operations", None);
         config.bucket("working_set", None);
         let store = Store::new(config)?;
@@ -36,7 +36,7 @@ impl<'t> KvStorage<'t> {
         let numbers_bucket = store.int_bucket::<ValueBuf<Msgpack<u64>>>(Some("numbers"))?;
 
         // this bucket contains various Uuids, indexed by constants above
-        let uuids_bucket = store.int_bucket::<ValueBuf<Msgpack<Uuid>>>(Some("uuids"))?;
+        let versions_bucket = store.int_bucket::<ValueBuf<Msgpack<VersionId>>>(Some("versions"))?;
 
         // this bucket contains operations, numbered consecutively; the NEXT_OPERATION number gives
         // the index of the next operation to insert
@@ -52,7 +52,7 @@ impl<'t> KvStorage<'t> {
             store,
             tasks_bucket,
             numbers_bucket,
-            uuids_bucket,
+            versions_bucket,
             operations_bucket,
             working_set_bucket,
         })
@@ -90,8 +90,8 @@ impl<'t> Txn<'t> {
     fn numbers_bucket(&self) -> &'t Bucket<'t, Integer, ValueBuf<Msgpack<u64>>> {
         &self.storage.numbers_bucket
     }
-    fn uuids_bucket(&self) -> &'t Bucket<'t, Integer, ValueBuf<Msgpack<Uuid>>> {
-        &self.storage.uuids_bucket
+    fn versions_bucket(&self) -> &'t Bucket<'t, Integer, ValueBuf<Msgpack<VersionId>>> {
+        &self.storage.versions_bucket
     }
     fn operations_bucket(&self) -> &'t Bucket<'t, Integer, ValueBuf<Msgpack<Operation>>> {
         &self.storage.operations_bucket
@@ -165,7 +165,7 @@ impl<'t> StorageTxn for Txn<'t> {
     }
 
     fn base_version(&mut self) -> anyhow::Result<VersionId> {
-        let bucket = self.uuids_bucket();
+        let bucket = self.versions_bucket();
         let base_version = match self.kvtxn().get(bucket, BASE_VERSION.into()) {
             Ok(buf) => buf,
             Err(Error::NotFound) => return Ok(DEFAULT_BASE_VERSION),
@@ -177,13 +177,13 @@ impl<'t> StorageTxn for Txn<'t> {
     }
 
     fn set_base_version(&mut self, version: VersionId) -> anyhow::Result<()> {
-        let uuids_bucket = self.uuids_bucket();
+        let versions_bucket = self.versions_bucket();
         let kvtxn = self.kvtxn();
 
         kvtxn.set(
-            uuids_bucket,
+            versions_bucket,
             BASE_VERSION.into(),
-            Msgpack::to_value_buf(version as Uuid)?,
+            Msgpack::to_value_buf(version as String)?,
         )?;
         Ok(())
     }
@@ -536,15 +536,15 @@ mod test {
     fn test_base_version_setting() -> anyhow::Result<()> {
         let tmp_dir = TempDir::new("test")?;
         let mut storage = KvStorage::new(&tmp_dir.path())?;
-        let u = Uuid::new_v4();
+        let v = "some-version".to_owned();
         {
             let mut txn = storage.txn()?;
-            txn.set_base_version(u)?;
+            txn.set_base_version(v)?;
             txn.commit()?;
         }
         {
             let mut txn = storage.txn()?;
-            assert_eq!(txn.base_version()?, u);
+            assert_eq!(txn.base_version()?, v);
         }
         Ok(())
     }
