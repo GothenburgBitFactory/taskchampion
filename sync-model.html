@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.1.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.1.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.1.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.1.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.1.4.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.2.</strong> Running the Sync Server</a></li><li class="chapter-item expanded "><a href="debugging.html"><strong aria-hidden="true">1.3.</strong> Debugging</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html" class="active"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.4.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li><li class="chapter-item expanded "><a href="debugging.html"><strong aria-hidden="true">1.4.</strong> Debugging</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html" class="active"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -163,16 +163,16 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1><a class="header" href="#synchronization-model" id="synchronization-model">Synchronization Model</a></h1>
+                        <h1 id="synchronization-model"><a class="header" href="#synchronization-model">Synchronization Model</a></h1>
 <p>The <a href="./taskdb.html">task database</a> also implements synchronization.
 Synchronization occurs between disconnected replicas, mediated by a server.
 The replicas never communicate directly with one another.
 The server does not have access to the task data; it sees only opaque blobs of data with a small amount of metadata.</p>
 <p>The synchronization process is a critical part of the task database's functionality, and it cannot function efficiently without occasional synchronization operations</p>
-<h2><a class="header" href="#operational-transforms" id="operational-transforms">Operational Transforms</a></h2>
+<h2 id="operational-transforms"><a class="header" href="#operational-transforms">Operational Transforms</a></h2>
 <p>Synchronization is based on <a href="https://en.wikipedia.org/wiki/Operational_transformation">operational transformation</a>.
 This section will assume some familiarity with the concept.</p>
-<h2><a class="header" href="#state-and-operations" id="state-and-operations">State and Operations</a></h2>
+<h2 id="state-and-operations"><a class="header" href="#state-and-operations">State and Operations</a></h2>
 <p>At a given time, the set of tasks in a replica's storage is the essential &quot;state&quot; of that replica.
 All modifications to that state occur via operations, as defined in <a href="./storage.html">Replica Storage</a>.
 We can draw a network, or graph, with the nodes representing states and the edges representing operations.
@@ -188,7 +188,7 @@ For example:</p>
 Since the replicas are not connected, each may have additional operations that have been applied locally, but which have not yet been agreed on.
 The synchronization process uses operational transformation to &quot;linearize&quot; those operations.
 This process is analogous (vaguely) to rebasing a sequence of Git commits.</p>
-<h3><a class="header" href="#versions" id="versions">Versions</a></h3>
+<h3 id="versions"><a class="header" href="#versions">Versions</a></h3>
 <p>Occasionally, database states are given a name (that takes the form of a UUID).
 The system as a whole (all replicas) constructs a branch-free sequence of versions and the operations that separate each version from the next.
 The version with the nil UUID is implicitly the empty database.</p>
@@ -198,14 +198,14 @@ Replicas use this information to update their local task databases, and to gener
 The changes are represented as a sequence of operations with the state resulting from the final operation corresponding to the version.
 In order to keep the versions in a single sequence, the server will only accept a proposed version from a replica if its parent version matches the latest version on the server.</p>
 <p>In the non-conflict case (such as with a single replica), then, a replica's synchronization process involves gathering up the operations it has accumulated since its last synchronization; bundling those operations into a version; and sending that version to the server.</p>
-<h3><a class="header" href="#replica-invariant" id="replica-invariant">Replica Invariant</a></h3>
+<h3 id="replica-invariant"><a class="header" href="#replica-invariant">Replica Invariant</a></h3>
 <p>The replica's <a href="./storage.html">storage</a> contains the current state in <code>tasks</code>, the as-yet un-synchronized operations in <code>operations</code>, and the last version at which synchronization occurred in <code>base_version</code>.</p>
 <p>The replica's un-synchronized operations are already reflected in its local <code>tasks</code>, so the following invariant holds:</p>
 <blockquote>
 <p>Applying <code>operations</code> to the set of tasks at <code>base_version</code> gives a set of tasks identical
 to <code>tasks</code>.</p>
 </blockquote>
-<h3><a class="header" href="#transformation" id="transformation">Transformation</a></h3>
+<h3 id="transformation"><a class="header" href="#transformation">Transformation</a></h3>
 <p>When the latest version on the server contains operations that are not present in the replica, then the states have diverged.
 For example:</p>
 <pre><code class="language-text">  o  -- version N
@@ -243,7 +243,7 @@ Continuing the example above, the resulting operations are shown with <code>'</c
 Either path through this graph, a-b-c-w'-x'-y'-z' or a'-b'-c'-w-x-y-z, must generate <em>precisely</em> the same final state at version N+2.
 Careful selection of the operations and the transformation function ensure this.</p>
 <p>See the comments in the source code for the details of how this transformation process is implemented.</p>
-<h2><a class="header" href="#synchronization-process" id="synchronization-process">Synchronization Process</a></h2>
+<h2 id="synchronization-process"><a class="header" href="#synchronization-process">Synchronization Process</a></h2>
 <p>To perform a synchronization, the replica first requests the child version of <code>base_version</code> from the server (GetChildVersion).
 It applies that version to its local <code>tasks</code>, rebases its local <code>operations</code> as described above, and updates <code>base_version</code>.
 The replica repeats this process until the server indicates no additional child versions exist.
@@ -252,12 +252,12 @@ If there are no un-synchronized local operations, the process is complete.</p>
 In most cases, this will succeed, but if another replica has created a new version in the interim, then the new version will conflict with that other replica's new version and the server will respond with the new expected parent version.
 In this case, the process repeats.
 If the server indicates a conflict twice with the same expected base version, that is an indication that the replica has diverged (something serious has gone wrong).</p>
-<h2><a class="header" href="#servers" id="servers">Servers</a></h2>
+<h2 id="servers"><a class="header" href="#servers">Servers</a></h2>
 <p>A replica depends on periodic synchronization for performant operation.
 Without synchronization, its list of pending operations would grow indefinitely, and tasks could never be expired.
 So all replicas, even &quot;singleton&quot; replicas which do not replicate task data with any other replica, must synchronize periodically.</p>
 <p>TaskChampion provides a <code>LocalServer</code> for this purpose.
-It implements the <code>get_child_version</code> and <code>add_version</code> operations as described, storing data on-disk locally, all within the <code>task</code> binary.</p>
+It implements the <code>get_child_version</code> and <code>add_version</code> operations as described, storing data on-disk locally, all within the <code>ta</code> binary.</p>
 
                     </main>
 
