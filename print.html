@@ -97,7 +97,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.4.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li><li class="chapter-item expanded "><a href="debugging.html"><strong aria-hidden="true">1.4.</strong> Debugging</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.4.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.5.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -222,7 +222,7 @@ You can find a list of all subcommands, as well as the built-in reports, with <c
 On Linux systems, that directory is <code>~/.config</code>.
 On OS X, it's <code>~/Library/Preferences</code>.
 On Windows, it's <code>AppData/Roaming</code> in your home directory.
-This can be overridden by setting <code>$TASKCHAMPION_CONFIG</code> to the configuration filename.</p>
+This can be overridden by setting <code>TASKCHAMPION_CONFIG</code> to the configuration filename.</p>
 <p>The file format is <a href="https://toml.io/">TOML</a>.
 For example:</p>
 <pre><code class="language-toml">data_dir = &quot;/home/myuser/.tasks&quot;
@@ -322,6 +322,19 @@ For example, when it's time to continue the job search, <code>ta +jobsearch</cod
 <h2 id="allowed-tags"><a class="header" href="#allowed-tags">Allowed Tags</a></h2>
 <p>Specifically, tags must be at least one character long and cannot contain whitespace or any of the characters <code>+-*/(&lt;&gt;^! %=~</code>.
 The first character cannot be a digit, and <code>:</code> is not allowed after the first character.</p>
+<h1 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h1>
+<h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
+<p>Set <code>TASKCHAMPION_CONFIG</code> to the location of a configuration file in order to override the default location.</p>
+<h2 id="terminal-output"><a class="header" href="#terminal-output">Terminal Output</a></h2>
+<p>Taskchampion uses <a href="https://github.com/BurntSushi/termcolor">termcolor</a> to color its output.
+This library interprets <a href="https://github.com/BurntSushi/termcolor#automatic-color-selection"><code>TERM</code> and <code>NO_COLOR</code></a> to determine how it should behave, when writing to a tty.
+Set <code>NO_COLOR</code> to any value to force plain-text output.</p>
+<h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
+<p>Both <code>ta</code> and <code>taskchampion-sync-server</code> use <a href="https://docs.rs/env_logger">env-logger</a> and can be configured to log at various levels with the <code>RUST_LOG</code> environment variable.
+For example:</p>
+<pre><code class="language-shell">$ RUST_LOG=taskchampion=trace ta add foo
+</code></pre>
+<p>The output may provide valuable clues in debugging problems.</p>
 <h1 id="synchronization"><a class="header" href="#synchronization">Synchronization</a></h1>
 <p>A single TaskChampion task database is known as a &quot;replica&quot;.
 A replica &quot;synchronizes&quot; its local information with other replicas via a sync server.
@@ -346,12 +359,6 @@ The server is functional, but lacks any administrative features.</p>
 <p>Run <code>taskchampion-sync-server</code> to start the sync server.
 Use <code>--port</code> to specify the port it should listen on, and <code>--data-dir</code> to specify the directory which it should store its data.
 It only serves HTTP; the expectation is that a frontend proxy will be used for HTTPS support.</p>
-<h1 id="debugging"><a class="header" href="#debugging">Debugging</a></h1>
-<p>Both <code>ta</code> and <code>taskchampion-sync-server</code> use <a href="https://docs.rs/env_logger">env-logger</a> and can be configured to log at various levels with the <code>RUST_LOG</code> environment variable.
-For example:</p>
-<pre><code class="language-shell">$ RUST_LOG=taskchampion=trace ta add foo
-</code></pre>
-<p>The output may provide valuable clues in debugging problems.</p>
 <h1 id="internal-details"><a class="header" href="#internal-details">Internal Details</a></h1>
 <p>The following sections get into the details of how TaskChampion works.
 None of this information is necessary to use TaskChampion, but might be helpful in understanding its behavior.
