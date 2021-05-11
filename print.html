@@ -138,13 +138,15 @@
                         </a>
                         
                         
+                        
+
                     </div>
                 </div>
 
                 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -205,9 +207,9 @@ server_origin: &quot;https://taskchampion.example.com&quot;
 <p>The next run of <code>ta sync</code> will upload your task history to that server.
 Configuring another device identically and running <code>ta sync</code> will download that task history, and continue to stay in sync with subsequent runs of the command.</p>
 <p>See <a href="./using-task-command.html">Usage</a> for more detailed information on using TaskChampion.</p>
-<h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
 <p>As this is currently in development, installation is by cloning the repository and running &quot;cargo build&quot;.</p>
-<h1 id="using-the-task-command"><a class="header" href="#using-the-task-command">Using the Task Command</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="using-the-task-command"><a class="header" href="#using-the-task-command">Using the Task Command</a></h1>
 <p>The main interface to your tasks is the <code>ta</code> command, which supports various subcommands such as <code>add</code>, <code>modify</code>, <code>start</code>, and <code>done</code>.
 Customizable <a href="./reports.html">reports</a> are also available as subcommands, such as <code>next</code>.
 The command reads a <a href="./config-file.html">configuration file</a> for its settings, including where to find the task database.
@@ -216,7 +218,7 @@ You can find a list of all subcommands, as well as the built-in reports, with <c
 <blockquote>
 <p>NOTE: the <code>task</code> interface does not precisely match that of TaskWarrior.</p>
 </blockquote>
-<h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
 <p>The <code>ta</code> command will work out-of-the-box with no configuration file, using default values.</p>
 <p>Configuration is read from <code>taskchampion.toml</code> in your config directory.
 On Linux systems, that directory is <code>~/.config</code>.
@@ -256,7 +258,7 @@ If not set, then sync is done to a local server.</li>
 <li><code>reports</code> - a mapping of each report's name to its definition.
 See <a href="./reports.html">Reports</a> for details.</li>
 </ul>
-<h1 id="reports-1"><a class="header" href="#reports-1">Reports</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="reports-1"><a class="header" href="#reports-1">Reports</a></h1>
 <p>As a to-do list manager, listing tasks is an important TaskChampion feature.
 Reports are tabular displays of tasks, and allow very flexible filtering, sorting, and customization of columns.</p>
 <p>TaskChampion includes several &quot;built-in&quot; reports, as well as supporting custom reports in the <a href="./config-file.html">configuration file</a>.</p>
@@ -314,7 +316,7 @@ sort = [
 Each element has a <code>label</code> and a <code>property</code>, as shown in the example above.</p>
 <p>The avaliable properties are:</p>
 <p>(TODO: generate automatically)</p>
-<h1 id="tags"><a class="header" href="#tags">Tags</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="tags"><a class="header" href="#tags">Tags</a></h1>
 <p>Each task has a collection of associated tags.
 Tags are short words that categorize tasks, typically written with a leading <code>+</code>, such as <code>+next</code> or <code>+jobsearch</code>.</p>
 <p>Tags are useful for filtering tasks in reports or on the command line.
@@ -322,7 +324,7 @@ For example, when it's time to continue the job search, <code>ta +jobsearch</cod
 <h2 id="allowed-tags"><a class="header" href="#allowed-tags">Allowed Tags</a></h2>
 <p>Specifically, tags must be at least one character long and cannot contain whitespace or any of the characters <code>+-*/(&lt;&gt;^! %=~</code>.
 The first character cannot be a digit, and <code>:</code> is not allowed after the first character.</p>
-<h1 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h1>
 <h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
 <p>Set <code>TASKCHAMPION_CONFIG</code> to the location of a configuration file in order to override the default location.</p>
 <h2 id="terminal-output"><a class="header" href="#terminal-output">Terminal Output</a></h2>
@@ -335,7 +337,7 @@ For example:</p>
 <pre><code class="language-shell">$ RUST_LOG=taskchampion=trace ta add foo
 </code></pre>
 <p>The output may provide valuable clues in debugging problems.</p>
-<h1 id="synchronization"><a class="header" href="#synchronization">Synchronization</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="synchronization"><a class="header" href="#synchronization">Synchronization</a></h1>
 <p>A single TaskChampion task database is known as a &quot;replica&quot;.
 A replica &quot;synchronizes&quot; its local information with other replicas via a sync server.
 Many replicas can thus share the same task history.</p>
@@ -351,7 +353,7 @@ The replica will download the entire task history.</p>
 <p>It is possible to switch a single replica to a remote server by simply configuring for the remote server and running <code>ta sync</code>.
 The replica will upload the entire task history to the server.
 Once this is complete, additional replicas can be configured with the same settings in order to share the task history.</p>
-<h1 id="running-the-sync-server"><a class="header" href="#running-the-sync-server">Running the Sync Server</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="running-the-sync-server"><a class="header" href="#running-the-sync-server">Running the Sync Server</a></h1>
 <blockquote>
 <p>NOTE: TaskChampion is still in development and not yet feature-complete.
 The server is functional, but lacks any administrative features.</p>
@@ -359,15 +361,15 @@ The server is functional, but lacks any administrative features.</p>
 <p>Run <code>taskchampion-sync-server</code> to start the sync server.
 Use <code>--port</code> to specify the port it should listen on, and <code>--data-dir</code> to specify the directory which it should store its data.
 It only serves HTTP; the expectation is that a frontend proxy will be used for HTTPS support.</p>
-<h1 id="internal-details"><a class="header" href="#internal-details">Internal Details</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="internal-details"><a class="header" href="#internal-details">Internal Details</a></h1>
 <p>The following sections get into the details of how TaskChampion works.
 None of this information is necessary to use TaskChampion, but might be helpful in understanding its behavior.
 Developers of TaskChampion and of tools that integrate with TaskChampion should be familiar with this information.</p>
-<h1 id="data-model"><a class="header" href="#data-model">Data Model</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="data-model"><a class="header" href="#data-model">Data Model</a></h1>
 <p>A client manages a single offline instance of a single user's task list, called a replica.
 This section covers the structure of that data.
 Note that this data model is visible only on the client; the server does not have access to client data.</p>
-<h1 id="replica-storage"><a class="header" href="#replica-storage">Replica Storage</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="replica-storage"><a class="header" href="#replica-storage">Replica Storage</a></h1>
 <p>Each replica has a storage backend.
 The interface for this backend is given in <code>crate::taskstorage::Storage</code> and <code>StorageTxn</code>.</p>
 <p>The storage is transaction-protected, with the expectation of a serializable isolation level.
@@ -400,7 +402,7 @@ It is invalid to delete a task that does not exist.</p>
 Value can also be <code>None</code> to indicate deletion of a property.
 It is invalid to update a task that does not exist.
 The timestamp on updates serves as additional metadata and is used to resolve conflicts.</p>
-<h1 id="task-database"><a class="header" href="#task-database">Task Database</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="task-database"><a class="header" href="#task-database">Task Database</a></h1>
 <p>The task database is a layer of abstraction above the replica storage layer, responsible for maintaining some important invariants.
 While the storage is pluggable, there is only one implementation of the task database.</p>
 <h2 id="reading-data"><a class="header" href="#reading-data">Reading Data</a></h2>
@@ -417,7 +419,7 @@ This is done in such a way that the task numbers remain stable until the working
 Operations are described in <a href="./storage.html">Replica Storage</a>.</p>
 <p>Each operation is added to the list of operations in the storage, and simultaneously applied to the tasks in that storage.
 Operations are checked for validity as they are applied.</p>
-<h1 id="tasks-1"><a class="header" href="#tasks-1">Tasks</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="tasks-1"><a class="header" href="#tasks-1">Tasks</a></h1>
 <p>Tasks are stored internally as a key/value map with string keys and values.
 All fields are optional: the <code>Create</code> operation creates an empty task.
 Display layers should apply appropriate defaults where necessary.</p>
@@ -449,12 +451,12 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 <li><code>dep.&lt;uuid&gt;</code> - indicates this task depends on <code>&lt;uuid&gt;</code> (value is an empty string)</li>
 <li><code>annotation.&lt;timestamp&gt;</code> - value is an annotation created at the given time</li>
 </ul>
-<h1 id="synchronization-and-the-sync-server"><a class="header" href="#synchronization-and-the-sync-server">Synchronization and the Sync Server</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="synchronization-and-the-sync-server"><a class="header" href="#synchronization-and-the-sync-server">Synchronization and the Sync Server</a></h1>
 <p>This section covers <em>synchronization</em> of <em>replicas</em> containing the same set of tasks.
 A replica is can perform all operations locally without connecting to a sync server, then share those operations with other replicas when it connects.
 Sync is a critical feature of TaskChampion, allowing users to consult and update the same task list on multiple devices, without requiring constant connection.</p>
 <p>This is a complex topic, and the section is broken into several chapters, beginning at the lower levels of the implementation and working up.</p>
-<h1 id="synchronization-model"><a class="header" href="#synchronization-model">Synchronization Model</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="synchronization-model"><a class="header" href="#synchronization-model">Synchronization Model</a></h1>
 <p>The <a href="./taskdb.html">task database</a> also implements synchronization.
 Synchronization occurs between disconnected replicas, mediated by a server.
 The replicas never communicate directly with one another.
@@ -549,7 +551,7 @@ Without synchronization, its list of pending operations would grow indefinitely,
 So all replicas, even &quot;singleton&quot; replicas which do not replicate task data with any other replica, must synchronize periodically.</p>
 <p>TaskChampion provides a <code>LocalServer</code> for this purpose.
 It implements the <code>get_child_version</code> and <code>add_version</code> operations as described, storing data on-disk locally, all within the <code>ta</code> binary.</p>
-<h1 id="server-replica-protocol"><a class="header" href="#server-replica-protocol">Server-Replica Protocol</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="server-replica-protocol"><a class="header" href="#server-replica-protocol">Server-Replica Protocol</a></h1>
 <p>The server-replica protocol is defined abstractly in terms of request/response transactions from the replica to the server.
 This is made concrete in an HTTP representation.</p>
 <p>The protocol builds on the model presented in the previous chapter, and in particular on the synchronization process.</p>
@@ -619,7 +621,7 @@ Otherwise, the response is a 200 OK.
 The version's history segment is returned in the response body, with content-type <code>application/vnd.taskchampion.history-segment</code>.
 The version ID appears in the <code>X-Version-Id</code> header.
 The response body may be encoded, in accordance with any <code>Accept-Encoding</code> header in the request.</p>
-<h1 id="planned-functionality"><a class="header" href="#planned-functionality">Planned Functionality</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="planned-functionality"><a class="header" href="#planned-functionality">Planned Functionality</a></h1>
 <p>This section is a bit of a to-do list for additional functionality to add to the synchronzation system.
 Each feature has some discussion of how it might be implemented.</p>
 <h2 id="snapshots"><a class="header" href="#snapshots">Snapshots</a></h2>
