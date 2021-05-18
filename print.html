@@ -606,7 +606,7 @@ The <code>origin</code> <em>should</em> be an HTTPS endpoint on general principl
 <p>The replica identifies itself to the server using a <code>clientKey</code> in the form of a UUID.
 This value is passed with every request in the <code>X-Client-Id</code> header, in its dashed-hex format.</p>
 <h3 id="addversion-1"><a class="header" href="#addversion-1">AddVersion</a></h3>
-<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/client/add-version/&lt;parentVersionId&gt;</code>.
+<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/v1/client/add-version/&lt;parentVersionId&gt;</code>.
 The request body contains the history segment, optionally encoded using any encoding supported by actix-web.
 The content-type must be <code>application/vnd.taskchampion.history-segment</code>.</p>
 <p>The success response is a 200 OK with an empty body.
@@ -615,7 +615,7 @@ The new version ID appears in the <code>X-Version-Id</code> header.</p>
 The expected parent version ID appears in the <code>X-Parent-Version-Id</code> header.</p>
 <p>Other error responses (4xx or 5xx) may be returned and should be treated appropriately to their meanings in the HTTP specification.</p>
 <h3 id="getchildversion-1"><a class="header" href="#getchildversion-1">GetChildVersion</a></h3>
-<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/client/get-child-version/&lt;parentVersionId&gt;</code>.
+<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/v1/client/get-child-version/&lt;parentVersionId&gt;</code>.
 The response is 404 NOT FOUND if no such version exists.
 Otherwise, the response is a 200 OK.
 The version's history segment is returned in the response body, with content-type <code>application/vnd.taskchampion.history-segment</code>.
