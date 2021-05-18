@@ -200,11 +200,15 @@ Treat this value as a password.</li>
 <li><code>server_client_key</code> -  Client key to identify this replica to the sync server (a UUID)
 If not set, then sync is done to a local server.</li>
 </ul>
-<h1 id="reports"><a class="header" href="#reports">Reports</a></h1>
+<h2 id="reports"><a class="header" href="#reports">Reports</a></h2>
 <ul>
 <li><code>reports</code> - a mapping of each report's name to its definition.
 See <a href="./reports.html">Reports</a> for details.</li>
 </ul>
+<h2 id="editing"><a class="header" href="#editing">Editing</a></h2>
+<p>As a shortcut, the simple, top-level configuration values can be edited from the command line:</p>
+<pre><code class="language-shell">ta config set data_dir /home/myuser/.taskchampion
+</code></pre>
 
                     </main>
 

@@ -174,10 +174,26 @@ Typically this runs frequently in a cron task.
 Synchronization is quick, especially if no changes have occurred.</p>
 <p>Each replica expects to be synchronized frequently, even if no server is involved.
 Without periodic syncs, the storage space used for the task database will grow quickly, and performance will suffer.</p>
+<h2 id="local-sync"><a class="header" href="#local-sync">Local Sync</a></h2>
 <p>By default, TaskChampion syncs to a &quot;local server&quot;, as specified by the <code>server_dir</code> configuration parameter.
-Every replica sharing a task history should have precisely the same configuration for <code>server_origin</code>, <code>server_client_key</code>, and <code>encryption_secret</code>.</p>
+This defaults to <code>taskchampion-sync-server</code> in your <a href="https://docs.rs/dirs-next/2.0.0/dirs_next/fn.data_dir.html">data directory</a>, but can be customized in the configuration file.</p>
+<h2 id="remote-sync"><a class="header" href="#remote-sync">Remote Sync</a></h2>
+<p>For remote synchronization, you will need a few pieces of information.
+From the server operator, you will need an origin and a client key.
+Configure these with</p>
+<pre><code class="language-shell">ta config set server_origin &quot;&lt;origin from server operator&gt;&quot;
+ta config set server_client_key &quot;&lt;client key from server operator&gt;&quot;
+</code></pre>
+<p>You will need to generate your own encryption secret.
+This is used to encrypt your task history, so treat it as a password.
+The following will use the <code>openssl</code> utility to generate a suitable value:</p>
+<pre><code class="language-shell">ta config set encryption_secret $(openssl rand -hex 35)
+</code></pre>
+<p>Every replica sharing a task history should have precisely the same configuration for <code>server_origin</code>, <code>server_client_key</code>, and <code>encryption_secret</code>.</p>
+<h3 id="adding-a-new-replica"><a class="header" href="#adding-a-new-replica">Adding a New Replica</a></h3>
 <p>Synchronizing a new replica to an existing task history is easy: begin with an empty replica, configured for the remote server, and run <code>ta sync</code>.
 The replica will download the entire task history.</p>
+<h3 id="upgrading-a-locally-syncd-replica"><a class="header" href="#upgrading-a-locally-syncd-replica">Upgrading a Locally-Sync'd Replica</a></h3>
 <p>It is possible to switch a single replica to a remote server by simply configuring for the remote server and running <code>ta sync</code>.
 The replica will upload the entire task history to the server.
 Once this is complete, additional replicas can be configured with the same settings in order to share the task history.</p>
