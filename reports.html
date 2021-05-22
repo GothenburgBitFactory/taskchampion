@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html" class="active"><strong aria-hidden="true">1.2.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.4.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.5.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="reports.html" class="active"><strong aria-hidden="true">1.2.1.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.2.</strong> Tags</a></li><li class="chapter-item expanded "><a href="filters.html"><strong aria-hidden="true">1.2.3.</strong> Filters</a></li><li class="chapter-item expanded "><a href="modifications.html"><strong aria-hidden="true">1.2.4.</strong> Modifications</a></li><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.5.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.6.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.7.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -203,9 +203,8 @@ columns = [
     { label = &quot;Description&quot;, property = &quot;description&quot; },
 ]
 </code></pre>
-<p>The filter is a list of filter arguments, just like those that can be used on the command line.
-See the <code>ta help</code> output for more details on this syntax.
-It will be merged with any filters provided on the command line, when the report is invoked.</p>
+<p>The <code>filter</code> property is a list of <a href="./filters.html">filters</a>.
+It will be merged with any filters provided on the command line when the report is invoked.</p>
 <p>The sort order is defined by an array of tables containing a <code>sort_by</code> property and an optional <code>ascending</code> property.
 Tasks are compared by the first criterion, and if that is equal by the second, and so on.
 If <code>ascending</code> is given, it can be <code>true</code> for the default sort order, or <code>false</code> for the reverse.</p>
@@ -218,18 +217,52 @@ sort = [
 ...
 </code></pre>
 <p>The available values of <code>sort_by</code> are</p>
-<p>(TODO: generate automatically)</p>
+<ul>
+<li>
+<p><code>id</code></p>
+<p>Sort by the task's shorthand ID</p>
+</li>
+<li>
+<p><code>uuid</code></p>
+<p>Sort by the task's full UUID</p>
+</li>
+<li>
+<p><code>description</code></p>
+<p>Sort by the task's description</p>
+</li>
+</ul>
 <p>Finally, the <code>columns</code> configuration specifies the list of columns to display.
 Each element has a <code>label</code> and a <code>property</code>, as shown in the example above.</p>
 <p>The avaliable properties are:</p>
-<p>(TODO: generate automatically)</p>
+<ul>
+<li>
+<p><code>id</code></p>
+<p>The task's shorthand ID</p>
+</li>
+<li>
+<p><code>uuid</code></p>
+<p>The task's full UUID</p>
+</li>
+<li>
+<p><code>active</code></p>
+<p><code>*</code> if the task is active (started)</p>
+</li>
+<li>
+<p><code>description</code></p>
+<p>The task's description</p>
+</li>
+<li>
+<p><code>tags</code></p>
+<p>The task's tags</p>
+</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
-                            <a rel="prev" href="config-file.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="using-task-command.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
                         
@@ -247,7 +280,7 @@ Each element has a <code>label</code> and a <code>property</code>, as shown in t
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
-                    <a rel="prev" href="config-file.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="using-task-command.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
                 
