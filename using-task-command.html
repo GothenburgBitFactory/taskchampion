@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html" class="active"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.1.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.2.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.3.</strong> Tags</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.4.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.5.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html" class="active"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.1.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.2.</strong> Tags</a></li><li class="chapter-item expanded "><a href="filters.html"><strong aria-hidden="true">1.2.3.</strong> Filters</a></li><li class="chapter-item expanded "><a href="modifications.html"><strong aria-hidden="true">1.2.4.</strong> Modifications</a></li><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.5.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.6.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.7.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -169,11 +169,83 @@
 <p>The main interface to your tasks is the <code>ta</code> command, which supports various subcommands such as <code>add</code>, <code>modify</code>, <code>start</code>, and <code>done</code>.
 Customizable <a href="./reports.html">reports</a> are also available as subcommands, such as <code>next</code>.
 The command reads a <a href="./config-file.html">configuration file</a> for its settings, including where to find the task database.
-And the <code>sync</code> subcommand <a href="./task-sync.html">synchronizes tasks with a sync server</a>.
-You can find a list of all subcommands, as well as the built-in reports, with <code>ta help</code>.</p>
+And the <code>sync</code> subcommand <a href="./task-sync.html">synchronizes tasks with a sync server</a>.</p>
 <blockquote>
 <p>NOTE: the <code>task</code> interface does not precisely match that of TaskWarrior.</p>
 </blockquote>
+<h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
+<p>The sections below describe each subcommand of the <code>ta</code> command.
+The syntax of <code>[filter]</code> is defined in <a href="./filters.html">filters</a>, and that of <code>[modification]</code> in <a href="./modifications.html">modifications</a>.
+You can also find a summary of all subcommands, as well as filters, built-in reports, and so on, with <code>ta help</code>.</p>
+<h3 id="ta-version---show-the-taskchampion-version"><a class="header" href="#ta-version---show-the-taskchampion-version"><code>ta version</code> - Show the TaskChampion version</a></h3>
+<pre><code class="language-shell">ta version
+</code></pre>
+<p>Show the version of the TaskChampion binary</p>
+<h3 id="ta-config-set---set-a-configuration-value"><a class="header" href="#ta-config-set---set-a-configuration-value"><code>ta config set</code> - Set a configuration value</a></h3>
+<pre><code class="language-shell">ta config set &lt;key&gt; &lt;value&gt;
+</code></pre>
+<p>Update Taskchampion configuration file to set key = value</p>
+<h3 id="ta-add---add-a-new-task"><a class="header" href="#ta-add---add-a-new-task"><code>ta add</code> - Add a new task</a></h3>
+<pre><code class="language-shell">ta add [modification]
+</code></pre>
+<p>Add a new, pending task to the list of tasks. The modification must include
+a description.</p>
+<h3 id="ta-modify---modify-tasks"><a class="header" href="#ta-modify---modify-tasks"><code>ta modify</code> - Modify tasks</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; modify [modification]
+</code></pre>
+<p>Modify all tasks matching the required filter.</p>
+<h3 id="ta-prepend---prepend-task-description"><a class="header" href="#ta-prepend---prepend-task-description"><code>ta prepend</code> - Prepend task description</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; prepend [modification]
+</code></pre>
+<p>Modify all tasks matching the required filter by inserting the given description
+before each task's description.</p>
+<h3 id="ta-append---append-task-description"><a class="header" href="#ta-append---append-task-description"><code>ta append</code> - Append task description</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; append [modification]
+</code></pre>
+<p>Modify all tasks matching the required filter by adding the given description to
+the end of each task's description.</p>
+<h3 id="ta-start---start-tasks"><a class="header" href="#ta-start---start-tasks"><code>ta start</code> - Start tasks</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; start [modification]
+</code></pre>
+<p>Start all tasks matching the required filter, additionally applying any given
+modifications.</p>
+<h3 id="ta-stop---stop-tasks"><a class="header" href="#ta-stop---stop-tasks"><code>ta stop</code> - Stop tasks</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; stop [modification]
+</code></pre>
+<p>Stop all tasks matching the required filter, additionally applying any given
+modifications.</p>
+<h3 id="ta-done---mark-tasks-as-completed"><a class="header" href="#ta-done---mark-tasks-as-completed"><code>ta done</code> - Mark tasks as completed</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; done [modification]
+</code></pre>
+<p>Mark all tasks matching the required filter as completed, additionally applying
+any given modifications.</p>
+<h3 id="ta-info---show-tasks"><a class="header" href="#ta-info---show-tasks"><code>ta info</code> - Show tasks</a></h3>
+<pre><code class="language-shell">ta [filter] info
+</code></pre>
+<p>Show information about all tasks matching the fiter.</p>
+<h3 id="ta-debug---show-task-debug-details"><a class="header" href="#ta-debug---show-task-debug-details"><code>ta debug</code> - Show task debug details</a></h3>
+<pre><code class="language-shell">ta [filter] debug
+</code></pre>
+<p>Show all key/value properties of the tasks matching the fiter.</p>
+<h3 id="ta-gc---perform-garbage-collection"><a class="header" href="#ta-gc---perform-garbage-collection"><code>ta gc</code> - Perform 'garbage collection'</a></h3>
+<pre><code class="language-shell">ta gc
+</code></pre>
+<p>Perform 'garbage collection'. This refreshes the list of pending tasks and their
+short id's.</p>
+<h3 id="ta-sync---synchronize-this-replica"><a class="header" href="#ta-sync---synchronize-this-replica"><code>ta sync</code> - Synchronize this replica</a></h3>
+<pre><code class="language-shell">ta sync
+</code></pre>
+<p>Synchronize this replica locally or against a remote server, as configured.
+Synchronization is a critical part of maintaining the task database, and should
+be done regularly, even if only locally. It is typically run in a crontask.</p>
+<h3 id="ta-report---show-a-report"><a class="header" href="#ta-report---show-a-report"><code>ta report</code> - Show a report</a></h3>
+<pre><code class="language-shell">ta [filter] [report-name] *or* [report-name] [filter]
+</code></pre>
+<p>Show the named report, including only tasks matching the filter</p>
+<h3 id="ta-next---show-the-next-report"><a class="header" href="#ta-next---show-the-next-report"><code>ta next</code> - Show the 'next' report</a></h3>
+<pre><code class="language-shell">ta [filter]
+</code></pre>
+<p>Show the report named 'next', including only tasks matching the filter</p>
 
                     </main>
 
@@ -186,7 +258,7 @@ You can find a list of all subcommands, as well as the built-in reports, with <c
                         
 
                         
-                            <a rel="next" href="config-file.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="reports.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -204,7 +276,7 @@ You can find a list of all subcommands, as well as the built-in reports, with <c
                 
 
                 
-                    <a rel="next" href="config-file.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="reports.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 
