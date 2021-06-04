@@ -97,7 +97,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.1.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.2.</strong> Tags</a></li><li class="chapter-item expanded "><a href="filters.html"><strong aria-hidden="true">1.2.3.</strong> Filters</a></li><li class="chapter-item expanded "><a href="modifications.html"><strong aria-hidden="true">1.2.4.</strong> Modifications</a></li><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.5.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.6.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.7.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.1.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.2.</strong> Tags</a></li><li class="chapter-item expanded "><a href="filters.html"><strong aria-hidden="true">1.2.3.</strong> Filters</a></li><li class="chapter-item expanded "><a href="modifications.html"><strong aria-hidden="true">1.2.4.</strong> Modifications</a></li><li class="chapter-item expanded "><a href="time.html"><strong aria-hidden="true">1.2.5.</strong> Dates and Durations</a></li><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.7.</strong> Environment</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.8.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.2.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.3.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -352,6 +352,10 @@ sort = [
 <p>Sort by the task's full UUID</p>
 </li>
 <li>
+<p><code>wait</code></p>
+<p>Sort by the task's wait date, with non-waiting tasks first</p>
+</li>
+<li>
 <p><code>description</code></p>
 <p>Sort by the task's description</p>
 </li>
@@ -371,6 +375,10 @@ Each element has a <code>label</code> and a <code>property</code>, as shown in t
 <li>
 <p><code>active</code></p>
 <p><code>*</code> if the task is active (started)</p>
+</li>
+<li>
+<p><code>wait</code></p>
+<p>Wait date of the task</p>
 </li>
 <li>
 <p><code>description</code></p>
@@ -423,6 +431,33 @@ For example, <code>task all done</code> will mark all tasks as done.</p>
 <div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="modifications"><a class="header" href="#modifications">Modifications</a></h1>
 <p>Modifications can have the following forms:</p>
 <!-- INSERT GENERATED DOCUMENTATION - modifications-->
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h2 id="timestamps"><a class="header" href="#timestamps">Timestamps</a></h2>
+<p>Times may be specified in a wide variety of convenient formats.</p>
+<ul>
+<li><a href="https://datatracker.ietf.org/doc/html/rfc3339">RFC3339</a> timestamps, such as <code>2019-10-12 07:20:50.12Z</code></li>
+<li>A date of the format <code>YYYY-MM-DD</code> is interpreted as the <em>local</em> midnight at the beginning of the given date.
+Single-digit month and day are accepted, but the year must contain four digits.</li>
+<li><code>now</code> refers to the exact current time</li>
+<li><code>yesterday</code>, <code>today</code>, and <code>tomorrow</code> refer to the <em>local</em> midnight at the beginning of the given day</li>
+<li>Any duration (described below) may be used as a timestamp, and is considered relative to the current time.</li>
+</ul>
+<p>Times are stored internally as UTC.</p>
+<h2 id="durations"><a class="header" href="#durations">Durations</a></h2>
+<p>Durations can be given in a dizzying array of units.
+Each can be preceded by a whole number or a decimal multiplier, e.g., <code>3days</code>.
+The multiplier is optional with the singular forms of the units; for example <code>day</code> is allowed.
+Some of the units allow an adjectival form, such as <code>daily</code> or <code>annually</code>; this form is more readable in some cases, but otherwise has the same meaning.</p>
+<ul>
+<li><code>s</code>, <code>second</code>, or <code>seconds</code></li>
+<li><code>min</code>, <code>mins</code>, <code>minute</code>, or <code>minutes</code> (note that <code>m</code> not allowed, as it might also mean <code>month</code>)</li>
+<li><code>h</code>, <code>hour</code>, or <code>hours</code></li>
+<li><code>d</code>, <code>day</code>, or <code>days</code></li>
+<li><code>w</code>, <code>week</code>, or <code>weeks</code></li>
+<li><code>mo</code>, or <code>months</code> (always 30 days, regardless of calendar month)</li>
+<li><code>y</code>, <code>year</code>, or <code>years</code> (365 days, regardless of leap days)</li>
+</ul>
+<p><a href="https://en.wikipedia.org/wiki/ISO_8601#Durations">ISO 8601 standard durations</a> are also allowed.
+While the standard does not specify the length of &quot;P1Y&quot; or &quot;P1M&quot;, Taskchampion treats those as 365 and 30 days, respectively.</p>
 <div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
 <p>The <code>ta</code> command will work out-of-the-box with no configuration file, using default values.</p>
 <p>Configuration is read from <code>taskchampion.toml</code> in your config directory.
@@ -604,6 +639,7 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 <li><code>modified</code> - the time of the last modification of this task</li>
 <li><code>start.&lt;timestamp&gt;</code> - either an empty string (representing work on the task to the task that has not been stopped) or a timestamp (representing the time that work stopped)</li>
 <li><code>tag.&lt;tag&gt;</code> - indicates this task has tag <code>&lt;tag&gt;</code> (value is an empty string)</li>
+<li><code>wait</code> - indicates the time before which this task should be hidden, as it is not actionable</li>
 </ul>
 <p>The following are not yet implemented:</p>
 <ul>
