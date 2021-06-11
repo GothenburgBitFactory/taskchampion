@@ -464,6 +464,12 @@ For example:</p>
 <li><code>data_dir</code> - path to a directory containing the replica's task data (which will be created if necessary).
 Default: <code>taskchampion</code> in the local data directory.</li>
 </ul>
+<h2 id="command-line-preferences"><a class="header" href="#command-line-preferences">Command-Line Preferences</a></h2>
+<ul>
+<li><code>modification_count_prompt</code> - when a modification will affect more than this many tasks, the <code>ta</code> command will prompt for confirmation.
+A value of <code>0</code> will disable the prompts entirely.
+Default: 3.</li>
+</ul>
 <h2 id="sync-server"><a class="header" href="#sync-server">Sync Server</a></h2>
 <p>If using a local server:</p>
 <ul>
