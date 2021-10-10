@@ -125,6 +125,15 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
+    fn truncate(&mut self) -> anyhow::Result<()> {
+        let data = self.mut_data_ref();
+        data.tasks.clear();
+        data.base_version = DEFAULT_BASE_VERSION;
+        data.operations.clear();
+        data.working_set = vec![None];
+        Ok(())
+    }
+
     fn commit(&mut self) -> anyhow::Result<()> {
         // copy the new_data back into storage to commit the transaction
         if let Some(data) = self.new_data.take() {
@@ -231,6 +240,44 @@ mod test {
             let mut txn = storage.txn()?;
             let ws = txn.get_working_set()?;
             assert_eq!(ws, vec![None, Some(uuid2), Some(uuid1)]);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn truncate() -> anyhow::Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let uuid1 = Uuid::new_v4();
+        let version = Uuid::new_v4();
+
+        {
+            let mut txn = storage.txn()?;
+            txn.set_task(uuid1, TaskMap::new())?;
+            txn.add_to_working_set(uuid1)?;
+            txn.set_base_version(version)?;
+            txn.add_operation(Operation::Create { uuid: uuid1 })?;
+            txn.commit()?;
+        }
+
+        {
+            let mut txn = storage.txn()?;
+            txn.truncate()?;
+            txn.commit()?;
+        }
+
+        {
+            let mut txn = storage.txn()?;
+
+            let t = txn.get_task(uuid1)?;
+            assert_eq!(t, None);
+
+            let ws = txn.get_working_set()?;
+            assert_eq!(ws, vec![None]);
+
+            assert_eq!(txn.base_version()?, DEFAULT_BASE_VERSION);
+
+            assert_eq!(txn.operations()?, vec![]);
         }
 
         Ok(())

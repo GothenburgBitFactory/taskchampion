@@ -105,6 +105,9 @@ pub trait StorageTxn {
     /// Note that this is the only way items are removed from the set.
     fn clear_working_set(&mut self) -> Result<()>;
 
+    /// Clear the entire taskdb.
+    fn truncate(&mut self) -> Result<()>;
+
     /// Commit any changes made in the transaction.  It is an error to call this more than
     /// once.
     fn commit(&mut self) -> Result<()>;
