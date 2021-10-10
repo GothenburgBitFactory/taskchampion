@@ -565,6 +565,8 @@ The server is functional, but lacks any administrative features.</p>
 <p>Run <code>taskchampion-sync-server</code> to start the sync server.
 Use <code>--port</code> to specify the port it should listen on, and <code>--data-dir</code> to specify the directory which it should store its data.
 It only serves HTTP; the expectation is that a frontend proxy will be used for HTTPS support.</p>
+<p>The server has optional parameters <code>--snapshot-days</code> and <code>--snapshot-version</code>, giving the target number of days and versions, respectively, between snapshots of the client state.
+The default values for these parameters are generally adequate.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="internal-details"><a class="header" href="#internal-details">Internal Details</a></h1>
 <p>The following sections get into the details of how TaskChampion works.
 None of this information is necessary to use TaskChampion, but might be helpful in understanding its behavior.
