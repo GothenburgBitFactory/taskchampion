@@ -503,6 +503,12 @@ Treat this value as a password.</li>
 <li><code>server_client_key</code> -  Client key to identify this replica to the sync server (a UUID)
 If not set, then sync is done to a local server.</li>
 </ul>
+<h2 id="snapshots"><a class="header" href="#snapshots">Snapshots</a></h2>
+<ul>
+<li><code>avoid_snapshots</code> - If running on a CPU-, memory-, or bandwidth-constrained
+device, set this to true.  The effect is that this replica will wait longer
+to produce a snapshot, in the hopes that other replicas will do so first.</li>
+</ul>
 <h2 id="reports-1"><a class="header" href="#reports-1">Reports</a></h2>
 <ul>
 <li><code>reports</code> - a mapping of each report's name to its definition.
@@ -758,7 +764,7 @@ Without synchronization, its list of pending operations would grow indefinitely,
 So all replicas, even &quot;singleton&quot; replicas which do not replicate task data with any other replica, must synchronize periodically.</p>
 <p>TaskChampion provides a <code>LocalServer</code> for this purpose.
 It implements the <code>get_child_version</code> and <code>add_version</code> operations as described, storing data on-disk locally, all within the <code>ta</code> binary.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="snapshots"><a class="header" href="#snapshots">Snapshots</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="snapshots-1"><a class="header" href="#snapshots-1">Snapshots</a></h1>
 <p>The basic synchronization model described in the previous page has a few shortcomings:</p>
 <ul>
 <li>servers must store an ever-increasing quantity of versions</li>
@@ -829,6 +835,32 @@ It may end at any point when v.parentVersionId is not found in the set of Versio
 This observation allows the server to discard older versions.
 The third invariant prevents the server from discarding versions if there is no snapshot.
 The fourth invariant prevents the server from discarding versions newer than the snapshot.</p>
+<h2 id="data-formats"><a class="header" href="#data-formats">Data Formats</a></h2>
+<h3 id="encryption"><a class="header" href="#encryption">Encryption</a></h3>
+<p>TBD (#299)</p>
+<h3 id="version"><a class="header" href="#version">Version</a></h3>
+<p>The decrypted form of a version is a JSON array containing operations in the order they should be applied.
+Each operation has the form <code>{TYPE: DATA}</code>, for example:</p>
+<ul>
+<li><code>{&quot;Create&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;}}</code></li>
+<li><code>{&quot;Delete&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;}}</code></li>
+<li><code>{&quot;Update&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;,&quot;property&quot;:&quot;prop&quot;,&quot;value&quot;:&quot;v&quot;,&quot;timestamp&quot;:&quot;2021-10-11T12:47:07.188090948Z&quot;}}</code></li>
+<li><code>{&quot;Update&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;,&quot;property&quot;:&quot;prop&quot;,&quot;value&quot;:null,&quot;timestamp&quot;:&quot;2021-10-11T12:47:07.188090948Z&quot;}}</code> (to delete a property)</li>
+</ul>
+<p>Timestamps are in RFC3339 format with a <code>Z</code> suffix.</p>
+<h3 id="snapshot"><a class="header" href="#snapshot">Snapshot</a></h3>
+<p>The decrypted form of a snapshot is a JSON object mapping task IDs to task properties.
+For example (pretty-printed for clarity):</p>
+<pre><code class="language-json">{
+ &quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;: {
+   &quot;description&quot;: &quot;a task&quot;,
+   &quot;priority&quot;: &quot;H&quot;
+ },
+ &quot;4b7ed904-f7b0-4293-8a10-ad452422c7b3&quot;: {
+   &quot;description&quot;: &quot;another task&quot;
+ }
+}
+</code></pre>
 <h2 id="transactions"><a class="header" href="#transactions">Transactions</a></h2>
 <h3 id="addversion"><a class="header" href="#addversion">AddVersion</a></h3>
 <p>The AddVersion transaction requests that the server add a new version to the client's task history.
@@ -930,7 +962,7 @@ After the snapshot is applied, the client should begin the synchronization proce
 <div style="break-before: page; page-break-before: always;"></div><h1 id="planned-functionality"><a class="header" href="#planned-functionality">Planned Functionality</a></h1>
 <p>This section is a bit of a to-do list for additional functionality to add to the synchronzation system.
 Each feature has some discussion of how it might be implemented.</p>
-<h2 id="snapshots-1"><a class="header" href="#snapshots-1">Snapshots</a></h2>
+<h2 id="snapshots-2"><a class="header" href="#snapshots-2">Snapshots</a></h2>
 <p>As designed, storage required on the server would grow with time, as would the time required for new clients to update to the latest version.
 As an optimization, the server also stores &quot;snapshots&quot; containing a full copy of the task database at a given version.
 Based on configurable heuristics, it may delete older operations and snapshots, as long as enough data remains for active clients to synchronize and for new clients to initialize.</p>

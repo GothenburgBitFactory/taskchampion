@@ -184,6 +184,12 @@ Treat this value as a password.</li>
 <li><code>server_client_key</code> -  Client key to identify this replica to the sync server (a UUID)
 If not set, then sync is done to a local server.</li>
 </ul>
+<h2 id="snapshots"><a class="header" href="#snapshots">Snapshots</a></h2>
+<ul>
+<li><code>avoid_snapshots</code> - If running on a CPU-, memory-, or bandwidth-constrained
+device, set this to true.  The effect is that this replica will wait longer
+to produce a snapshot, in the hopes that other replicas will do so first.</li>
+</ul>
 <h2 id="reports"><a class="header" href="#reports">Reports</a></h2>
 <ul>
 <li><code>reports</code> - a mapping of each report's name to its definition.

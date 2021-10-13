@@ -175,6 +175,32 @@ It may end at any point when v.parentVersionId is not found in the set of Versio
 This observation allows the server to discard older versions.
 The third invariant prevents the server from discarding versions if there is no snapshot.
 The fourth invariant prevents the server from discarding versions newer than the snapshot.</p>
+<h2 id="data-formats"><a class="header" href="#data-formats">Data Formats</a></h2>
+<h3 id="encryption"><a class="header" href="#encryption">Encryption</a></h3>
+<p>TBD (#299)</p>
+<h3 id="version"><a class="header" href="#version">Version</a></h3>
+<p>The decrypted form of a version is a JSON array containing operations in the order they should be applied.
+Each operation has the form <code>{TYPE: DATA}</code>, for example:</p>
+<ul>
+<li><code>{&quot;Create&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;}}</code></li>
+<li><code>{&quot;Delete&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;}}</code></li>
+<li><code>{&quot;Update&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;,&quot;property&quot;:&quot;prop&quot;,&quot;value&quot;:&quot;v&quot;,&quot;timestamp&quot;:&quot;2021-10-11T12:47:07.188090948Z&quot;}}</code></li>
+<li><code>{&quot;Update&quot;:{&quot;uuid&quot;:&quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;,&quot;property&quot;:&quot;prop&quot;,&quot;value&quot;:null,&quot;timestamp&quot;:&quot;2021-10-11T12:47:07.188090948Z&quot;}}</code> (to delete a property)</li>
+</ul>
+<p>Timestamps are in RFC3339 format with a <code>Z</code> suffix.</p>
+<h3 id="snapshot"><a class="header" href="#snapshot">Snapshot</a></h3>
+<p>The decrypted form of a snapshot is a JSON object mapping task IDs to task properties.
+For example (pretty-printed for clarity):</p>
+<pre><code class="language-json">{
+ &quot;56e0be07-c61f-494c-a54c-bdcfdd52d2a7&quot;: {
+   &quot;description&quot;: &quot;a task&quot;,
+   &quot;priority&quot;: &quot;H&quot;
+ },
+ &quot;4b7ed904-f7b0-4293-8a10-ad452422c7b3&quot;: {
+   &quot;description&quot;: &quot;another task&quot;
+ }
+}
+</code></pre>
 <h2 id="transactions"><a class="header" href="#transactions">Transactions</a></h2>
 <h3 id="addversion"><a class="header" href="#addversion">AddVersion</a></h3>
 <p>The AddVersion transaction requests that the server add a new version to the client's task history.
