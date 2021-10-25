@@ -7,7 +7,7 @@ use taskchampion_cli::Usage;
 
 /// This is a simple mdbook preprocessor designed to substitute information from the usage
 /// into the documentation.
-fn main() -> anyhow::Result<()> {
+fn main() -> eyre::Result<()> {
     // cheap way to detect the "supports" arg
     if std::env::args().len() > 1 {
         // sure, whatever, we support it all

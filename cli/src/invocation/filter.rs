@@ -102,7 +102,7 @@ fn universe_for_filter(filter: &Filter) -> Universe {
 pub(super) fn filtered_tasks(
     replica: &mut Replica,
     filter: &Filter,
-) -> anyhow::Result<impl Iterator<Item = Task>> {
+) -> eyre::Result<impl Iterator<Item = Task>> {
     let mut res = vec![];
 
     log::debug!("Applying filter {:?}", filter);
@@ -248,7 +248,7 @@ mod test {
     }
 
     #[test]
-    fn tag_filtering() -> anyhow::Result<()> {
+    fn tag_filtering() -> eyre::Result<()> {
         let mut replica = test_replica();
         let yes = tag!("yes");
         let no = tag!("no");

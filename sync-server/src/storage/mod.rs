@@ -39,10 +39,10 @@ pub struct Version {
 
 pub trait StorageTxn {
     /// Get information about the given client
-    fn get_client(&mut self, client_key: Uuid) -> anyhow::Result<Option<Client>>;
+    fn get_client(&mut self, client_key: Uuid) -> eyre::Result<Option<Client>>;
 
     /// Create a new client with the given latest_version_id
-    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> anyhow::Result<()>;
+    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> eyre::Result<()>;
 
     /// Set the client's most recent snapshot.
     fn set_snapshot(
@@ -50,7 +50,7 @@ pub trait StorageTxn {
         client_key: Uuid,
         snapshot: Snapshot,
         data: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    ) -> eyre::Result<()>;
 
     /// Get the data for the most recent snapshot.  The version_id
     /// is used to verify that the snapshot is for the correct version.
@@ -58,21 +58,21 @@ pub trait StorageTxn {
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    ) -> eyre::Result<Option<Vec<u8>>>;
 
     /// Get a version, indexed by parent version id
     fn get_version_by_parent(
         &mut self,
         client_key: Uuid,
         parent_version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>>;
+    ) -> eyre::Result<Option<Version>>;
 
     /// Get a version, indexed by its own version id
     fn get_version(
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>>;
+    ) -> eyre::Result<Option<Version>>;
 
     /// Add a version (that must not already exist), and
     ///  - update latest_version_id
@@ -83,16 +83,16 @@ pub trait StorageTxn {
         version_id: Uuid,
         parent_version_id: Uuid,
         history_segment: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    ) -> eyre::Result<()>;
 
     /// Commit any changes made in the transaction.  It is an error to call this more than
     /// once.  It is safe to skip this call for read-only operations.
-    fn commit(&mut self) -> anyhow::Result<()>;
+    fn commit(&mut self) -> eyre::Result<()>;
 }
 
 /// A trait for objects able to act as storage.  Most of the interesting behavior is in the
 /// [`crate::storage::StorageTxn`] trait.
 pub trait Storage: Send + Sync {
     /// Begin a transaction
-    fn txn<'a>(&'a self) -> anyhow::Result<Box<dyn StorageTxn + 'a>>;
+    fn txn<'a>(&'a self) -> eyre::Result<Box<dyn StorageTxn + 'a>>;
 }

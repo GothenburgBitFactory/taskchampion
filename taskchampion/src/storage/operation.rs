@@ -275,7 +275,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_create() -> anyhow::Result<()> {
+    fn test_json_create() -> eyre::Result<()> {
         let uuid = Uuid::new_v4();
         let op = Create { uuid };
         assert_eq!(
@@ -286,7 +286,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_delete() -> anyhow::Result<()> {
+    fn test_json_delete() -> eyre::Result<()> {
         let uuid = Uuid::new_v4();
         let op = Delete { uuid };
         assert_eq!(
@@ -297,7 +297,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update() -> anyhow::Result<()> {
+    fn test_json_update() -> eyre::Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 
@@ -319,7 +319,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update_none() -> anyhow::Result<()> {
+    fn test_json_update_none() -> eyre::Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 

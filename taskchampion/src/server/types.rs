@@ -55,16 +55,16 @@ pub trait Server {
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
-    ) -> anyhow::Result<(AddVersionResult, SnapshotUrgency)>;
+    ) -> eyre::Result<(AddVersionResult, SnapshotUrgency)>;
 
     /// Get the version with the given parent VersionId
     fn get_child_version(
         &mut self,
         parent_version_id: VersionId,
-    ) -> anyhow::Result<GetVersionResult>;
+    ) -> eyre::Result<GetVersionResult>;
 
     /// Add a snapshot on the server
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> anyhow::Result<()>;
+    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> eyre::Result<()>;
 
-    fn get_snapshot(&mut self) -> anyhow::Result<Option<(VersionId, Snapshot)>>;
+    fn get_snapshot(&mut self) -> eyre::Result<Option<(VersionId, Snapshot)>>;
 }

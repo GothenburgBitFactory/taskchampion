@@ -23,7 +23,7 @@ pub(crate) fn execute<W: WriteColor>(
             if let Some(ref filename) = settings.filename {
                 writeln!(w, "{}", filename.to_string_lossy())?;
             } else {
-                return Err(anyhow::anyhow!("No configuration filename found").into());
+                return Err(eyre::eyre!("No configuration filename found").into());
             }
         }
     }

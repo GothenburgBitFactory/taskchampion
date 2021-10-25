@@ -28,7 +28,7 @@ impl TaskDb {
     /// Apply an operation to the TaskDb.  Aside from synchronization operations, this is the only way
     /// to modify the TaskDb.  In cases where an operation does not make sense, this function will do
     /// nothing and return an error (but leave the TaskDb in a consistent state).
-    pub fn apply(&mut self, op: Operation) -> anyhow::Result<()> {
+    pub fn apply(&mut self, op: Operation) -> eyre::Result<()> {
         // TODO: differentiate error types here?
         let mut txn = self.storage.txn()?;
         if let err @ Err(_) = ops::apply_op(txn.as_mut(), &op) {
@@ -40,25 +40,25 @@ impl TaskDb {
     }
 
     /// Get all tasks.
-    pub fn all_tasks(&mut self) -> anyhow::Result<Vec<(Uuid, TaskMap)>> {
+    pub fn all_tasks(&mut self) -> eyre::Result<Vec<(Uuid, TaskMap)>> {
         let mut txn = self.storage.txn()?;
         txn.all_tasks()
     }
 
     /// Get the UUIDs of all tasks
-    pub fn all_task_uuids(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    pub fn all_task_uuids(&mut self) -> eyre::Result<Vec<Uuid>> {
         let mut txn = self.storage.txn()?;
         txn.all_task_uuids()
     }
 
     /// Get the working set
-    pub fn working_set(&mut self) -> anyhow::Result<Vec<Option<Uuid>>> {
+    pub fn working_set(&mut self) -> eyre::Result<Vec<Option<Uuid>>> {
         let mut txn = self.storage.txn()?;
         txn.get_working_set()
     }
 
     /// Get a single task, by uuid.
-    pub fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<TaskMap>> {
+    pub fn get_task(&mut self, uuid: Uuid) -> eyre::Result<Option<TaskMap>> {
         let mut txn = self.storage.txn()?;
         txn.get_task(uuid)
     }
@@ -71,7 +71,7 @@ impl TaskDb {
         &mut self,
         in_working_set: F,
         renumber: bool,
-    ) -> anyhow::Result<()>
+    ) -> eyre::Result<()>
     where
         F: Fn(&TaskMap) -> bool,
     {
@@ -80,7 +80,7 @@ impl TaskDb {
 
     /// Add the given uuid to the working set and return its index; if it is already in the working
     /// set, its index is returned.  This does *not* renumber any existing tasks.
-    pub fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    pub fn add_to_working_set(&mut self, uuid: Uuid) -> eyre::Result<usize> {
         let mut txn = self.storage.txn()?;
         // search for an existing entry for this task..
         for (i, elt) in txn.get_working_set()?.iter().enumerate() {
@@ -107,7 +107,7 @@ impl TaskDb {
         &mut self,
         server: &mut Box<dyn Server>,
         avoid_snapshots: bool,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let mut txn = self.storage.txn()?;
         sync::sync(server, txn.as_mut(), avoid_snapshots)
     }

@@ -3,7 +3,7 @@
 use crate::argparse::{Condition, Filter};
 use crate::settings::util::table_with_keys;
 use crate::usage::{self, Usage};
-use anyhow::{anyhow, bail, Result};
+use eyre::{eyre, bail, Result};
 use std::convert::{TryFrom, TryInto};
 
 /// A report specifies a filter as well as a sort order and information about which
@@ -82,7 +82,7 @@ pub(crate) enum SortBy {
 // Conversions from settings::Settings.
 
 impl TryFrom<toml::Value> for Report {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(cfg: toml::Value) -> Result<Report> {
         Report::try_from(&cfg)
@@ -90,22 +90,22 @@ impl TryFrom<toml::Value> for Report {
 }
 
 impl TryFrom<&toml::Value> for Report {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     /// Create a Report from a toml value.  This should be the `report.<report_name>` value.
     /// The error message begins with any additional path information, e.g., `.sort[1].sort_by:
     /// ..`.
     fn try_from(cfg: &toml::Value) -> Result<Report> {
         let keys = ["sort", "columns", "filter"];
-        let table = table_with_keys(cfg, &keys).map_err(|e| anyhow!(": {}", e))?;
+        let table = table_with_keys(cfg, &keys).map_err(|e| eyre!(": {}", e))?;
 
         let sort = match table.get("sort") {
             Some(v) => v
                 .as_array()
-                .ok_or_else(|| anyhow!(".sort: not an array"))?
+                .ok_or_else(|| eyre!(".sort: not an array"))?
                 .iter()
                 .enumerate()
-                .map(|(i, v)| v.try_into().map_err(|e| anyhow!(".sort[{}]{}", i, e)))
+                .map(|(i, v)| v.try_into().map_err(|e| eyre!(".sort[{}]{}", i, e)))
                 .collect::<Result<Vec<_>>>()?,
             None => vec![],
         };
@@ -113,10 +113,10 @@ impl TryFrom<&toml::Value> for Report {
         let columns = match table.get("columns") {
             Some(v) => v
                 .as_array()
-                .ok_or_else(|| anyhow!(".columns: not an array"))?
+                .ok_or_else(|| eyre!(".columns: not an array"))?
                 .iter()
                 .enumerate()
-                .map(|(i, v)| v.try_into().map_err(|e| anyhow!(".columns[{}]{}", i, e)))
+                .map(|(i, v)| v.try_into().map_err(|e| eyre!(".columns[{}]{}", i, e)))
                 .collect::<Result<Vec<_>>>()?,
             None => bail!(": `columns` property is required"),
         };
@@ -124,14 +124,14 @@ impl TryFrom<&toml::Value> for Report {
         let conditions = match table.get("filter") {
             Some(v) => v
                 .as_array()
-                .ok_or_else(|| anyhow!(".filter: not an array"))?
+                .ok_or_else(|| eyre!(".filter: not an array"))?
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
                     v.as_str()
-                        .ok_or_else(|| anyhow!(".filter[{}]: not a string", i))
+                        .ok_or_else(|| eyre!(".filter[{}]: not a string", i))
                         .and_then(|s| Condition::parse_str(s))
-                        .map_err(|e| anyhow!(".filter[{}]: {}", i, e))
+                        .map_err(|e| eyre!(".filter[{}]: {}", i, e))
                 })
                 .collect::<Result<Vec<_>>>()?,
             None => vec![],
@@ -146,22 +146,22 @@ impl TryFrom<&toml::Value> for Report {
 }
 
 impl TryFrom<&toml::Value> for Column {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(cfg: &toml::Value) -> Result<Column> {
         let keys = ["label", "property"];
-        let table = table_with_keys(cfg, &keys).map_err(|e| anyhow!(": {}", e))?;
+        let table = table_with_keys(cfg, &keys).map_err(|e| eyre!(": {}", e))?;
 
         let label = match table.get("label") {
             Some(v) => v
                 .as_str()
-                .ok_or_else(|| anyhow!(".label: not a string"))?
+                .ok_or_else(|| eyre!(".label: not a string"))?
                 .to_owned(),
             None => bail!(": `label` property is required"),
         };
 
         let property = match table.get("property") {
-            Some(v) => v.try_into().map_err(|e| anyhow!(".property{}", e))?,
+            Some(v) => v.try_into().map_err(|e| eyre!(".property{}", e))?,
             None => bail!(": `property` property is required"),
         };
 
@@ -170,10 +170,10 @@ impl TryFrom<&toml::Value> for Column {
 }
 
 impl TryFrom<&toml::Value> for Property {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(cfg: &toml::Value) -> Result<Property> {
-        let s = cfg.as_str().ok_or_else(|| anyhow!(": not a string"))?;
+        let s = cfg.as_str().ok_or_else(|| eyre!(": not a string"))?;
         Ok(match s {
             "id" => Property::Id,
             "uuid" => Property::Uuid,
@@ -187,20 +187,20 @@ impl TryFrom<&toml::Value> for Property {
 }
 
 impl TryFrom<&toml::Value> for Sort {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(cfg: &toml::Value) -> Result<Sort> {
         let keys = ["ascending", "sort_by"];
-        let table = table_with_keys(cfg, &keys).map_err(|e| anyhow!(": {}", e))?;
+        let table = table_with_keys(cfg, &keys).map_err(|e| eyre!(": {}", e))?;
         let ascending = match table.get("ascending") {
             Some(v) => v
                 .as_bool()
-                .ok_or_else(|| anyhow!(".ascending: not a boolean value"))?,
+                .ok_or_else(|| eyre!(".ascending: not a boolean value"))?,
             None => true, // default
         };
 
         let sort_by = match table.get("sort_by") {
-            Some(v) => v.try_into().map_err(|e| anyhow!(".sort_by{}", e))?,
+            Some(v) => v.try_into().map_err(|e| eyre!(".sort_by{}", e))?,
             None => bail!(": `sort_by` property is required"),
         };
 
@@ -209,10 +209,10 @@ impl TryFrom<&toml::Value> for Sort {
 }
 
 impl TryFrom<&toml::Value> for SortBy {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(cfg: &toml::Value) -> Result<SortBy> {
-        let s = cfg.as_str().ok_or_else(|| anyhow!(": not a string"))?;
+        let s = cfg.as_str().ok_or_else(|| eyre!(": not a string"))?;
         Ok(match s {
             "id" => SortBy::Id,
             "uuid" => SortBy::Uuid,

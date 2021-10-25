@@ -26,7 +26,7 @@ pub enum ServerConfig {
 
 impl ServerConfig {
     /// Get a server based on this configuration
-    pub fn into_server(self) -> anyhow::Result<Box<dyn Server>> {
+    pub fn into_server(self) -> eyre::Result<Box<dyn Server>> {
         Ok(match self {
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
             ServerConfig::Remote {

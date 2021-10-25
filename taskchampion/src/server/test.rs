@@ -66,7 +66,7 @@ impl Server for TestServer {
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
-    ) -> anyhow::Result<(AddVersionResult, SnapshotUrgency)> {
+    ) -> eyre::Result<(AddVersionResult, SnapshotUrgency)> {
         let mut inner = self.0.lock().unwrap();
 
         // no client lookup
@@ -104,7 +104,7 @@ impl Server for TestServer {
     fn get_child_version(
         &mut self,
         parent_version_id: VersionId,
-    ) -> anyhow::Result<GetVersionResult> {
+    ) -> eyre::Result<GetVersionResult> {
         let inner = self.0.lock().unwrap();
 
         if let Some(version) = inner.versions.get(&parent_version_id) {
@@ -118,7 +118,7 @@ impl Server for TestServer {
         }
     }
 
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> anyhow::Result<()> {
+    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> eyre::Result<()> {
         let mut inner = self.0.lock().unwrap();
 
         // test implementation -- does not perform any validation
@@ -126,7 +126,7 @@ impl Server for TestServer {
         Ok(())
     }
 
-    fn get_snapshot(&mut self) -> anyhow::Result<Option<(VersionId, Snapshot)>> {
+    fn get_snapshot(&mut self) -> eyre::Result<Option<(VersionId, Snapshot)>> {
         let inner = self.0.lock().unwrap();
         Ok(inner.snapshot.clone())
     }

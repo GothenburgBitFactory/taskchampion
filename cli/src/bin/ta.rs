@@ -1,11 +1,8 @@
-use std::process::exit;
+use color_eyre::eyre::{eyre, Report, WrapErr};
 
-pub fn main() {
-    match taskchampion_cli::main() {
-        Ok(_) => exit(0),
-        Err(e) => {
-            eprintln!("{:?}", e);
-            exit(e.exit_status());
-        }
-    }
+fn main() -> Result<(), Report> {
+    color_eyre::install()?;
+
+    taskchampion_cli::main()?;
+    Ok(())
 }

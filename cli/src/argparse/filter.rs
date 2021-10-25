@@ -1,7 +1,7 @@
 use super::args::{arg_matching, id_list, literal, minus_tag, plus_tag, status_colon, TaskId};
 use super::ArgList;
 use crate::usage;
-use anyhow::bail;
+use eyre::bail;
 use nom::{
     branch::alt,
     combinator::*,
@@ -49,7 +49,7 @@ impl Condition {
     }
 
     /// Parse a single condition string
-    pub(crate) fn parse_str(input: &str) -> anyhow::Result<Condition> {
+    pub(crate) fn parse_str(input: &str) -> eyre::Result<Condition> {
         let input = &[input];
         Ok(match Condition::parse(input) {
             Ok((&[], cond)) => cond,

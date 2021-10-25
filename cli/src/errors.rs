@@ -10,7 +10,7 @@ pub enum Error {
     TaskChampion(#[from] TcError),
 
     #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    Other(#[from] eyre::Error),
 }
 
 impl Error {
@@ -30,7 +30,7 @@ impl Error {
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        let err: anyhow::Error = err.into();
+        let err: eyre::Error = err.into();
         Error::Other(err)
     }
 }
@@ -38,14 +38,14 @@ impl From<std::io::Error> for Error {
 #[cfg(test)]
 mod test {
     use super::*;
-    use anyhow::anyhow;
+    use eyre::eyre;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_exit_status() {
         let mut err: Error;
 
-        err = anyhow!("uhoh").into();
+        err = eyre!("uhoh").into();
         assert_eq!(err.exit_status(), 1);
 
         err = Error::Arguments("uhoh".to_string());

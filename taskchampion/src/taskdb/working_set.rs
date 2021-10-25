@@ -5,7 +5,7 @@ use std::collections::HashSet;
 /// renumbers the existing working-set tasks to eliminate gaps, and also adds any tasks that
 /// are not already in the working set but should be.  The rebuild occurs in a single
 /// trasnsaction against the storage backend.
-pub fn rebuild<F>(txn: &mut dyn StorageTxn, in_working_set: F, renumber: bool) -> anyhow::Result<()>
+pub fn rebuild<F>(txn: &mut dyn StorageTxn, in_working_set: F, renumber: bool) -> eyre::Result<()>
 where
     F: Fn(&TaskMap) -> bool,
 {
@@ -69,16 +69,16 @@ mod test {
     use uuid::Uuid;
 
     #[test]
-    fn rebuild_working_set_renumber() -> anyhow::Result<()> {
+    fn rebuild_working_set_renumber() -> eyre::Result<()> {
         rebuild_working_set(true)
     }
 
     #[test]
-    fn rebuild_working_set_no_renumber() -> anyhow::Result<()> {
+    fn rebuild_working_set_no_renumber() -> eyre::Result<()> {
         rebuild_working_set(false)
     }
 
-    fn rebuild_working_set(renumber: bool) -> anyhow::Result<()> {
+    fn rebuild_working_set(renumber: bool) -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());

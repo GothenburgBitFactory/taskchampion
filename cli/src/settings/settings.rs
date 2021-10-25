@@ -1,7 +1,7 @@
 use super::util::table_with_keys;
 use super::{Column, Property, Report, Sort, SortBy};
 use crate::argparse::{Condition, Filter};
-use anyhow::{anyhow, bail, Context, Result};
+use eyre::{eyre, bail, Context, Result};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env;
@@ -109,7 +109,7 @@ impl Settings {
             if let Some(v) = table.get(name) {
                 setter(
                     v.as_str()
-                        .ok_or_else(|| anyhow!(".{}: not a string", name))?
+                        .ok_or_else(|| eyre!(".{}: not a string", name))?
                         .to_owned(),
                 );
             }
@@ -120,7 +120,7 @@ impl Settings {
             if let Some(v) = table.get(name) {
                 setter(
                     v.as_integer()
-                        .ok_or_else(|| anyhow!(".{}: not a number", name))?,
+                        .ok_or_else(|| eyre!(".{}: not a number", name))?,
                 );
             }
             Ok(())
@@ -134,7 +134,7 @@ impl Settings {
             if let Some(v) = table.get(name) {
                 setter(
                     v.as_bool()
-                        .ok_or_else(|| anyhow!(".{}: not a boolean value", name))?,
+                        .ok_or_else(|| eyre!(".{}: not a boolean value", name))?,
                 );
             }
             Ok(())
@@ -171,9 +171,9 @@ impl Settings {
         if let Some(v) = table.get("reports") {
             let report_cfgs = v
                 .as_table()
-                .ok_or_else(|| anyhow!(".reports: not a table"))?;
+                .ok_or_else(|| eyre!(".reports: not a table"))?;
             for (name, cfg) in report_cfgs {
-                let report = Report::try_from(cfg).map_err(|e| anyhow!("reports.{}{}", name, e))?;
+                let report = Report::try_from(cfg).map_err(|e| eyre!("reports.{}{}", name, e))?;
                 self.reports.insert(name.clone(), report);
             }
         }
@@ -201,7 +201,7 @@ impl Settings {
             f.clone()
         } else {
             Settings::default_filename()
-                .ok_or_else(|| anyhow!("Could not determine config file name"))?
+                .ok_or_else(|| eyre!("Could not determine config file name"))?
         };
 
         let exists = filename.exists();

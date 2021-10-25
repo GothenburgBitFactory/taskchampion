@@ -109,7 +109,7 @@ pub(crate) fn invoke(command: Command, settings: Settings) -> Result<(), crate::
 // utilities for invoke
 
 /// Get the replica for this invocation
-fn get_replica(settings: &Settings) -> anyhow::Result<Replica> {
+fn get_replica(settings: &Settings) -> eyre::Result<Replica> {
     let taskdb_dir = settings.data_dir.clone();
     log::debug!("Replica data_dir: {:?}", taskdb_dir);
     let storage_config = StorageConfig::OnDisk { taskdb_dir };
@@ -117,7 +117,7 @@ fn get_replica(settings: &Settings) -> anyhow::Result<Replica> {
 }
 
 /// Get the server for this invocation
-fn get_server(settings: &Settings) -> anyhow::Result<Box<dyn Server>> {
+fn get_server(settings: &Settings) -> eyre::Result<Box<dyn Server>> {
     // if server_client_key and server_origin are both set, use
     // the remote server
     let config = if let (Some(client_key), Some(origin), Some(encryption_secret)) = (

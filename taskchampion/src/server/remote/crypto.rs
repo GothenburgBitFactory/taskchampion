@@ -26,7 +26,7 @@ pub(super) struct Cleartext {
 
 impl Cleartext {
     /// Seal the payload into its ciphertext
-    pub(super) fn seal(self, secret: &Secret) -> anyhow::Result<Ciphertext> {
+    pub(super) fn seal(self, secret: &Secret) -> eyre::Result<Ciphertext> {
         let cryptor = RingCryptor::new().with_aad(self.version_id.as_bytes());
         let ciphertext = cryptor.seal_with_passphrase(secret.as_ref(), &self.payload)?;
         Ok(Ciphertext(ciphertext))
@@ -40,20 +40,20 @@ impl Ciphertext {
     pub(super) fn from_resp(
         resp: ureq::Response,
         content_type: &str,
-    ) -> Result<Ciphertext, anyhow::Error> {
+    ) -> Result<Ciphertext, eyre::Error> {
         if resp.header("Content-Type") == Some(content_type) {
             let mut reader = resp.into_reader();
             let mut bytes = vec![];
             reader.read_to_end(&mut bytes)?;
             Ok(Self(bytes))
         } else {
-            Err(anyhow::anyhow!(
+            Err(eyre::eyre!(
                 "Response did not have expected content-type"
             ))
         }
     }
 
-    pub(super) fn open(self, secret: &Secret, version_id: Uuid) -> anyhow::Result<Cleartext> {
+    pub(super) fn open(self, secret: &Secret, version_id: Uuid) -> eyre::Result<Cleartext> {
         let cryptor = RingCryptor::new().with_aad(version_id.as_bytes());
         let plaintext = cryptor.open(secret.as_ref(), &self.0)?;
 

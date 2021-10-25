@@ -16,7 +16,7 @@ pub(super) fn sync(
     server: &mut Box<dyn Server>,
     txn: &mut dyn StorageTxn,
     avoid_snapshots: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     // if this taskdb is entirely empty, then start by getting and applying a snapshot
     if txn.is_empty()? {
         trace!("storage is empty; attempting to apply a snapshot");
@@ -110,7 +110,7 @@ pub(super) fn sync(
     Ok(())
 }
 
-fn apply_version(txn: &mut dyn StorageTxn, mut version: Version) -> anyhow::Result<()> {
+fn apply_version(txn: &mut dyn StorageTxn, mut version: Version) -> eyre::Result<()> {
     // The situation here is that the server has already applied all server operations, and we
     // have already applied all local operations, so states have diverged by several
     // operations.  We need to figure out what operations to apply locally and on the server in
@@ -186,7 +186,7 @@ mod test {
     }
 
     #[test]
-    fn test_sync() -> anyhow::Result<()> {
+    fn test_sync() -> eyre::Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
 
         let mut db1 = newdb();
@@ -248,7 +248,7 @@ mod test {
     }
 
     #[test]
-    fn test_sync_create_delete() -> anyhow::Result<()> {
+    fn test_sync_create_delete() -> eyre::Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
 
         let mut db1 = newdb();
@@ -303,7 +303,7 @@ mod test {
     }
 
     #[test]
-    fn test_sync_add_snapshot_start_with_snapshot() -> anyhow::Result<()> {
+    fn test_sync_add_snapshot_start_with_snapshot() -> eyre::Result<()> {
         let mut test_server = TestServer::new();
 
         let mut server: Box<dyn Server> = test_server.server();
@@ -325,7 +325,7 @@ mod test {
         let base_version = db1.storage.txn()?.base_version()?;
         let (v, s) = test_server
             .snapshot()
-            .ok_or_else(|| anyhow::anyhow!("no snapshot"))?;
+            .ok_or_else(|| eyre::eyre!("no snapshot"))?;
         assert_eq!(v, base_version);
 
         let tasks = SnapshotTasks::decode(&s)?.into_inner();
@@ -355,7 +355,7 @@ mod test {
     }
 
     #[test]
-    fn test_sync_avoids_snapshot() -> anyhow::Result<()> {
+    fn test_sync_avoids_snapshot() -> eyre::Result<()> {
         let test_server = TestServer::new();
 
         let mut server: Box<dyn Server> = test_server.server();

@@ -13,7 +13,7 @@ pub enum StorageConfig {
 }
 
 impl StorageConfig {
-    pub fn into_storage(self) -> anyhow::Result<Box<dyn Storage>> {
+    pub fn into_storage(self) -> eyre::Result<Box<dyn Storage>> {
         Ok(match self {
             StorageConfig::OnDisk { taskdb_dir } => Box::new(SqliteStorage::new(taskdb_dir)?),
             StorageConfig::InMemory => Box::new(InMemoryStorage::new()),

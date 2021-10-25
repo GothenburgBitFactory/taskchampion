@@ -36,19 +36,19 @@ struct InnerTxn<'a>(MutexGuard<'a, Inner>);
 ///
 /// NOTE: this does not implement transaction rollback.
 impl Storage for InMemoryStorage {
-    fn txn<'a>(&'a self) -> anyhow::Result<Box<dyn StorageTxn + 'a>> {
+    fn txn<'a>(&'a self) -> eyre::Result<Box<dyn StorageTxn + 'a>> {
         Ok(Box::new(InnerTxn(self.0.lock().expect("poisoned lock"))))
     }
 }
 
 impl<'a> StorageTxn for InnerTxn<'a> {
-    fn get_client(&mut self, client_key: Uuid) -> anyhow::Result<Option<Client>> {
+    fn get_client(&mut self, client_key: Uuid) -> eyre::Result<Option<Client>> {
         Ok(self.0.clients.get(&client_key).cloned())
     }
 
-    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> anyhow::Result<()> {
+    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> eyre::Result<()> {
         if self.0.clients.get(&client_key).is_some() {
-            return Err(anyhow::anyhow!("Client {} already exists", client_key));
+            return Err(eyre::eyre!("Client {} already exists", client_key));
         }
         self.0.clients.insert(
             client_key,
@@ -65,12 +65,12 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         client_key: Uuid,
         snapshot: Snapshot,
         data: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let mut client = self
             .0
             .clients
             .get_mut(&client_key)
-            .ok_or_else(|| anyhow::anyhow!("no such client"))?;
+            .ok_or_else(|| eyre::eyre!("no such client"))?;
         client.snapshot = Some(snapshot);
         self.0.snapshots.insert(client_key, data);
         Ok(())
@@ -80,12 +80,12 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> eyre::Result<Option<Vec<u8>>> {
         // sanity check
         let client = self.0.clients.get(&client_key);
-        let client = client.ok_or_else(|| anyhow::anyhow!("no such client"))?;
+        let client = client.ok_or_else(|| eyre::eyre!("no such client"))?;
         if Some(&version_id) != client.snapshot.as_ref().map(|snap| &snap.version_id) {
-            return Err(anyhow::anyhow!("unexpected snapshot_version_id"));
+            return Err(eyre::eyre!("unexpected snapshot_version_id"));
         }
         Ok(self.0.snapshots.get(&client_key).cloned())
     }
@@ -94,7 +94,7 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         &mut self,
         client_key: Uuid,
         parent_version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         if let Some(parent_version_id) = self.0.children.get(&(client_key, parent_version_id)) {
             Ok(self
                 .0
@@ -110,7 +110,7 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         Ok(self.0.versions.get(&(client_key, version_id)).cloned())
     }
 
@@ -120,7 +120,7 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         version_id: Uuid,
         parent_version_id: Uuid,
         history_segment: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         // TODO: verify it doesn't exist (`.entry`?)
         let version = Version {
             version_id,
@@ -134,7 +134,7 @@ impl<'a> StorageTxn for InnerTxn<'a> {
                 snap.versions_since += 1;
             }
         } else {
-            return Err(anyhow::anyhow!("Client {} does not exist", client_key));
+            return Err(eyre::eyre!("Client {} does not exist", client_key));
         }
 
         self.0
@@ -145,7 +145,7 @@ impl<'a> StorageTxn for InnerTxn<'a> {
         Ok(())
     }
 
-    fn commit(&mut self) -> anyhow::Result<()> {
+    fn commit(&mut self) -> eyre::Result<()> {
         Ok(())
     }
 }
@@ -156,7 +156,7 @@ mod test {
     use chrono::Utc;
 
     #[test]
-    fn test_get_client_empty() -> anyhow::Result<()> {
+    fn test_get_client_empty() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let mut txn = storage.txn()?;
         let maybe_client = txn.get_client(Uuid::new_v4())?;
@@ -165,7 +165,7 @@ mod test {
     }
 
     #[test]
-    fn test_client_storage() -> anyhow::Result<()> {
+    fn test_client_storage() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let mut txn = storage.txn()?;
 
@@ -199,7 +199,7 @@ mod test {
     }
 
     #[test]
-    fn test_gvbp_empty() -> anyhow::Result<()> {
+    fn test_gvbp_empty() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let mut txn = storage.txn()?;
         let maybe_version = txn.get_version_by_parent(Uuid::new_v4(), Uuid::new_v4())?;
@@ -208,7 +208,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_version_and_get_version() -> anyhow::Result<()> {
+    fn test_add_version_and_get_version() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let mut txn = storage.txn()?;
 
@@ -243,7 +243,7 @@ mod test {
     }
 
     #[test]
-    fn test_snapshots() -> anyhow::Result<()> {
+    fn test_snapshots() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let mut txn = storage.txn()?;
 

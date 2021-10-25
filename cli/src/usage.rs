@@ -3,7 +3,7 @@
 
 use crate::argparse;
 use crate::settings;
-use anyhow::Result;
+use eyre::Result;
 use std::io::Write;
 
 #[cfg(feature = "usage-docs")]
@@ -129,7 +129,7 @@ impl Usage {
                             prop.write_sort_by_markdown(&mut w)?;
                         }
                     }
-                    _ => anyhow::bail!("Unkonwn doc type {}", doc_type),
+                    _ => eyre::bail!("Unkonwn doc type {}", doc_type),
                 }
             } else {
                 writeln!(w, "{}", line)?;

@@ -42,12 +42,12 @@ impl RemoteServer {
 }
 
 /// Read a UUID-bearing header or fail trying
-fn get_uuid_header(resp: &ureq::Response, name: &str) -> anyhow::Result<Uuid> {
+fn get_uuid_header(resp: &ureq::Response, name: &str) -> eyre::Result<Uuid> {
     let value = resp
         .header(name)
-        .ok_or_else(|| anyhow::anyhow!("Response does not have {} header", name))?;
+        .ok_or_else(|| eyre::eyre!("Response does not have {} header", name))?;
     let value = Uuid::parse_str(value)
-        .map_err(|e| anyhow::anyhow!("{} header is not a valid UUID: {}", name, e))?;
+        .map_err(|e| eyre::eyre!("{} header is not a valid UUID: {}", name, e))?;
     Ok(value)
 }
 
@@ -68,7 +68,7 @@ impl Server for RemoteServer {
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
-    ) -> anyhow::Result<(AddVersionResult, SnapshotUrgency)> {
+    ) -> eyre::Result<(AddVersionResult, SnapshotUrgency)> {
         let url = format!(
             "{}/v1/client/add-version/{}",
             self.origin, parent_version_id
@@ -106,7 +106,7 @@ impl Server for RemoteServer {
     fn get_child_version(
         &mut self,
         parent_version_id: VersionId,
-    ) -> anyhow::Result<GetVersionResult> {
+    ) -> eyre::Result<GetVersionResult> {
         let url = format!(
             "{}/v1/client/get-child-version/{}",
             self.origin, parent_version_id
@@ -137,7 +137,7 @@ impl Server for RemoteServer {
         }
     }
 
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> anyhow::Result<()> {
+    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> eyre::Result<()> {
         let url = format!("{}/v1/client/add-snapshot/{}", self.origin, version_id);
         let cleartext = Cleartext {
             version_id,
@@ -153,7 +153,7 @@ impl Server for RemoteServer {
             .map(|_| ())?)
     }
 
-    fn get_snapshot(&mut self) -> anyhow::Result<Option<(VersionId, Snapshot)>> {
+    fn get_snapshot(&mut self) -> eyre::Result<Option<(VersionId, Snapshot)>> {
         let url = format!("{}/v1/client/snapshot", self.origin);
         match self
             .agent

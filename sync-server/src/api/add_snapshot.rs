@@ -81,7 +81,7 @@ mod test {
     use uuid::Uuid;
 
     #[actix_rt::test]
-    async fn test_success() -> anyhow::Result<()> {
+    async fn test_success() -> eyre::Result<()> {
         let client_key = Uuid::new_v4();
         let version_id = Uuid::new_v4();
         let storage: Box<dyn Storage> = Box::new(InMemoryStorage::new());

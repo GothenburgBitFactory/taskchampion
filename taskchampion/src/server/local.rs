@@ -3,7 +3,7 @@ use crate::server::{
     VersionId, NIL_VERSION_ID,
 };
 use crate::storage::sqlite::StoredUuid;
-use anyhow::Context;
+use eyre::Context;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -22,13 +22,13 @@ pub struct LocalServer {
 }
 
 impl LocalServer {
-    fn txn(&mut self) -> anyhow::Result<rusqlite::Transaction> {
+    fn txn(&mut self) -> eyre::Result<rusqlite::Transaction> {
         let txn = self.con.transaction()?;
         Ok(txn)
     }
 
     /// A server which has no notion of clients, signatures, encryption, etc.
-    pub fn new<P: AsRef<Path>>(directory: P) -> anyhow::Result<LocalServer> {
+    pub fn new<P: AsRef<Path>>(directory: P) -> eyre::Result<LocalServer> {
         let db_file = directory
             .as_ref()
             .join("taskchampion-local-sync-server.sqlite3");
@@ -45,7 +45,7 @@ impl LocalServer {
         Ok(LocalServer { con })
     }
 
-    fn get_latest_version_id(&mut self) -> anyhow::Result<VersionId> {
+    fn get_latest_version_id(&mut self) -> eyre::Result<VersionId> {
         let t = self.txn()?;
         let result: Option<StoredUuid> = t
             .query_row(
@@ -57,7 +57,7 @@ impl LocalServer {
         Ok(result.map(|x| x.0).unwrap_or(NIL_VERSION_ID))
     }
 
-    fn set_latest_version_id(&mut self, version_id: VersionId) -> anyhow::Result<()> {
+    fn set_latest_version_id(&mut self, version_id: VersionId) -> eyre::Result<()> {
         let t = self.txn()?;
         t.execute(
             "INSERT OR REPLACE INTO data (key, value) VALUES ('latest_version_id', ?)",
@@ -71,7 +71,7 @@ impl LocalServer {
     fn get_version_by_parent_version_id(
         &mut self,
         parent_version_id: VersionId,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         let t = self.txn()?;
         let r = t.query_row(
             "SELECT version_id, parent_version_id, data FROM versions WHERE parent_version_id = ?",
@@ -92,7 +92,7 @@ impl LocalServer {
         Ok(r)
     }
 
-    fn add_version_by_parent_version_id(&mut self, version: Version) -> anyhow::Result<()> {
+    fn add_version_by_parent_version_id(&mut self, version: Version) -> eyre::Result<()> {
         let t = self.txn()?;
         t.execute(
             "INSERT INTO versions (version_id, parent_version_id, data) VALUES (?, ?, ?)",
@@ -115,7 +115,7 @@ impl Server for LocalServer {
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
-    ) -> anyhow::Result<(AddVersionResult, SnapshotUrgency)> {
+    ) -> eyre::Result<(AddVersionResult, SnapshotUrgency)> {
         // no client lookup
         // no signature validation
 
@@ -144,7 +144,7 @@ impl Server for LocalServer {
     fn get_child_version(
         &mut self,
         parent_version_id: VersionId,
-    ) -> anyhow::Result<GetVersionResult> {
+    ) -> eyre::Result<GetVersionResult> {
         if let Some(version) = self.get_version_by_parent_version_id(parent_version_id)? {
             Ok(GetVersionResult::Version {
                 version_id: version.version_id,
@@ -156,12 +156,12 @@ impl Server for LocalServer {
         }
     }
 
-    fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> anyhow::Result<()> {
+    fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> eyre::Result<()> {
         // the local server never requests a snapshot, so it should never get one
         unreachable!()
     }
 
-    fn get_snapshot(&mut self) -> anyhow::Result<Option<(VersionId, Snapshot)>> {
+    fn get_snapshot(&mut self) -> eyre::Result<Option<(VersionId, Snapshot)>> {
         Ok(None)
     }
 }
@@ -173,7 +173,7 @@ mod test {
     use tempfile::TempDir;
 
     #[test]
-    fn test_empty() -> anyhow::Result<()> {
+    fn test_empty() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let child_version = server.get_child_version(NIL_VERSION_ID)?;
@@ -182,7 +182,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_zero_base() -> anyhow::Result<()> {
+    fn test_add_zero_base() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let history = b"1234".to_vec();
@@ -207,7 +207,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_nonzero_base() -> anyhow::Result<()> {
+    fn test_add_nonzero_base() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let history = b"1234".to_vec();
@@ -235,7 +235,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_nonzero_base_forbidden() -> anyhow::Result<()> {
+    fn test_add_nonzero_base_forbidden() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(&tmp_dir.path())?;
         let history = b"1234".to_vec();

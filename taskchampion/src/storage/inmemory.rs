@@ -40,14 +40,14 @@ impl<'t> Txn<'t> {
 }
 
 impl<'t> StorageTxn for Txn<'t> {
-    fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<TaskMap>> {
+    fn get_task(&mut self, uuid: Uuid) -> eyre::Result<Option<TaskMap>> {
         match self.data_ref().tasks.get(&uuid) {
             None => Ok(None),
             Some(t) => Ok(Some(t.clone())),
         }
     }
 
-    fn create_task(&mut self, uuid: Uuid) -> anyhow::Result<bool> {
+    fn create_task(&mut self, uuid: Uuid) -> eyre::Result<bool> {
         if let ent @ Entry::Vacant(_) = self.mut_data_ref().tasks.entry(uuid) {
             ent.or_insert_with(TaskMap::new);
             Ok(true)
@@ -56,16 +56,16 @@ impl<'t> StorageTxn for Txn<'t> {
         }
     }
 
-    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> anyhow::Result<()> {
+    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> eyre::Result<()> {
         self.mut_data_ref().tasks.insert(uuid, task);
         Ok(())
     }
 
-    fn delete_task(&mut self, uuid: Uuid) -> anyhow::Result<bool> {
+    fn delete_task(&mut self, uuid: Uuid) -> eyre::Result<bool> {
         Ok(self.mut_data_ref().tasks.remove(&uuid).is_some())
     }
 
-    fn all_tasks<'a>(&mut self) -> anyhow::Result<Vec<(Uuid, TaskMap)>> {
+    fn all_tasks<'a>(&mut self) -> eyre::Result<Vec<(Uuid, TaskMap)>> {
         Ok(self
             .data_ref()
             .tasks
@@ -74,58 +74,58 @@ impl<'t> StorageTxn for Txn<'t> {
             .collect())
     }
 
-    fn all_task_uuids<'a>(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    fn all_task_uuids<'a>(&mut self) -> eyre::Result<Vec<Uuid>> {
         Ok(self.data_ref().tasks.keys().copied().collect())
     }
 
-    fn base_version(&mut self) -> anyhow::Result<VersionId> {
+    fn base_version(&mut self) -> eyre::Result<VersionId> {
         Ok(self.data_ref().base_version)
     }
 
-    fn set_base_version(&mut self, version: VersionId) -> anyhow::Result<()> {
+    fn set_base_version(&mut self, version: VersionId) -> eyre::Result<()> {
         self.mut_data_ref().base_version = version;
         Ok(())
     }
 
-    fn operations(&mut self) -> anyhow::Result<Vec<Operation>> {
+    fn operations(&mut self) -> eyre::Result<Vec<Operation>> {
         Ok(self.data_ref().operations.clone())
     }
 
-    fn add_operation(&mut self, op: Operation) -> anyhow::Result<()> {
+    fn add_operation(&mut self, op: Operation) -> eyre::Result<()> {
         self.mut_data_ref().operations.push(op);
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<Operation>) -> anyhow::Result<()> {
+    fn set_operations(&mut self, ops: Vec<Operation>) -> eyre::Result<()> {
         self.mut_data_ref().operations = ops;
         Ok(())
     }
 
-    fn get_working_set(&mut self) -> anyhow::Result<Vec<Option<Uuid>>> {
+    fn get_working_set(&mut self) -> eyre::Result<Vec<Option<Uuid>>> {
         Ok(self.data_ref().working_set.clone())
     }
 
-    fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    fn add_to_working_set(&mut self, uuid: Uuid) -> eyre::Result<usize> {
         let working_set = &mut self.mut_data_ref().working_set;
         working_set.push(Some(uuid));
         Ok(working_set.len())
     }
 
-    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> anyhow::Result<()> {
+    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> eyre::Result<()> {
         let working_set = &mut self.mut_data_ref().working_set;
         if index >= working_set.len() {
-            anyhow::bail!("Index {} is not in the working set", index);
+            eyre::bail!("Index {} is not in the working set", index);
         }
         working_set[index] = uuid;
         Ok(())
     }
 
-    fn clear_working_set(&mut self) -> anyhow::Result<()> {
+    fn clear_working_set(&mut self) -> eyre::Result<()> {
         self.mut_data_ref().working_set = vec![None];
         Ok(())
     }
 
-    fn commit(&mut self) -> anyhow::Result<()> {
+    fn commit(&mut self) -> eyre::Result<()> {
         // copy the new_data back into storage to commit the transaction
         if let Some(data) = self.new_data.take() {
             self.storage.data = data;
@@ -155,7 +155,7 @@ impl InMemoryStorage {
 }
 
 impl Storage for InMemoryStorage {
-    fn txn<'a>(&'a mut self) -> anyhow::Result<Box<dyn StorageTxn + 'a>> {
+    fn txn<'a>(&'a mut self) -> eyre::Result<Box<dyn StorageTxn + 'a>> {
         Ok(Box::new(Txn {
             storage: self,
             new_data: None,
@@ -172,7 +172,7 @@ mod test {
     // elsewhere and not tested here)
 
     #[test]
-    fn get_working_set_empty() -> anyhow::Result<()> {
+    fn get_working_set_empty() -> eyre::Result<()> {
         let mut storage = InMemoryStorage::new();
 
         {
@@ -185,7 +185,7 @@ mod test {
     }
 
     #[test]
-    fn add_to_working_set() -> anyhow::Result<()> {
+    fn add_to_working_set() -> eyre::Result<()> {
         let mut storage = InMemoryStorage::new();
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
@@ -207,7 +207,7 @@ mod test {
     }
 
     #[test]
-    fn clear_working_set() -> anyhow::Result<()> {
+    fn clear_working_set() -> eyre::Result<()> {
         let mut storage = InMemoryStorage::new();
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();

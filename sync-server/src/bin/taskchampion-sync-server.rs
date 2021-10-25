@@ -6,7 +6,7 @@ use taskchampion_sync_server::storage::SqliteStorage;
 use taskchampion_sync_server::{Server, ServerConfig};
 
 #[actix_web::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> eyre::Result<()> {
     env_logger::init();
     let defaults = ServerConfig::default();
     let default_snapshot_versions = defaults.snapshot_versions.to_string();

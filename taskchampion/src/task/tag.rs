@@ -43,11 +43,11 @@ impl Tag {
 }
 
 impl FromStr for Tag {
-    type Err = anyhow::Error;
+    type Err = eyre::Error;
 
-    fn from_str(value: &str) -> Result<Tag, anyhow::Error> {
-        fn err(value: &str) -> Result<Tag, anyhow::Error> {
-            anyhow::bail!("invalid tag {:?}", value)
+    fn from_str(value: &str) -> Result<Tag, eyre::Error> {
+        fn err(value: &str) -> Result<Tag, eyre::Error> {
+            eyre::bail!("invalid tag {:?}", value)
         }
 
         // first, look for synthetic tags
@@ -78,7 +78,7 @@ impl FromStr for Tag {
 }
 
 impl TryFrom<&str> for Tag {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(value: &str) -> Result<Tag, Self::Error> {
         Self::from_str(value)
@@ -86,7 +86,7 @@ impl TryFrom<&str> for Tag {
 }
 
 impl TryFrom<&String> for Tag {
-    type Error = anyhow::Error;
+    type Error = eyre::Error;
 
     fn try_from(value: &String) -> Result<Tag, Self::Error> {
         Self::from_str(&value[..])

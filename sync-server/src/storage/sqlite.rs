@@ -1,5 +1,5 @@
 use super::{Client, Snapshot, Storage, StorageTxn, Uuid, Version};
-use anyhow::Context;
+use eyre::Context;
 use chrono::{TimeZone, Utc};
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -37,11 +37,11 @@ pub struct SqliteStorage {
 }
 
 impl SqliteStorage {
-    fn new_connection(&self) -> anyhow::Result<Connection> {
+    fn new_connection(&self) -> eyre::Result<Connection> {
         Ok(Connection::open(&self.db_file)?)
     }
 
-    pub fn new<P: AsRef<Path>>(directory: P) -> anyhow::Result<SqliteStorage> {
+    pub fn new<P: AsRef<Path>>(directory: P) -> eyre::Result<SqliteStorage> {
         std::fs::create_dir_all(&directory)?;
         let db_file = directory.as_ref().join("taskchampion-sync-server.sqlite3");
 
@@ -74,7 +74,7 @@ impl SqliteStorage {
 }
 
 impl Storage for SqliteStorage {
-    fn txn<'a>(&'a self) -> anyhow::Result<Box<dyn StorageTxn + 'a>> {
+    fn txn<'a>(&'a self) -> eyre::Result<Box<dyn StorageTxn + 'a>> {
         let con = self.new_connection()?;
         let t = Txn { con };
         Ok(Box::new(t))
@@ -98,7 +98,7 @@ impl Txn {
         query: &'static str,
         client_key: Uuid,
         version_id_arg: Uuid,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         let t = self.get_txn()?;
         let r = t
             .query_row(
@@ -122,7 +122,7 @@ impl Txn {
 }
 
 impl StorageTxn for Txn {
-    fn get_client(&mut self, client_key: Uuid) -> anyhow::Result<Option<Client>> {
+    fn get_client(&mut self, client_key: Uuid) -> eyre::Result<Option<Client>> {
         let t = self.get_txn()?;
         let result: Option<Client> = t
             .query_row(
@@ -166,7 +166,7 @@ impl StorageTxn for Txn {
         Ok(result)
     }
 
-    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> anyhow::Result<()> {
+    fn new_client(&mut self, client_key: Uuid, latest_version_id: Uuid) -> eyre::Result<()> {
         let t = self.get_txn()?;
 
         t.execute(
@@ -183,7 +183,7 @@ impl StorageTxn for Txn {
         client_key: Uuid,
         snapshot: Snapshot,
         data: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let t = self.get_txn()?;
 
         t.execute(
@@ -211,7 +211,7 @@ impl StorageTxn for Txn {
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> eyre::Result<Option<Vec<u8>>> {
         let t = self.get_txn()?;
         let r = t
             .query_row(
@@ -224,10 +224,10 @@ impl StorageTxn for Txn {
                 },
             )
             .optional()
-            .context("Error getting snapshot")?;
+            .wrap_err("Error getting snapshot")?;
         r.map(|(v, d)| {
             if v != version_id {
-                return Err(anyhow::anyhow!("unexpected snapshot_version_id"));
+                return Err(eyre::eyre!("unexpected snapshot_version_id"));
             }
 
             Ok(d)
@@ -239,7 +239,7 @@ impl StorageTxn for Txn {
         &mut self,
         client_key: Uuid,
         parent_version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         self.get_version_impl(
             "SELECT version_id, parent_version_id, history_segment FROM versions WHERE parent_version_id = ? AND client_key = ?",
             client_key,
@@ -250,7 +250,7 @@ impl StorageTxn for Txn {
         &mut self,
         client_key: Uuid,
         version_id: Uuid,
-    ) -> anyhow::Result<Option<Version>> {
+    ) -> eyre::Result<Option<Version>> {
         self.get_version_impl(
             "SELECT version_id, parent_version_id, history_segment FROM versions WHERE version_id = ? AND client_key = ?",
             client_key,
@@ -263,7 +263,7 @@ impl StorageTxn for Txn {
         version_id: Uuid,
         parent_version_id: Uuid,
         history_segment: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let t = self.get_txn()?;
 
         t.execute(
@@ -290,7 +290,7 @@ impl StorageTxn for Txn {
         Ok(())
     }
 
-    fn commit(&mut self) -> anyhow::Result<()> {
+    fn commit(&mut self) -> eyre::Result<()> {
         // FIXME: Note the queries aren't currently run in a
         // transaction, as storing the transaction object and a pooled
         // connection in the `Txn` object is complex.
@@ -307,7 +307,7 @@ mod test {
     use tempfile::TempDir;
 
     #[test]
-    fn test_emtpy_dir() -> anyhow::Result<()> {
+    fn test_emtpy_dir() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
         let storage = SqliteStorage::new(&non_existant)?;
@@ -318,7 +318,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_client_empty() -> anyhow::Result<()> {
+    fn test_get_client_empty() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let storage = SqliteStorage::new(&tmp_dir.path())?;
         let mut txn = storage.txn()?;
@@ -328,7 +328,7 @@ mod test {
     }
 
     #[test]
-    fn test_client_storage() -> anyhow::Result<()> {
+    fn test_client_storage() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let storage = SqliteStorage::new(&tmp_dir.path())?;
         let mut txn = storage.txn()?;
@@ -363,7 +363,7 @@ mod test {
     }
 
     #[test]
-    fn test_gvbp_empty() -> anyhow::Result<()> {
+    fn test_gvbp_empty() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let storage = SqliteStorage::new(&tmp_dir.path())?;
         let mut txn = storage.txn()?;
@@ -373,7 +373,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_version_and_get_version() -> anyhow::Result<()> {
+    fn test_add_version_and_get_version() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let storage = SqliteStorage::new(&tmp_dir.path())?;
         let mut txn = storage.txn()?;
@@ -407,7 +407,7 @@ mod test {
     }
 
     #[test]
-    fn test_snapshots() -> anyhow::Result<()> {
+    fn test_snapshots() -> eyre::Result<()> {
         let tmp_dir = TempDir::new()?;
         let storage = SqliteStorage::new(&tmp_dir.path())?;
         let mut txn = storage.txn()?;

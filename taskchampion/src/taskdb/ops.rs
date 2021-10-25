@@ -1,7 +1,7 @@
 use crate::errors::Error;
 use crate::storage::{Operation, StorageTxn};
 
-pub(super) fn apply_op(txn: &mut dyn StorageTxn, op: &Operation) -> anyhow::Result<()> {
+pub(super) fn apply_op(txn: &mut dyn StorageTxn, op: &Operation) -> eyre::Result<()> {
     match op {
         Operation::Create { uuid } => {
             // insert if the task does not already exist
@@ -46,7 +46,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn test_apply_create() -> anyhow::Result<()> {
+    fn test_apply_create() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op = Operation::Create { uuid };
@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_create_exists() -> anyhow::Result<()> {
+    fn test_apply_create_exists() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op = Operation::Create { uuid };
@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_create_update() -> anyhow::Result<()> {
+    fn test_apply_create_update() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op1 = Operation::Create { uuid };
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_create_update_delete_prop() -> anyhow::Result<()> {
+    fn test_apply_create_update_delete_prop() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op1 = Operation::Create { uuid };
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_update_does_not_exist() -> anyhow::Result<()> {
+    fn test_apply_update_does_not_exist() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op = Operation::Update {
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_create_delete() -> anyhow::Result<()> {
+    fn test_apply_create_delete() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op1 = Operation::Create { uuid };
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_delete_not_present() -> anyhow::Result<()> {
+    fn test_apply_delete_not_present() -> eyre::Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op = Operation::Delete { uuid };

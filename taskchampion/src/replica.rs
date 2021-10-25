@@ -4,8 +4,8 @@ use crate::storage::{Operation, Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
-use anyhow::Context;
 use chrono::Utc;
+use eyre::Context;
 use log::trace;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -51,7 +51,7 @@ impl Replica {
         uuid: Uuid,
         property: S1,
         value: Option<S2>,
-    ) -> anyhow::Result<()>
+    ) -> eyre::Result<()>
     where
         S1: Into<String>,
         S2: Into<String>,
@@ -65,12 +65,12 @@ impl Replica {
     }
 
     /// Add the given uuid to the working set, returning its index.
-    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> eyre::Result<usize> {
         self.taskdb.add_to_working_set(uuid)
     }
 
     /// Get all tasks represented as a map keyed by UUID
-    pub fn all_tasks(&mut self) -> anyhow::Result<HashMap<Uuid, Task>> {
+    pub fn all_tasks(&mut self) -> eyre::Result<HashMap<Uuid, Task>> {
         let mut res = HashMap::new();
         for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
             res.insert(uuid, Task::new(uuid, tm));
@@ -79,18 +79,18 @@ impl Replica {
     }
 
     /// Get the UUIDs of all tasks
-    pub fn all_task_uuids(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    pub fn all_task_uuids(&mut self) -> eyre::Result<Vec<Uuid>> {
         self.taskdb.all_task_uuids()
     }
 
     /// Get the "working set" for this replica.  This is a snapshot of the current state,
     /// and it is up to the caller to decide how long to store this value.
-    pub fn working_set(&mut self) -> anyhow::Result<WorkingSet> {
+    pub fn working_set(&mut self) -> eyre::Result<WorkingSet> {
         Ok(WorkingSet::new(self.taskdb.working_set()?))
     }
 
     /// Get an existing task by its UUID
-    pub fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<Task>> {
+    pub fn get_task(&mut self, uuid: Uuid) -> eyre::Result<Option<Task>> {
         Ok(self
             .taskdb
             .get_task(uuid)?
@@ -98,7 +98,7 @@ impl Replica {
     }
 
     /// Create a new task.  The task must not already exist.
-    pub fn new_task(&mut self, status: Status, description: String) -> anyhow::Result<Task> {
+    pub fn new_task(&mut self, status: Status, description: String) -> eyre::Result<Task> {
         let uuid = Uuid::new_v4();
         self.taskdb.apply(Operation::Create { uuid })?;
         trace!("task {} created", uuid);
@@ -112,7 +112,7 @@ impl Replica {
     /// Deleted; this is the final purge of the task.  This is not a public method as deletion
     /// should only occur through expiration.
     #[allow(dead_code)]
-    fn delete_task(&mut self, uuid: Uuid) -> anyhow::Result<()> {
+    fn delete_task(&mut self, uuid: Uuid) -> eyre::Result<()> {
         // check that it already exists; this is a convenience check, as the task may already exist
         // when this Create operation is finally sync'd with operations from other replicas
         if self.taskdb.get_task(uuid)?.is_none() {
@@ -137,12 +137,12 @@ impl Replica {
         &mut self,
         server: &mut Box<dyn Server>,
         avoid_snapshots: bool,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         self.taskdb
             .sync(server, avoid_snapshots)
-            .context("Failed to synchronize with server")?;
+            .wrap_err("Failed to synchronize with server")?;
         self.rebuild_working_set(false)
-            .context("Failed to rebuild working set after sync")?;
+            .wrap_err("Failed to rebuild working set after sync")?;
         Ok(())
     }
 
@@ -150,7 +150,7 @@ impl Replica {
     /// `renumber` is true, then existing tasks may be moved to new working-set indices; in any
     /// case, on completion all pending tasks are in the working set and all non- pending tasks are
     /// not.
-    pub fn rebuild_working_set(&mut self, renumber: bool) -> anyhow::Result<()> {
+    pub fn rebuild_working_set(&mut self, renumber: bool) -> eyre::Result<()> {
         let pending = String::from(Status::Pending.to_taskmap());
         self.taskdb
             .rebuild_working_set(|t| t.get("status") == Some(&pending), renumber)?;

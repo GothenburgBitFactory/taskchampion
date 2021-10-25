@@ -172,7 +172,7 @@ impl<'r> TaskMut<'r> {
 
     /// Set the task's status.  This also adds the task to the working set if the
     /// new status puts it in that set.
-    pub fn set_status(&mut self, status: Status) -> anyhow::Result<()> {
+    pub fn set_status(&mut self, status: Status) -> eyre::Result<()> {
         if status == Status::Pending {
             let uuid = self.uuid;
             self.replica.add_to_working_set(uuid)?;
@@ -180,21 +180,21 @@ impl<'r> TaskMut<'r> {
         self.set_string("status", Some(String::from(status.to_taskmap())))
     }
 
-    pub fn set_description(&mut self, description: String) -> anyhow::Result<()> {
+    pub fn set_description(&mut self, description: String) -> eyre::Result<()> {
         self.set_string("description", Some(description))
     }
 
-    pub fn set_wait(&mut self, wait: Option<DateTime<Utc>>) -> anyhow::Result<()> {
+    pub fn set_wait(&mut self, wait: Option<DateTime<Utc>>) -> eyre::Result<()> {
         self.set_timestamp("wait", wait)
     }
 
-    pub fn set_modified(&mut self, modified: DateTime<Utc>) -> anyhow::Result<()> {
+    pub fn set_modified(&mut self, modified: DateTime<Utc>) -> eyre::Result<()> {
         self.set_timestamp("modified", Some(modified))
     }
 
     /// Start the task by creating "start.<timestamp": "", if the task is not already
     /// active.
-    pub fn start(&mut self) -> anyhow::Result<()> {
+    pub fn start(&mut self) -> eyre::Result<()> {
         if self.is_active() {
             return Ok(());
         }
@@ -203,7 +203,7 @@ impl<'r> TaskMut<'r> {
     }
 
     /// Stop the task by adding the current timestamp to all un-resolved "start.<timestamp>" keys.
-    pub fn stop(&mut self) -> anyhow::Result<()> {
+    pub fn stop(&mut self) -> eyre::Result<()> {
         let keys = self
             .taskmap
             .iter()
@@ -220,29 +220,29 @@ impl<'r> TaskMut<'r> {
     }
 
     /// Mark this task as complete
-    pub fn done(&mut self) -> anyhow::Result<()> {
+    pub fn done(&mut self) -> eyre::Result<()> {
         self.set_status(Status::Completed)
     }
 
     /// Add a tag to this task.  Does nothing if the tag is already present.
-    pub fn add_tag(&mut self, tag: &Tag) -> anyhow::Result<()> {
+    pub fn add_tag(&mut self, tag: &Tag) -> eyre::Result<()> {
         if tag.is_synthetic() {
-            anyhow::bail!("Synthetic tags cannot be modified");
+            eyre::bail!("Synthetic tags cannot be modified");
         }
         self.set_string(format!("tag.{}", tag), Some("".to_owned()))
     }
 
     /// Remove a tag from this task.  Does nothing if the tag is not present.
-    pub fn remove_tag(&mut self, tag: &Tag) -> anyhow::Result<()> {
+    pub fn remove_tag(&mut self, tag: &Tag) -> eyre::Result<()> {
         if tag.is_synthetic() {
-            anyhow::bail!("Synthetic tags cannot be modified");
+            eyre::bail!("Synthetic tags cannot be modified");
         }
         self.set_string(format!("tag.{}", tag), None)
     }
 
     // -- utility functions
 
-    fn lastmod(&mut self) -> anyhow::Result<()> {
+    fn lastmod(&mut self) -> eyre::Result<()> {
         if !self.updated_modified {
             let now = format!("{}", Utc::now().timestamp());
             self.replica
@@ -258,7 +258,7 @@ impl<'r> TaskMut<'r> {
         &mut self,
         property: S,
         value: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         let property = property.into();
         self.lastmod()?;
         self.replica
@@ -278,7 +278,7 @@ impl<'r> TaskMut<'r> {
         &mut self,
         property: &str,
         value: Option<DateTime<Utc>>,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         self.lastmod()?;
         if let Some(value) = value {
             let ts = format!("{}", value.timestamp());
@@ -295,7 +295,7 @@ impl<'r> TaskMut<'r> {
 
     /// Used by tests to ensure that updates are properly written
     #[cfg(test)]
-    fn reload(&mut self) -> anyhow::Result<()> {
+    fn reload(&mut self) -> eyre::Result<()> {
         let uuid = self.uuid;
         let task = self.replica.get_task(uuid)?.unwrap();
         self.task.taskmap = task.taskmap;

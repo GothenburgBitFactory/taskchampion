@@ -2,7 +2,7 @@
 //! invariants, and so on.  This does not implement the HTTP-specific portions; those
 //! are in [`crate::api`].  See the protocol documentation for details.
 use crate::storage::{Client, Snapshot, StorageTxn};
-use anyhow::Context;
+use eyre::Context;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -37,7 +37,7 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    pub fn from_args(snapshot_days: &str, snapshot_versions: &str) -> anyhow::Result<ServerConfig> {
+    pub fn from_args(snapshot_days: &str, snapshot_versions: &str) -> eyre::Result<ServerConfig> {
         Ok(ServerConfig {
             snapshot_days: snapshot_days
                 .parse()
@@ -68,7 +68,7 @@ pub(crate) fn get_child_version<'a>(
     client_key: ClientKey,
     client: Client,
     parent_version_id: VersionId,
-) -> anyhow::Result<GetVersionResult> {
+) -> eyre::Result<GetVersionResult> {
     // If a version with parentVersionId equal to the requested parentVersionId exists, it is returned.
     if let Some(version) = txn.get_version_by_parent(client_key, parent_version_id)? {
         return Ok(GetVersionResult::Success {
@@ -153,7 +153,7 @@ pub(crate) fn add_version<'a>(
     client: Client,
     parent_version_id: VersionId,
     history_segment: HistorySegment,
-) -> anyhow::Result<(AddVersionResult, SnapshotUrgency)> {
+) -> eyre::Result<(AddVersionResult, SnapshotUrgency)> {
     log::debug!(
         "add_version(client_key: {}, parent_version_id: {})",
         client_key,
@@ -210,7 +210,7 @@ pub(crate) fn add_snapshot<'a>(
     client: Client,
     version_id: VersionId,
     data: Vec<u8>,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     log::debug!(
         "add_snapshot(client_key: {}, version_id: {})",
         client_key,
@@ -293,7 +293,7 @@ pub(crate) fn get_snapshot<'a>(
     _config: &ServerConfig,
     client_key: ClientKey,
     client: Client,
-) -> anyhow::Result<Option<(Uuid, Vec<u8>)>> {
+) -> eyre::Result<Option<(Uuid, Vec<u8>)>> {
     Ok(if let Some(snap) = client.snapshot {
         txn.get_snapshot_data(client_key, snap.version_id)?
             .map(|data| (snap.version_id, data))
@@ -355,7 +355,7 @@ mod test {
     }
 
     #[test]
-    fn get_child_version_not_found_initial() -> anyhow::Result<()> {
+    fn get_child_version_not_found_initial() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -379,7 +379,7 @@ mod test {
     }
 
     #[test]
-    fn get_child_version_gone_initial() -> anyhow::Result<()> {
+    fn get_child_version_gone_initial() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -413,7 +413,7 @@ mod test {
     }
 
     #[test]
-    fn get_child_version_not_found_up_to_date() -> anyhow::Result<()> {
+    fn get_child_version_not_found_up_to_date() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -440,7 +440,7 @@ mod test {
     }
 
     #[test]
-    fn get_child_version_gone() -> anyhow::Result<()> {
+    fn get_child_version_gone() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -467,7 +467,7 @@ mod test {
     }
 
     #[test]
-    fn get_child_version_found() -> anyhow::Result<()> {
+    fn get_child_version_found() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -509,7 +509,7 @@ mod test {
         num_versions: u32,
         snapshot_version: Option<u32>,
         snapshot_days_ago: Option<i64>,
-    ) -> anyhow::Result<(Uuid, Vec<Uuid>)> {
+    ) -> eyre::Result<(Uuid, Vec<Uuid>)> {
         init_logging();
         let mut txn = storage.txn()?;
         let client_key = Uuid::new_v4();
@@ -551,7 +551,7 @@ mod test {
         result: (AddVersionResult, SnapshotUrgency),
         expected_history: Vec<u8>,
         expected_urgency: SnapshotUrgency,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         if let AddVersionResult::Ok(new_version_id) = result.0 {
             // check that it invented a new version ID
             for v in existing_versions {
@@ -578,7 +578,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_conflict() -> anyhow::Result<()> {
+    fn add_version_conflict() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let (client_key, versions) = av_setup(&storage, 3, None, None)?;
 
@@ -611,7 +611,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_with_existing_history() -> anyhow::Result<()> {
+    fn add_version_with_existing_history() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let (client_key, versions) = av_setup(&storage, 1, None, None)?;
 
@@ -641,7 +641,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_with_no_history() -> anyhow::Result<()> {
+    fn add_version_with_no_history() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let (client_key, versions) = av_setup(&storage, 0, None, None)?;
 
@@ -672,7 +672,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_success_recent_snapshot() -> anyhow::Result<()> {
+    fn add_version_success_recent_snapshot() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         let (client_key, versions) = av_setup(&storage, 1, Some(0), None)?;
 
@@ -702,7 +702,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_success_aged_snapshot() -> anyhow::Result<()> {
+    fn add_version_success_aged_snapshot() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         // one snapshot, but it was 50 days ago
         let (client_key, versions) = av_setup(&storage, 1, Some(0), Some(50))?;
@@ -733,7 +733,7 @@ mod test {
     }
 
     #[test]
-    fn add_version_success_snapshot_many_versions_ago() -> anyhow::Result<()> {
+    fn add_version_success_snapshot_many_versions_ago() -> eyre::Result<()> {
         let storage = InMemoryStorage::new();
         // one snapshot, but it was 50 versions ago
         let (client_key, versions) = av_setup(&storage, 50, Some(0), None)?;
@@ -767,7 +767,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_success_latest() -> anyhow::Result<()> {
+    fn add_snapshot_success_latest() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -805,7 +805,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_success_older() -> anyhow::Result<()> {
+    fn add_snapshot_success_older() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -845,7 +845,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_fails_no_such() -> anyhow::Result<()> {
+    fn add_snapshot_fails_no_such() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -880,7 +880,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_fails_too_old() -> anyhow::Result<()> {
+    fn add_snapshot_fails_too_old() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -919,7 +919,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_fails_newer_exists() -> anyhow::Result<()> {
+    fn add_snapshot_fails_newer_exists() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -974,7 +974,7 @@ mod test {
     }
 
     #[test]
-    fn add_snapshot_fails_nil_version() -> anyhow::Result<()> {
+    fn add_snapshot_fails_nil_version() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -1004,7 +1004,7 @@ mod test {
     }
 
     #[test]
-    fn get_snapshot_found() -> anyhow::Result<()> {
+    fn get_snapshot_found() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();
@@ -1034,7 +1034,7 @@ mod test {
     }
 
     #[test]
-    fn get_snapshot_not_found() -> anyhow::Result<()> {
+    fn get_snapshot_not_found() -> eyre::Result<()> {
         init_logging();
 
         let storage = InMemoryStorage::new();

@@ -2,7 +2,7 @@ use crate::argparse::Filter;
 use crate::invocation::filtered_tasks;
 use crate::settings::{Column, Property, Report, Settings, SortBy};
 use crate::table;
-use anyhow::anyhow;
+use eyre::eyre;
 use prettytable::{Row, Table};
 use std::cmp::Ordering;
 use taskchampion::{Replica, Task, WorkingSet};
@@ -96,7 +96,7 @@ pub(super) fn display_report<W: WriteColor>(
     let mut report = settings
         .reports
         .get(&report_name)
-        .ok_or_else(|| anyhow!("report `{}` not defined", report_name))?
+        .ok_or_else(|| eyre!("report `{}` not defined", report_name))?
         .clone();
 
     // include any user-supplied filter conditions

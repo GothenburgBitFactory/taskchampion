@@ -6,3 +6,9 @@ members = [
     "sync-server",
     "replica-server-tests"
 ]
+
+
+[profile.dev.package.backtrace]
+# Improve performance of backtrace (used by color-eyre) in debug mode
+# https://github.com/yaahc/color-eyre/blob/v0.5.11/README.md#improving-perf-on-debug-builds
+opt-level = 3

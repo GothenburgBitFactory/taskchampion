@@ -5,7 +5,7 @@ use taskchampion::TaskMut;
 pub(super) fn apply_modification(
     task: &mut TaskMut,
     modification: &Modification,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     match modification.description {
         DescriptionMod::Set(ref description) => task.set_description(description.clone())?,
         DescriptionMod::Prepend(ref description) => {

@@ -42,7 +42,7 @@ pub(crate) fn api_scope() -> Scope {
 }
 
 /// Convert a failure::Error to an Actix ISE
-fn failure_to_ise(err: anyhow::Error) -> impl actix_web::ResponseError {
+fn failure_to_ise(err: eyre::Error) -> impl actix_web::ResponseError {
     error::InternalError::new(err, StatusCode::INTERNAL_SERVER_ERROR)
 }
 
