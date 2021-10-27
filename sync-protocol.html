@@ -177,7 +177,36 @@ The third invariant prevents the server from discarding versions if there is no 
 The fourth invariant prevents the server from discarding versions newer than the snapshot.</p>
 <h2 id="data-formats"><a class="header" href="#data-formats">Data Formats</a></h2>
 <h3 id="encryption"><a class="header" href="#encryption">Encryption</a></h3>
-<p>TBD (#299)</p>
+<p>The client configuration includes an encryption secret of arbitrary length and a clientId to identify itself.
+This section describes how that information is used to encrypt and decrypt data sent to the server (versions and snapshots).</p>
+<h4 id="key-derivation"><a class="header" href="#key-derivation">Key Derivation</a></h4>
+<p>The client derives the 32-byte encryption key from the configured encryption secret using PBKDF2 with HMAC-SHA256 and 100,000 iterations.
+The salt is the SHA256 hash of the 16-byte form of the client key.</p>
+<h4 id="encryption-1"><a class="header" href="#encryption-1">Encryption</a></h4>
+<p>The client uses <a href="https://commondatastorage.googleapis.com/chromium-boringssl-docs/aead.h.html">AEAD</a>, with algorithm CHACHA20_POLY1305.
+The client should generate a random nonce, noting that AEAD is <em>not secure</em> if a nonce is used repeatedly for the same key.</p>
+<p>AEAD supports additional authenticated data (AAD) which must be provided for both open and seal operations.
+In this protocol, the AAD is always 17 bytes of the form:</p>
+<ul>
+<li><code>app_id</code> (byte) - always 1</li>
+<li><code>version_id</code> (16 bytes) - 16-byte form of the version ID associated with this data
+<ul>
+<li>for versions (AddVersion, GetChildVersion), the <em>parent</em> version_id</li>
+<li>for snapshots (AddSnapshot, GetSnapshot), the snapshot version_id</li>
+</ul>
+</li>
+</ul>
+<p>The <code>app_id</code> field is for future expansion to handle other, non-task data using this protocol.
+Including it in the AAD ensures that such data cannot be confused with task data.</p>
+<p>Although the AEAD specification distinguishes ciphertext and tags, for purposes of this specification they are considered concatenated into a single bytestring as in BoringSSL's <code>EVP_AEAD_CTX_seal</code>.</p>
+<h4 id="representation"><a class="header" href="#representation">Representation</a></h4>
+<p>The final byte-stream is comprised of the following structure:</p>
+<ul>
+<li><code>version</code> (byte) - format version (always 1)</li>
+<li><code>nonce</code> (12 bytes) - encryption nonce</li>
+<li><code>ciphertext</code> (remaining bytes) - ciphertext from sealing operation</li>
+</ul>
+<p>The <code>version</code> field identifies this data format, and future formats will have a value other than 1 in this position.</p>
 <h3 id="version"><a class="header" href="#version">Version</a></h3>
 <p>The decrypted form of a version is a JSON array containing operations in the order they should be applied.
 Each operation has the form <code>{TYPE: DATA}</code>, for example:</p>
