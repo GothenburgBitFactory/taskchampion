@@ -709,6 +709,14 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 <ul>
 <li><code>dep_&lt;uuid&gt;</code> - indicates this task depends on <code>&lt;uuid&gt;</code> (value is an empty string)</li>
 </ul>
+<h3 id="udas"><a class="header" href="#udas">UDAs</a></h3>
+<p>Any unrecognized keys are treated as &quot;user-defined attributes&quot; (UDAs).
+These attributes can be used to store additional data associated with a task.
+For example, applications that synchronize tasks with other systems such as calendars or team planning services might store unique identifiers for those systems as UDAs.
+The application defining a UDA defines the format of the value.</p>
+<p>UDAs <em>should</em> have a namespaced structure of the form <code>&lt;namespace&gt;.&lt;key&gt;</code>, where <code>&lt;namespace&gt;</code> identifies the application defining the UDA.
+For example, a service named &quot;DevSync&quot; synchronizing tasks from GitHub might use UDAs like <code>devsync.github.issue-id</code>.
+Note that many existing UDAs for Taskwarrior integrations do not follow this pattern; these are referred to as legacy UDAs.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="synchronization-and-the-sync-server"><a class="header" href="#synchronization-and-the-sync-server">Synchronization and the Sync Server</a></h1>
 <p>This section covers <em>synchronization</em> of <em>replicas</em> containing the same set of tasks.
 A replica is can perform all operations locally without connecting to a sync server, then share those operations with other replicas when it connects.
