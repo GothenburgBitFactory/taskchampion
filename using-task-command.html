@@ -220,6 +220,28 @@ short id's.</p>
 <p>Synchronize this replica locally or against a remote server, as configured.
 Synchronization is a critical part of maintaining the task database, and should
 be done regularly, even if only locally. It is typically run in a crontask.</p>
+<h3 id="ta-import-tw---import-tasks-from-taskwarrior-export"><a class="header" href="#ta-import-tw---import-tasks-from-taskwarrior-export"><code>ta import-tw</code> - Import tasks from TaskWarrior export</a></h3>
+<pre><code class="language-shell">ta import-tw
+</code></pre>
+<p>Import tasks into this replica. The tasks must be provided in the TaskWarrior
+JSON format on stdin. If tasks in the import already exist, they are 'merged'.
+Because TaskChampion lacks the information about the types of UDAs that is
+stored in the TaskWarrior configuration, UDA values are imported as simple
+strings, in the format they appear in the JSON export. This may cause
+undesirable results.</p>
+<h3 id="ta-import-tdb2---import-tasks-from-the-taskwarrior-data-directory"><a class="header" href="#ta-import-tdb2---import-tasks-from-the-taskwarrior-data-directory"><code>ta import-tdb2</code> - Import tasks from the TaskWarrior data directory</a></h3>
+<pre><code class="language-shell">ta import-tdb2 &lt;directory&gt;
+</code></pre>
+<p>Import tasks into this replica from a TaskWarrior data directory. If tasks
+in the import already exist, they are 'merged'. This mode of import supports
+UDAs better than the <code>import</code> subcommand, but requires access to the &quot;raw&quot;
+TaskWarrior data. This command supports task directories written by TaskWarrior-
+2.6.1 or later.</p>
+<h3 id="ta-undo---undo-the-latest-change-made-on-this-replica"><a class="header" href="#ta-undo---undo-the-latest-change-made-on-this-replica"><code>ta undo</code> - Undo the latest change made on this replica</a></h3>
+<pre><code class="language-shell">ta undo
+</code></pre>
+<p>Undo the latest change made on this replica. Changes cannot be undone once they
+have been synchronized.</p>
 <h3 id="ta-report---show-a-report"><a class="header" href="#ta-report---show-a-report"><code>ta report</code> - Show a report</a></h3>
 <pre><code class="language-shell">ta [filter] [report-name] *or* [report-name] [filter]
 </code></pre>
