@@ -158,6 +158,10 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 </ul>
 <p>The result of this reconciliation will be <code>oldtag,newtag2</code>, while the user almost certainly intended <code>oldtag,newtag1,newtag2</code>.</p>
 <p>The key names given below avoid this issue, allowing user updates such as adding a tag or deleting a dependency to be represented in a single <code>Update</code> operation.</p>
+<h2 id="validity"><a class="header" href="#validity">Validity</a></h2>
+<p><em>Any</em> key/value map is a valid task.
+Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information.
+For example, a task with status &quot;completed&quot; but no &quot;end&quot; key present should be interpreted as completed at an unknown time.</p>
 <h2 id="representations"><a class="header" href="#representations">Representations</a></h2>
 <p>Integers are stored in decimal notation.</p>
 <p>Timestamps are stored as UNIX epoch timestamps, in the form of an integer.</p>
@@ -168,6 +172,7 @@ Suppose two such <code>Update</code> operations are made in different replicas a
 <li><code>description</code> - the one-line summary of the task</li>
 <li><code>modified</code> - the time of the last modification of this task</li>
 <li><code>start</code> - the most recent time at which this task was started (a task with no <code>start</code> key is not active)</li>
+<li><code>end</code> - if present, the time at which this task was completed or deleted (note that this key may not agree with <code>status</code>: it may be present for a pending task, or absent for a deleted or completed task)</li>
 <li><code>tag_&lt;tag&gt;</code> - indicates this task has tag <code>&lt;tag&gt;</code> (value is an empty string)</li>
 <li><code>wait</code> - indicates the time before which this task should be hidden, as it is not actionable</li>
 <li><code>entry</code> - the time at which the task was created</li>
