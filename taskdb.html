@@ -160,6 +160,10 @@ This is done in such a way that the task numbers remain stable until the working
 Operations are described in <a href="./storage.html">Replica Storage</a>.</p>
 <p>Each operation is added to the list of operations in the storage, and simultaneously applied to the tasks in that storage.
 Operations are checked for validity as they are applied.</p>
+<h2 id="deletion-and-expiration"><a class="header" href="#deletion-and-expiration">Deletion and Expiration</a></h2>
+<p>Deletion of a task merely changes the task's status to &quot;deleted&quot;, leaving it in the Task database.
+Actual removal of tasks from the task database takes place as part of <em>expiration</em>, triggered by the user as part of a garbage-collection process.
+Expiration removes tasks with a <code>modified</code> property more than 180 days in the past, by creating a <code>Delete(uuid)</code> operation.</p>
 
                     </main>
 

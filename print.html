@@ -240,7 +240,13 @@ modifications.</p>
 </code></pre>
 <p>Mark all tasks matching the required filter as completed, additionally applying
 any given modifications.</p>
-<h3 id="ta-annotate---mark-tasks-as-completed"><a class="header" href="#ta-annotate---mark-tasks-as-completed"><code>ta annotate</code> - Mark tasks as completed</a></h3>
+<h3 id="ta-delete---mark-tasks-as-deleted"><a class="header" href="#ta-delete---mark-tasks-as-deleted"><code>ta delete</code> - Mark tasks as deleted</a></h3>
+<pre><code class="language-shell">ta &lt;filter&gt; delete [modification]
+</code></pre>
+<p>Mark all tasks matching the required filter as deleted, additionally applying
+any given modifications. Deleted tasks remain until they are expired in a 'ta
+gc' operation at least six months after their last modification.</p>
+<h3 id="ta-annotate---annotate-a-task"><a class="header" href="#ta-annotate---annotate-a-task"><code>ta annotate</code> - Annotate a task</a></h3>
 <pre><code class="language-shell">ta &lt;filter&gt; annotate [modification]
 </code></pre>
 <p>Add an annotation to all tasks matching the required filter.</p>
@@ -698,6 +704,10 @@ This is done in such a way that the task numbers remain stable until the working
 Operations are described in <a href="./storage.html">Replica Storage</a>.</p>
 <p>Each operation is added to the list of operations in the storage, and simultaneously applied to the tasks in that storage.
 Operations are checked for validity as they are applied.</p>
+<h2 id="deletion-and-expiration"><a class="header" href="#deletion-and-expiration">Deletion and Expiration</a></h2>
+<p>Deletion of a task merely changes the task's status to &quot;deleted&quot;, leaving it in the Task database.
+Actual removal of tasks from the task database takes place as part of <em>expiration</em>, triggered by the user as part of a garbage-collection process.
+Expiration removes tasks with a <code>modified</code> property more than 180 days in the past, by creating a <code>Delete(uuid)</code> operation.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="tasks-1"><a class="header" href="#tasks-1">Tasks</a></h1>
 <p>Tasks are stored internally as a key/value map with string keys and values.
 All fields are optional: the <code>Create</code> operation creates an empty task.
