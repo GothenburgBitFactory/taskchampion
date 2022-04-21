@@ -2,7 +2,6 @@
 //! invariants, and so on.  This does not implement the HTTP-specific portions; those
 //! are in [`crate::api`].  See the protocol documentation for details.
 use crate::storage::{Client, Snapshot, StorageTxn};
-use anyhow::Context;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -33,19 +32,6 @@ impl Default for ServerConfig {
             snapshot_days: 14,
             snapshot_versions: 100,
         }
-    }
-}
-
-impl ServerConfig {
-    pub fn from_args(snapshot_days: &str, snapshot_versions: &str) -> anyhow::Result<ServerConfig> {
-        Ok(ServerConfig {
-            snapshot_days: snapshot_days
-                .parse()
-                .context("--snapshot-days must be a number")?,
-            snapshot_versions: snapshot_versions
-                .parse()
-                .context("--snapshot-days must be a number")?,
-        })
     }
 }
 

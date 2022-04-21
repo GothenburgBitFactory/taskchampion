@@ -499,6 +499,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bpaf"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3ae2b3ab2d9236fe90d83db056d4a63a216bc3a3b9efe8ba5c79bef60cd07b5"
+
+[[package]]
 name = "brotli-sys"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3046,8 +3052,8 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "anyhow",
+ "bpaf",
  "chrono",
- "clap",
  "env_logger 0.8.4",
  "futures",
  "log",
