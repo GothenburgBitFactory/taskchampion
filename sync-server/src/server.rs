@@ -287,7 +287,7 @@ pub(crate) fn get_snapshot<'a>(
     })
 }
 
-#[cfg(test)]
+#[cfg(testFIXME)]
 mod test {
     use super::*;
     use crate::storage::{InMemoryStorage, Snapshot, Storage};

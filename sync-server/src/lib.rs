@@ -1,18 +1,33 @@
 #![deny(clippy::all)]
 
+// .header("Cache-Control", "no-store, max-age=0"),
+
 mod api;
 mod server;
 pub mod storage;
 
 use crate::storage::Storage;
-use actix_web::{get, middleware, web, Responder};
-use api::{api_scope, ServerState};
+use api::ServerState;
 use std::sync::Arc;
 
 pub use server::ServerConfig;
 
-#[get("/")]
-async fn index() -> impl Responder {
+enum ApiError {
+    BadRequest(String),
+}
+
+impl axum::response::IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            ApiError::BadRequest(msg) => {
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Bad response: {}", msg)).into_response()
+            }
+        }
+    }
+}
+
+
+async fn index() -> String {
     format!("TaskChampion sync server v{}", env!("CARGO_PKG_VERSION"))
 }
 
@@ -30,22 +45,17 @@ impl Server {
         }
     }
 
-    /// Get an Actix-web service for this server.
-    pub fn config(&self, cfg: &mut web::ServiceConfig) {
-        cfg.service(
-            web::scope("")
-                .data(self.server_state.clone())
-                .wrap(
-                    middleware::DefaultHeaders::new()
-                        .header("Cache-Control", "no-store, max-age=0"),
-                )
-                .service(index)
-                .service(api_scope()),
-        );
+    pub fn router(&self) -> axum::Router {
+        use axum::routing::get;
+
+        axum::Router::new()
+            .route("/", get(index))
+            .route("/v1/client/add-snapshot/{version_id}", get(crate::api::add_snapshot::service))
+            .route("/v1/client/add-version/{parent_version_id}", get(crate::api::add_version::service))
     }
 }
 
-#[cfg(test)]
+#[cfg(testFIXME)]
 mod test {
     use super::*;
     use crate::storage::InMemoryStorage;

@@ -1,10 +1,9 @@
+use crate::ApiError;
 use crate::api::{
-    client_key_header, failure_to_ise, ServerState, HISTORY_SEGMENT_CONTENT_TYPE,
+    client_key_header, ServerState, HISTORY_SEGMENT_CONTENT_TYPE,
     PARENT_VERSION_ID_HEADER, SNAPSHOT_REQUEST_HEADER, VERSION_ID_HEADER,
 };
 use crate::server::{add_version, AddVersionResult, SnapshotUrgency, VersionId, NIL_VERSION_ID};
-use actix_web::{error, post, web, HttpMessage, HttpRequest, HttpResponse, Result};
-use futures::StreamExt;
 use std::sync::Arc;
 
 /// Max history segment size: 100MB
@@ -23,47 +22,38 @@ const MAX_SIZE: usize = 100 * 1024 * 1024;
 /// `urgency=low` or `urgency=high`.
 ///
 /// Returns other 4xx or 5xx responses on other errors.
-#[post("/v1/client/add-version/{parent_version_id}")]
 pub(crate) async fn service(
-    req: HttpRequest,
-    server_state: web::Data<Arc<ServerState>>,
-    web::Path((parent_version_id,)): web::Path<(VersionId,)>,
-    mut payload: web::Payload,
-) -> Result<HttpResponse> {
+    axum::extract::Extension(server_state): axum::extract::Extension<Arc<ServerState>>,
+    headers: axum::http::header::HeaderMap,
+    axum::extract::Path(parent_version_id): axum::extract::Path<VersionId>,
+    axum::extract::RawBody(mut body): axum::extract::RawBody,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
     // check content-type
-    if req.content_type() != HISTORY_SEGMENT_CONTENT_TYPE {
-        return Err(error::ErrorBadRequest("Bad content-type"));
+    if headers.get("Content-type").unwrap() != HISTORY_SEGMENT_CONTENT_TYPE {
+        return Err(ApiError::BadRequest("Bad content-type".into()));
     }
 
-    let client_key = client_key_header(&req)?;
+    let client_key = client_key_header(&headers)?;
 
-    // read the body in its entirety
-    let mut body = web::BytesMut::new();
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
-        // limit max size of in-memory payload
-        if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("overflow"));
-        }
-        body.extend_from_slice(&chunk);
-    }
+    use axum::body::HttpBody;
+    let body = body.data().await.unwrap().unwrap();
 
     if body.is_empty() {
-        return Err(error::ErrorBadRequest("Empty body"));
+        return Err(ApiError::BadRequest("No snapshot supplied".into()));
     }
 
     // note that we do not open the transaction until the body has been read
     // completely, to avoid blocking other storage access while that data is
     // in transit.
-    let mut txn = server_state.storage.txn().map_err(failure_to_ise)?;
+    let mut txn = server_state.storage.txn().unwrap();
 
     // get, or create, the client
-    let client = match txn.get_client(client_key).map_err(failure_to_ise)? {
+    let client = match txn.get_client(client_key).unwrap() {
         Some(client) => client,
         None => {
             txn.new_client(client_key, NIL_VERSION_ID)
-                .map_err(failure_to_ise)?;
-            txn.get_client(client_key).map_err(failure_to_ise)?.unwrap()
+                .unwrap();
+            txn.get_client(client_key).unwrap().unwrap()
         }
     };
 
@@ -75,32 +65,32 @@ pub(crate) async fn service(
         parent_version_id,
         body.to_vec(),
     )
-    .map_err(failure_to_ise)?;
+    .unwrap();
 
     Ok(match result {
         AddVersionResult::Ok(version_id) => {
-            let mut rb = HttpResponse::Ok();
-            rb.header(VERSION_ID_HEADER, version_id.to_string());
+            let mut rb = axum::response::Response::builder()
+                .header(VERSION_ID_HEADER, version_id.to_string());
             match snap_urgency {
                 SnapshotUrgency::None => {}
                 SnapshotUrgency::Low => {
-                    rb.header(SNAPSHOT_REQUEST_HEADER, "urgency=low");
+                    rb = rb.header(SNAPSHOT_REQUEST_HEADER, "urgency=low");
                 }
                 SnapshotUrgency::High => {
-                    rb.header(SNAPSHOT_REQUEST_HEADER, "urgency=high");
+                    rb = rb.header(SNAPSHOT_REQUEST_HEADER, "urgency=high");
                 }
             };
-            rb.finish()
+            rb.body(axum::body::Full::from("")).unwrap()
         }
         AddVersionResult::ExpectedParentVersion(parent_version_id) => {
-            let mut rb = HttpResponse::Conflict();
-            rb.header(PARENT_VERSION_ID_HEADER, parent_version_id.to_string());
-            rb.finish()
+            axum::response::Response::builder()
+                .header(PARENT_VERSION_ID_HEADER, parent_version_id.to_string())
+                .body(axum::body::Full::from("")).unwrap()
         }
     })
 }
 
-#[cfg(test)]
+#[cfg(testFIXME)]
 mod test {
     use crate::storage::{InMemoryStorage, Storage};
     use crate::Server;

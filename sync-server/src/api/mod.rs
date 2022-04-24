@@ -1,12 +1,12 @@
+use crate::ApiError;
 use crate::server::ClientKey;
 use crate::storage::Storage;
 use crate::ServerConfig;
-use actix_web::{error, http::StatusCode, web, HttpRequest, Result, Scope};
 
-mod add_snapshot;
-mod add_version;
-mod get_child_version;
-mod get_snapshot;
+pub(crate) mod add_snapshot;
+pub(crate) mod add_version;
+//pub(crate) mod get_child_version;
+//pub(crate) mod get_snapshot;
 
 /// The content-type for history segments (opaque blobs of bytes)
 pub(crate) const HISTORY_SEGMENT_CONTENT_TYPE: &str =
@@ -33,25 +33,12 @@ pub(crate) struct ServerState {
     pub(crate) config: ServerConfig,
 }
 
-pub(crate) fn api_scope() -> Scope {
-    web::scope("")
-        .service(get_child_version::service)
-        .service(add_version::service)
-        .service(get_snapshot::service)
-        .service(add_snapshot::service)
-}
-
-/// Convert a failure::Error to an Actix ISE
-fn failure_to_ise(err: anyhow::Error) -> impl actix_web::ResponseError {
-    error::InternalError::new(err, StatusCode::INTERNAL_SERVER_ERROR)
-}
-
 /// Get the client key
-fn client_key_header(req: &HttpRequest) -> Result<ClientKey> {
-    fn badrequest() -> error::Error {
-        error::ErrorBadRequest("bad x-client-id")
+fn client_key_header(headers: &axum::headers::HeaderMap) -> Result<ClientKey, ApiError> {
+    fn badrequest() -> ApiError {
+        todo!()
     }
-    if let Some(client_key_hdr) = req.headers().get(CLIENT_KEY_HEADER) {
+    if let Some(client_key_hdr) = headers.get(CLIENT_KEY_HEADER) {
         let client_key = client_key_hdr.to_str().map_err(|_| badrequest())?;
         let client_key = ClientKey::parse_str(client_key).map_err(|_| badrequest())?;
         Ok(client_key)

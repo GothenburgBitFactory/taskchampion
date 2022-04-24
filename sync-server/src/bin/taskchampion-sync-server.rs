@@ -1,6 +1,5 @@
 #![deny(clippy::all)]
 
-use actix_web::{middleware::Logger, App, HttpServer};
 use taskchampion_sync_server::storage::SqliteStorage;
 use taskchampion_sync_server::{Server, ServerConfig};
 
@@ -12,7 +11,7 @@ struct Opts {
     snapshot_days: i64,
 }
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let defaults = ServerConfig::default();
@@ -24,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         .from_str()
         .fallback(8080);
     let data_dir = bpaf::short('d')
-        .long("port")
+        .long("data-dir")
         .help("Directory in which to store data")
         .argument("PATH")
         .fallback("/var/lib/taskchampion-sync-server".into());
@@ -59,30 +58,32 @@ async fn main() -> anyhow::Result<()> {
     let server = Server::new(config, Box::new(SqliteStorage::new(opts.data_dir)?));
 
     log::warn!("Serving on port {}", opts.port);
-    HttpServer::new(move || {
-        App::new()
-            .wrap(Logger::default())
-            .configure(|cfg| server.config(cfg))
-    })
-    .bind(format!("0.0.0.0:{}", opts.port))?
-    .run()
-    .await?;
+    axum::Server::bind(&format!("0.0.0.0:{}", opts.port).parse()?)
+        .serve(server.router().into_make_service())
+        .await?;
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(testFIXME)]
 mod test {
     use super::*;
-    use actix_web::{test, App};
     use taskchampion_sync_server::storage::InMemoryStorage;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::util::ServiceExt;
 
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_index_get() {
         let server = Server::new(Default::default(), Box::new(InMemoryStorage::new()));
-        let app = App::new().configure(|sc| server.config(sc));
-        let mut app = test::init_service(app).await;
+        let app = server.router();
 
-        let req = test::TestRequest::get().uri("/").to_request();
+        let resp = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+                     
         let resp = test::call_service(&mut app, req).await;
         assert!(resp.status().is_success());
     }

@@ -1,9 +1,9 @@
-use actix_web::{App, HttpServer};
 use pretty_assertions::assert_eq;
 use taskchampion::{Replica, ServerConfig, Status, StorageConfig, Uuid};
 use taskchampion_sync_server::{storage::InMemoryStorage, Server};
+use std::net::{SocketAddr, TcpListener};
 
-#[actix_rt::test]
+#[tokio::test]
 async fn cross_sync() -> anyhow::Result<()> {
     let _ = env_logger::builder()
         .is_test(true)
@@ -11,13 +11,19 @@ async fn cross_sync() -> anyhow::Result<()> {
         .try_init();
 
     let server = Server::new(Default::default(), Box::new(InMemoryStorage::new()));
-    let httpserver =
-        HttpServer::new(move || App::new().configure(|sc| server.config(sc))).bind("0.0.0.0:0")?;
 
+    let listener = TcpListener::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).unwrap();
+    let addr = listener.local_addr().unwrap();
     // bind was to :0, so the kernel will have selected an unused port
-    let port = httpserver.addrs()[0].port();
+    let port = addr.port();
 
-    httpserver.run();
+    tokio::spawn(async move {
+        axum::Server::from_tcp(listener)
+            .unwrap()
+            .serve(server.router().into_make_service())
+            .await
+            .unwrap()
+    });
 
     // set up two replicas, and demonstrate replication between them
     let mut rep1 = Replica::new(StorageConfig::InMemory.into_storage()?);

@@ -1,13 +1,13 @@
-use actix_web::{App, HttpServer};
 use pretty_assertions::assert_eq;
 use taskchampion::{Replica, ServerConfig, Status, StorageConfig, Uuid};
 use taskchampion_sync_server::{
     storage::InMemoryStorage, Server, ServerConfig as SyncServerConfig,
 };
+use std::net::{SocketAddr, TcpListener};
 
 const NUM_VERSIONS: u32 = 50;
 
-#[actix_rt::test]
+#[tokio::test]
 async fn sync_with_snapshots() -> anyhow::Result<()> {
     let _ = env_logger::builder()
         .is_test(true)
@@ -19,13 +19,19 @@ async fn sync_with_snapshots() -> anyhow::Result<()> {
         snapshot_versions: 3,
     };
     let server = Server::new(sync_server_config, Box::new(InMemoryStorage::new()));
-    let httpserver =
-        HttpServer::new(move || App::new().configure(|sc| server.config(sc))).bind("0.0.0.0:0")?;
 
+    let listener = TcpListener::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).unwrap();
+    let addr = listener.local_addr().unwrap();
     // bind was to :0, so the kernel will have selected an unused port
-    let port = httpserver.addrs()[0].port();
+    let port = addr.port();
 
-    httpserver.run();
+    tokio::spawn(async move {
+        axum::Server::from_tcp(listener)
+            .unwrap()
+            .serve(server.router().into_make_service())
+            .await
+            .unwrap()
+    });
 
     let client_key = Uuid::new_v4();
     let encryption_secret = b"abc123".to_vec();

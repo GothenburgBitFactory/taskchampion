@@ -1,11 +1,11 @@
-use crate::api::{client_key_header, failure_to_ise, ServerState, SNAPSHOT_CONTENT_TYPE};
+use crate::ApiError;
+use crate::api::{client_key_header, ServerState, SNAPSHOT_CONTENT_TYPE};
 use crate::server::{add_snapshot, VersionId, NIL_VERSION_ID};
-use actix_web::{error, post, web, HttpMessage, HttpRequest, HttpResponse, Result};
-use futures::StreamExt;
 use std::sync::Arc;
 
 /// Max snapshot size: 100MB
 const MAX_SIZE: usize = 100 * 1024 * 1024;
+
 
 /// Add a new snapshot, after checking prerequisites.  The snapshot should be transmitted in the
 /// request entity body and must have content-type `application/vnd.taskchampion.snapshot`.  The
@@ -15,47 +15,40 @@ const MAX_SIZE: usize = 100 * 1024 * 1024;
 /// subsequent `GetSnapshot` call.
 ///
 /// Returns other 4xx or 5xx responses on other errors.
-#[post("/v1/client/add-snapshot/{version_id}")]
 pub(crate) async fn service(
-    req: HttpRequest,
-    server_state: web::Data<Arc<ServerState>>,
-    web::Path((version_id,)): web::Path<(VersionId,)>,
-    mut payload: web::Payload,
-) -> Result<HttpResponse> {
+    axum::extract::Extension(server_state): axum::extract::Extension<Arc<ServerState>>,
+    headers: axum::http::header::HeaderMap,
+    axum::extract::Path(version_id): axum::extract::Path<VersionId>,
+    axum::extract::RawBody(mut body): axum::extract::RawBody,
+) -> Result<String, ApiError> {
     // check content-type
-    if req.content_type() != SNAPSHOT_CONTENT_TYPE {
-        return Err(error::ErrorBadRequest("Bad content-type"));
+    if headers.get("Content-type").unwrap() != SNAPSHOT_CONTENT_TYPE {
+        return Err(ApiError::BadRequest("Bad content-type".into()));
     }
 
-    let client_key = client_key_header(&req)?;
+    let client_key = client_key_header(&headers)?;
 
-    // read the body in its entirety
-    let mut body = web::BytesMut::new();
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
-        // limit max size of in-memory payload
-        if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("Snapshot over maximum allowed size"));
-        }
-        body.extend_from_slice(&chunk);
-    }
+    use axum::body::HttpBody;
+    let body = body.data().await.unwrap().unwrap();
+
+    //if body.len() > MAX_SIZE {return Err(ApiError::BadRequest("Snapshot over maximum allowed size"));}
 
     if body.is_empty() {
-        return Err(error::ErrorBadRequest("No snapshot supplied"));
+        return Err(ApiError::BadRequest("No snapshot supplied".into()));
     }
 
     // note that we do not open the transaction until the body has been read
     // completely, to avoid blocking other storage access while that data is
     // in transit.
-    let mut txn = server_state.storage.txn().map_err(failure_to_ise)?;
+    let mut txn = server_state.storage.txn().unwrap();
 
     // get, or create, the client
-    let client = match txn.get_client(client_key).map_err(failure_to_ise)? {
+    let client = match txn.get_client(client_key).unwrap() {
         Some(client) => client,
         None => {
             txn.new_client(client_key, NIL_VERSION_ID)
-                .map_err(failure_to_ise)?;
-            txn.get_client(client_key).map_err(failure_to_ise)?.unwrap()
+                .unwrap();
+            txn.get_client(client_key).unwrap().unwrap()
         }
     };
 
@@ -67,11 +60,11 @@ pub(crate) async fn service(
         version_id,
         body.to_vec(),
     )
-    .map_err(failure_to_ise)?;
-    Ok(HttpResponse::Ok().body(""))
+    .unwrap();
+    Ok("".into())
 }
 
-#[cfg(test)]
+#[cfg(testFIXME)]
 mod test {
     use super::*;
     use crate::storage::{InMemoryStorage, Storage};
@@ -80,7 +73,7 @@ mod test {
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
-    #[actix_rt::test]
+    #[tokio::test]
     async fn test_success() -> anyhow::Result<()> {
         let client_key = Uuid::new_v4();
         let version_id = Uuid::new_v4();
@@ -94,11 +87,10 @@ mod test {
         }
 
         let server = Server::new(Default::default(), storage);
-        let app = App::new().configure(|sc| server.config(sc));
-        let mut app = test::init_service(app).await;
+        let app = server.router();
 
         let uri = format!("/v1/client/add-snapshot/{}", version_id);
-        let req = test::TestRequest::post()
+        let req = Request::post()
             .uri(&uri)
             .header("Content-Type", "application/vnd.taskchampion.snapshot")
             .header("X-Client-Key", client_key.to_string())
