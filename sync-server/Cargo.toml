@@ -20,7 +20,7 @@ env_logger = "^0.8.3"
 rusqlite = { version = "0.25", features = ["bundled"] }
 chrono = { version = "^0.4.10", features = ["serde"] }
 axum = { version = "^0.5.3", features = ["headers"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "macros"] }
 tower = "0.4"
 
 [dev-dependencies]

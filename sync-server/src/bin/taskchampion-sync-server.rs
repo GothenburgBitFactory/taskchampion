@@ -11,7 +11,7 @@ struct Opts {
     snapshot_days: i64,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let defaults = ServerConfig::default();
