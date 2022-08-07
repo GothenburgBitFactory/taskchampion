@@ -1,3 +1,5 @@
+**NOTE:** TaskChampion is merging with Taskwarrior, so this repository [is archived](https://github.com/taskchampion/taskchampion/discussions/360).
+
 TaskChampion
 ------------
 
