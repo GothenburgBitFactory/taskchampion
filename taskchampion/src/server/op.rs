@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 /// A SyncOp defines a single change to the task database, that can be synchronized
 /// via a server.
-#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum SyncOp {
     /// Create a new task.
     ///
@@ -88,17 +88,17 @@ impl SyncOp {
 
             // Two updates to the same property of the same task might conflict.
             (
-                &Update {
-                    uuid: ref uuid1,
-                    property: ref property1,
-                    value: ref value1,
-                    timestamp: ref timestamp1,
+                Update {
+                    uuid: uuid1,
+                    property: property1,
+                    value: value1,
+                    timestamp: timestamp1,
                 },
-                &Update {
-                    uuid: ref uuid2,
-                    property: ref property2,
-                    value: ref value2,
-                    timestamp: ref timestamp2,
+                Update {
+                    uuid: uuid2,
+                    property: property2,
+                    value: value2,
+                    timestamp: timestamp2,
                 },
             ) if uuid1 == uuid2 && property1 == property2 => {
                 // if the value is the same, there's no conflict
@@ -123,6 +123,7 @@ impl SyncOp {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::errors::Result;
     use crate::storage::InMemoryStorage;
     use crate::taskdb::TaskDb;
     use chrono::{Duration, Utc};
@@ -130,7 +131,7 @@ mod test {
     use proptest::prelude::*;
 
     #[test]
-    fn test_json_create() -> anyhow::Result<()> {
+    fn test_json_create() -> Result<()> {
         let uuid = Uuid::new_v4();
         let op = Create { uuid };
         let json = serde_json::to_string(&op)?;
@@ -141,7 +142,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_delete() -> anyhow::Result<()> {
+    fn test_json_delete() -> Result<()> {
         let uuid = Uuid::new_v4();
         let op = Delete { uuid };
         let json = serde_json::to_string(&op)?;
@@ -152,7 +153,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update() -> anyhow::Result<()> {
+    fn test_json_update() -> Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 
@@ -177,7 +178,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update_none() -> anyhow::Result<()> {
+    fn test_json_update_none() -> Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 

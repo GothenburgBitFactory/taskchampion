@@ -1,12 +1,13 @@
+use crate::errors::Result;
 use crate::storage::{ReplicaOp, Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
-enum SqliteError {
+pub enum SqliteError {
     #[error("SQLite transaction already committted")]
     TransactionAlreadyCommitted,
 }
@@ -76,13 +77,21 @@ pub struct SqliteStorage {
 }
 
 impl SqliteStorage {
-    pub fn new<P: AsRef<Path>>(directory: P) -> anyhow::Result<SqliteStorage> {
-        // Ensure parent folder exists
-        std::fs::create_dir_all(&directory)?;
+    pub fn new<P: AsRef<Path>>(directory: P, create_if_missing: bool) -> Result<SqliteStorage> {
+        if create_if_missing {
+            // Ensure parent folder exists
+            std::fs::create_dir_all(&directory)?;
+        }
 
         // Open (or create) database
         let db_file = directory.as_ref().join("taskchampion.sqlite3");
-        let con = Connection::open(db_file)?;
+        let mut flags = OpenFlags::default();
+        // default contains SQLITE_OPEN_CREATE, so remove it if we are not to
+        // create a DB when missing.
+        if !create_if_missing {
+            flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
+        }
+        let con = Connection::open_with_flags(db_file, flags)?;
 
         // Initialize database
         let queries = vec![
@@ -104,13 +113,13 @@ struct Txn<'t> {
 }
 
 impl<'t> Txn<'t> {
-    fn get_txn(&self) -> Result<&rusqlite::Transaction<'t>, SqliteError> {
+    fn get_txn(&self) -> std::result::Result<&rusqlite::Transaction<'t>, SqliteError> {
         self.txn
             .as_ref()
             .ok_or(SqliteError::TransactionAlreadyCommitted)
     }
 
-    fn get_next_working_set_number(&self) -> anyhow::Result<usize> {
+    fn get_next_working_set_number(&self) -> Result<usize> {
         let t = self.get_txn()?;
         let next_id: Option<usize> = t
             .query_row(
@@ -126,14 +135,14 @@ impl<'t> Txn<'t> {
 }
 
 impl Storage for SqliteStorage {
-    fn txn<'a>(&'a mut self) -> anyhow::Result<Box<dyn StorageTxn + 'a>> {
+    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
         let txn = self.con.transaction()?;
         Ok(Box::new(Txn { txn: Some(txn) }))
     }
 }
 
 impl<'t> StorageTxn for Txn<'t> {
-    fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<TaskMap>> {
+    fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         let t = self.get_txn()?;
         let result: Option<StoredTaskMap> = t
             .query_row(
@@ -147,7 +156,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(result.map(|t| t.0))
     }
 
-    fn create_task(&mut self, uuid: Uuid) -> anyhow::Result<bool> {
+    fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         let t = self.get_txn()?;
         let count: usize = t.query_row(
             "SELECT count(uuid) FROM tasks WHERE uuid = ?",
@@ -167,7 +176,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(true)
     }
 
-    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> anyhow::Result<()> {
+    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
         let t = self.get_txn()?;
         t.execute(
             "INSERT OR REPLACE INTO tasks (uuid, data) VALUES (?, ?)",
@@ -177,7 +186,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn delete_task(&mut self, uuid: Uuid) -> anyhow::Result<bool> {
+    fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
         let t = self.get_txn()?;
         let changed = t
             .execute("DELETE FROM tasks WHERE uuid = ?", [&StoredUuid(uuid)])
@@ -185,7 +194,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(changed > 0)
     }
 
-    fn all_tasks(&mut self) -> anyhow::Result<Vec<(Uuid, TaskMap)>> {
+    fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT uuid, data FROM tasks")?;
@@ -202,7 +211,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn all_task_uuids(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT uuid FROM tasks")?;
@@ -218,7 +227,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn base_version(&mut self) -> anyhow::Result<VersionId> {
+    fn base_version(&mut self) -> Result<VersionId> {
         let t = self.get_txn()?;
 
         let version: Option<StoredUuid> = t
@@ -231,7 +240,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(version.map(|u| u.0).unwrap_or(DEFAULT_BASE_VERSION))
     }
 
-    fn set_base_version(&mut self, version: VersionId) -> anyhow::Result<()> {
+    fn set_base_version(&mut self, version: VersionId) -> Result<()> {
         let t = self.get_txn()?;
         t.execute(
             "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)",
@@ -241,7 +250,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn operations(&mut self) -> anyhow::Result<Vec<ReplicaOp>> {
+    fn operations(&mut self) -> Result<Vec<ReplicaOp>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT data FROM operations ORDER BY id ASC")?;
@@ -257,13 +266,13 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn num_operations(&mut self) -> anyhow::Result<usize> {
+    fn num_operations(&mut self) -> Result<usize> {
         let t = self.get_txn()?;
         let count: usize = t.query_row("SELECT count(*) FROM operations", [], |x| x.get(0))?;
         Ok(count)
     }
 
-    fn add_operation(&mut self, op: ReplicaOp) -> anyhow::Result<()> {
+    fn add_operation(&mut self, op: ReplicaOp) -> Result<()> {
         let t = self.get_txn()?;
 
         t.execute("INSERT INTO operations (data) VALUES (?)", params![&op])
@@ -271,7 +280,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<ReplicaOp>) -> anyhow::Result<()> {
+    fn set_operations(&mut self, ops: Vec<ReplicaOp>) -> Result<()> {
         let t = self.get_txn()?;
         t.execute("DELETE FROM operations", [])
             .context("Clear all existing operations")?;
@@ -284,7 +293,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn get_working_set(&mut self) -> anyhow::Result<Vec<Option<Uuid>>> {
+    fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
@@ -296,7 +305,7 @@ impl<'t> StorageTxn for Txn<'t> {
             })
             .context("Get working set query")?;
 
-        let rows: Vec<Result<(usize, Uuid), _>> = rows.collect();
+        let rows: Vec<std::result::Result<(usize, Uuid), _>> = rows.collect();
         let mut res = Vec::with_capacity(rows.len());
         for _ in 0..self
             .get_next_working_set_number()
@@ -306,13 +315,13 @@ impl<'t> StorageTxn for Txn<'t> {
         }
         for r in rows {
             let (id, uuid) = r?;
-            res[id as usize] = Some(uuid);
+            res[id] = Some(uuid);
         }
 
         Ok(res)
     }
 
-    fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         let t = self.get_txn()?;
 
         let next_working_id = self.get_next_working_set_number()?;
@@ -326,7 +335,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(next_working_id)
     }
 
-    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> anyhow::Result<()> {
+    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
         let t = self.get_txn()?;
         match uuid {
             // Add or override item
@@ -341,14 +350,14 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn clear_working_set(&mut self) -> anyhow::Result<()> {
+    fn clear_working_set(&mut self) -> Result<()> {
         let t = self.get_txn()?;
         t.execute("DELETE FROM working_set", [])
             .context("Clear working set query")?;
         Ok(())
     }
 
-    fn commit(&mut self) -> anyhow::Result<()> {
+    fn commit(&mut self) -> Result<()> {
         let t = self
             .txn
             .take()
@@ -366,10 +375,10 @@ mod test {
     use tempfile::TempDir;
 
     #[test]
-    fn test_empty_dir() -> anyhow::Result<()> {
+    fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
-        let mut storage = SqliteStorage::new(&non_existant)?;
+        let mut storage = SqliteStorage::new(non_existant, true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -385,9 +394,9 @@ mod test {
     }
 
     #[test]
-    fn drop_transaction() -> anyhow::Result<()> {
+    fn drop_transaction() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
 
@@ -414,9 +423,9 @@ mod test {
     }
 
     #[test]
-    fn test_create() -> anyhow::Result<()> {
+    fn test_create() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -432,9 +441,9 @@ mod test {
     }
 
     #[test]
-    fn test_create_exists() -> anyhow::Result<()> {
+    fn test_create_exists() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -450,9 +459,9 @@ mod test {
     }
 
     #[test]
-    fn test_get_missing() -> anyhow::Result<()> {
+    fn test_get_missing() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -463,9 +472,9 @@ mod test {
     }
 
     #[test]
-    fn test_set_task() -> anyhow::Result<()> {
+    fn test_set_task() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -484,9 +493,9 @@ mod test {
     }
 
     #[test]
-    fn test_delete_task_missing() -> anyhow::Result<()> {
+    fn test_delete_task_missing() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -496,9 +505,9 @@ mod test {
     }
 
     #[test]
-    fn test_delete_task_exists() -> anyhow::Result<()> {
+    fn test_delete_task_exists() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -513,9 +522,9 @@ mod test {
     }
 
     #[test]
-    fn test_all_tasks_empty() -> anyhow::Result<()> {
+    fn test_all_tasks_empty() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         {
             let mut txn = storage.txn()?;
             let tasks = txn.all_tasks()?;
@@ -525,21 +534,21 @@ mod test {
     }
 
     #[test]
-    fn test_all_tasks_and_uuids() -> anyhow::Result<()> {
+    fn test_all_tasks_and_uuids() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid1.clone())?);
+            assert!(txn.create_task(uuid1)?);
             txn.set_task(
-                uuid1.clone(),
+                uuid1,
                 taskmap_with(vec![("num".to_string(), "1".to_string())]),
             )?;
-            assert!(txn.create_task(uuid2.clone())?);
+            assert!(txn.create_task(uuid2)?);
             txn.set_task(
-                uuid2.clone(),
+                uuid2,
                 taskmap_with(vec![("num".to_string(), "2".to_string())]),
             )?;
             txn.commit()?;
@@ -553,11 +562,11 @@ mod test {
 
             let mut exp = vec![
                 (
-                    uuid1.clone(),
+                    uuid1,
                     taskmap_with(vec![("num".to_string(), "1".to_string())]),
                 ),
                 (
-                    uuid2.clone(),
+                    uuid2,
                     taskmap_with(vec![("num".to_string(), "2".to_string())]),
                 ),
             ];
@@ -570,7 +579,7 @@ mod test {
             let mut uuids = txn.all_task_uuids()?;
             uuids.sort();
 
-            let mut exp = vec![uuid1.clone(), uuid2.clone()];
+            let mut exp = vec![uuid1, uuid2];
             exp.sort();
 
             assert_eq!(uuids, exp);
@@ -579,9 +588,9 @@ mod test {
     }
 
     #[test]
-    fn test_base_version_default() -> anyhow::Result<()> {
+    fn test_base_version_default() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         {
             let mut txn = storage.txn()?;
             assert_eq!(txn.base_version()?, DEFAULT_BASE_VERSION);
@@ -590,9 +599,9 @@ mod test {
     }
 
     #[test]
-    fn test_base_version_setting() -> anyhow::Result<()> {
+    fn test_base_version_setting() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let u = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -607,9 +616,9 @@ mod test {
     }
 
     #[test]
-    fn test_operations() -> anyhow::Result<()> {
+    fn test_operations() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         let uuid3 = Uuid::new_v4();
@@ -692,9 +701,9 @@ mod test {
     }
 
     #[test]
-    fn get_working_set_empty() -> anyhow::Result<()> {
+    fn get_working_set_empty() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
 
         {
             let mut txn = storage.txn()?;
@@ -706,9 +715,9 @@ mod test {
     }
 
     #[test]
-    fn add_to_working_set() -> anyhow::Result<()> {
+    fn add_to_working_set() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
 
@@ -729,9 +738,9 @@ mod test {
     }
 
     #[test]
-    fn clear_working_set() -> anyhow::Result<()> {
+    fn clear_working_set() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
 
@@ -760,9 +769,9 @@ mod test {
     }
 
     #[test]
-    fn set_working_set_item() -> anyhow::Result<()> {
+    fn set_working_set_item() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(&tmp_dir.path())?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
 

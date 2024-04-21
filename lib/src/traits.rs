@@ -276,13 +276,11 @@ where
     let mut vec = unsafe { CL::take_val_from_arg(list, CL::null_value()) };
 
     // first, drop each of the elements in turn
-    for e in vec.drain(..) {
-        if let Some(e) = e {
-            // SAFETY:
-            //  - e is a valid Element (promised by caller)
-            //  - e is owned
-            drop(unsafe { PassByPointer::take_from_ptr_arg(e.as_ptr()) });
-        }
+    for e in vec.drain(..).flatten() {
+        // SAFETY:
+        //  - e is a valid Element (promised by caller)
+        //  - e is owned
+        drop(unsafe { PassByPointer::take_from_ptr_arg(e.as_ptr()) });
     }
     // then drop the vector
     drop(vec);
@@ -314,7 +312,7 @@ where
     //  - list is properly aligned, dereferencable, and points to an initialized CL, since it is valid
     //  - the lifetime of the resulting reference is limited to this function, during which time
     //    nothing else refers to this memory.
-    let slice = list.as_mut().unwrap().slice();
+    let slice = unsafe { list.as_mut() }.unwrap().slice();
     if let Some(elt_ref) = slice.get_mut(index) {
         let mut rv = None;
         if let Some(elt) = elt_ref.as_mut() {

@@ -1,40 +1,38 @@
-name: Checks
+name: checks
 
 on:
   push:
     branches:
-      - main
+      - develop
   pull_request:
     types: [opened, reopened, synchronize]
 
 jobs:
   clippy:
     runs-on: ubuntu-latest
-    name: "Clippy"
+    name: "Check & Clippy"
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Cache cargo registry
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo build
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - uses: actions-rs/toolchain@v1
         with:
-          # Fixed version for clippy lints.  Bump this as necesary.  It must not
-          # be older than the MSRV in tests.yml.
-          toolchain: "1.57"
+          toolchain: "1.70.0" # MSRV
           override: true
 
-      - uses: actions-rs/cargo@v1.0.1
+      - uses: actions-rs/cargo@v1.0.3
         with:
           command: check
 
@@ -51,42 +49,22 @@ jobs:
     name: "Documentation"
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@v1
+        uses: peaceiris/actions-mdbook@v2
         with:
-          # if this changes, change it in cli/Cargo.toml and .github/workflows/publish-docs.yml as well
+          # if this changes, change it in .github/workflows/publish-docs.yml as well
           mdbook-version: '0.4.10'
 
-      - name: Cache cargo registry
-        uses: actions/cache@v2
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v2
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Create usage-docs plugin
-        run: cargo build -p taskchampion-cli --features usage-docs --bin usage-docs
-
-      - run: mdbook test docs
-      - run: mdbook build docs
+      - run: mdbook test taskchampion/docs
+      - run: mdbook build taskchampion/docs
 
   fmt:
     runs-on: ubuntu-latest
     name: "Formatting"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - uses: actions-rs/toolchain@v1
         with:
@@ -95,8 +73,43 @@ jobs:
           toolchain: stable
           override: true
 
-      - uses: actions-rs/cargo@v1
+      - uses: actions-rs/cargo@v1.0.3
         with:
           command: fmt
           args: --all -- --check
 
+  codegen:
+    runs-on: ubuntu-latest
+    name: "codegen"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: "1.70.0" # MSRV
+          override: true
+
+      - uses: actions-rs/cargo@v1.0.3
+        with:
+          command: run
+          args: --package xtask -- codegen
+
+      - name: check for changes
+        run: |
+          if ! git diff; then
+            echo "Generated code not up-to-date;
+            run `cargo run --package xtask -- codegen` and commit the result";
+            exit 1;
+          fi

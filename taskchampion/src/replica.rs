@@ -1,6 +1,7 @@
 use crate::depmap::DependencyMap;
+use crate::errors::Result;
 use crate::server::{Server, SyncOp};
-use crate::storage::{Storage, TaskMap};
+use crate::storage::{ReplicaOp, Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
@@ -63,7 +64,7 @@ impl Replica {
         uuid: Uuid,
         property: S1,
         value: Option<S2>,
-    ) -> anyhow::Result<TaskMap>
+    ) -> Result<TaskMap>
     where
         S1: Into<String>,
         S2: Into<String>,
@@ -78,12 +79,12 @@ impl Replica {
     }
 
     /// Add the given uuid to the working set, returning its index.
-    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         self.taskdb.add_to_working_set(uuid)
     }
 
     /// Get all tasks represented as a map keyed by UUID
-    pub fn all_tasks(&mut self) -> anyhow::Result<HashMap<Uuid, Task>> {
+    pub fn all_tasks(&mut self) -> Result<HashMap<Uuid, Task>> {
         let depmap = self.dependency_map(false)?;
         let mut res = HashMap::new();
         for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
@@ -93,17 +94,20 @@ impl Replica {
     }
 
     /// Get the UUIDs of all tasks
-    pub fn all_task_uuids(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    pub fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
         self.taskdb.all_task_uuids()
     }
 
     /// Get the "working set" for this replica.  This is a snapshot of the current state,
     /// and it is up to the caller to decide how long to store this value.
-    pub fn working_set(&mut self) -> anyhow::Result<WorkingSet> {
+    pub fn working_set(&mut self) -> Result<WorkingSet> {
         Ok(WorkingSet::new(self.taskdb.working_set()?))
     }
 
     /// Get the dependency map for all pending tasks.
+    ///
+    /// A task dependency is recognized when a task in the working set depends on a task with
+    /// status equal to Pending.
     ///
     /// The data in this map is cached when it is first requested and may not contain modifications
     /// made locally in this Replica instance.  The result is reference-counted and may
@@ -111,19 +115,52 @@ impl Replica {
     ///
     /// If `force` is true, then the result is re-calculated from the current state of the replica,
     /// although previously-returned dependency maps are not updated.
-    pub fn dependency_map(&mut self, force: bool) -> anyhow::Result<Rc<DependencyMap>> {
+    pub fn dependency_map(&mut self, force: bool) -> Result<Rc<DependencyMap>> {
         if force || self.depmap.is_none() {
+            // note: we can't use self.get_task here, as that depends on a
+            // DependencyMap
+
             let mut dm = DependencyMap::new();
+            // temporary cache tracking whether tasks are considered Pending or not.
+            let mut is_pending_cache: HashMap<Uuid, bool> = HashMap::new();
             let ws = self.working_set()?;
+            // for each task in the working set
             for i in 1..=ws.largest_index() {
+                // get the task UUID
                 if let Some(u) = ws.by_index(i) {
-                    // note: we can't use self.get_task here, as that depends on a
-                    // DependencyMap
+                    // get the task
                     if let Some(taskmap) = self.taskdb.get_task(u)? {
+                        // search the task's keys
                         for p in taskmap.keys() {
+                            // for one matching `dep_..`
                             if let Some(dep_str) = p.strip_prefix("dep_") {
+                                // and extract the UUID from the key
                                 if let Ok(dep) = Uuid::parse_str(dep_str) {
-                                    dm.add_dependency(u, dep);
+                                    // the dependency is pending if
+                                    let dep_pending = {
+                                        // we've determined this before and cached the result
+                                        if let Some(dep_pending) = is_pending_cache.get(&dep) {
+                                            *dep_pending
+                                        } else if let Some(dep_taskmap) =
+                                            // or if we get the task
+                                            self.taskdb.get_task(dep)?
+                                        {
+                                            // and its status is "pending"
+                                            let dep_pending = matches!(
+                                                dep_taskmap
+                                                    .get("status")
+                                                    .map(|tm| Status::from_taskmap(tm)),
+                                                Some(Status::Pending)
+                                            );
+                                            is_pending_cache.insert(dep, dep_pending);
+                                            dep_pending
+                                        } else {
+                                            false
+                                        }
+                                    };
+                                    if dep_pending {
+                                        dm.add_dependency(u, dep);
+                                    }
                                 }
                             }
                         }
@@ -138,7 +175,7 @@ impl Replica {
     }
 
     /// Get an existing task by its UUID
-    pub fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<Task>> {
+    pub fn get_task(&mut self, uuid: Uuid) -> Result<Option<Task>> {
         let depmap = self.dependency_map(false)?;
         Ok(self
             .taskdb
@@ -147,7 +184,7 @@ impl Replica {
     }
 
     /// Create a new task.
-    pub fn new_task(&mut self, status: Status, description: String) -> anyhow::Result<Task> {
+    pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
         self.add_undo_point(false)?;
         let taskmap = self.taskdb.apply(SyncOp::Create { uuid })?;
@@ -163,7 +200,7 @@ impl Replica {
     /// Create a new, empty task with the given UUID.  This is useful for importing tasks, but
     /// otherwise should be avoided in favor of `new_task`.  If the task already exists, this
     /// does nothing and returns the existing task.
-    pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> anyhow::Result<Task> {
+    pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
         self.add_undo_point(false)?;
         let taskmap = self.taskdb.apply(SyncOp::Create { uuid })?;
         let depmap = self.dependency_map(false)?;
@@ -173,7 +210,7 @@ impl Replica {
     /// Delete a task.  The task must exist.  Note that this is different from setting status to
     /// Deleted; this is the final purge of the task.  This is not a public method as deletion
     /// should only occur through expiration.
-    fn delete_task(&mut self, uuid: Uuid) -> anyhow::Result<()> {
+    fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
         self.add_undo_point(false)?;
         self.taskdb.apply(SyncOp::Delete { uuid })?;
         trace!("task {} deleted", uuid);
@@ -190,11 +227,7 @@ impl Replica {
     ///
     /// Set this to true on systems more constrained in CPU, memory, or bandwidth than a typical desktop
     /// system
-    pub fn sync(
-        &mut self,
-        server: &mut Box<dyn Server>,
-        avoid_snapshots: bool,
-    ) -> anyhow::Result<()> {
+    pub fn sync(&mut self, server: &mut Box<dyn Server>, avoid_snapshots: bool) -> Result<()> {
         self.taskdb
             .sync(server, avoid_snapshots)
             .context("Failed to synchronize with server")?;
@@ -203,20 +236,34 @@ impl Replica {
         Ok(())
     }
 
-    /// Undo local operations until the most recent UndoPoint, returning false if there are no
+    /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
     /// local operations to undo.
-    pub fn undo(&mut self) -> anyhow::Result<bool> {
-        self.taskdb.undo()
+    pub fn get_undo_ops(&mut self) -> Result<Vec<ReplicaOp>> {
+        self.taskdb.get_undo_ops()
+    }
+
+    /// Undo local operations in storage, returning a boolean indicating success.
+    pub fn commit_undo_ops(&mut self, undo_ops: Vec<ReplicaOp>) -> Result<bool> {
+        self.taskdb.commit_undo_ops(undo_ops)
     }
 
     /// Rebuild this replica's working set, based on whether tasks are pending or not.  If
     /// `renumber` is true, then existing tasks may be moved to new working-set indices; in any
-    /// case, on completion all pending tasks are in the working set and all non- pending tasks are
-    /// not.
-    pub fn rebuild_working_set(&mut self, renumber: bool) -> anyhow::Result<()> {
+    /// case, on completion all pending and recurring tasks are in the working set and all tasks
+    /// with other statuses are not.
+    pub fn rebuild_working_set(&mut self, renumber: bool) -> Result<()> {
         let pending = String::from(Status::Pending.to_taskmap());
-        self.taskdb
-            .rebuild_working_set(|t| t.get("status") == Some(&pending), renumber)?;
+        let recurring = String::from(Status::Recurring.to_taskmap());
+        self.taskdb.rebuild_working_set(
+            |t| {
+                if let Some(st) = t.get("status") {
+                    st == &pending || st == &recurring
+                } else {
+                    false
+                }
+            },
+            renumber,
+        )?;
         Ok(())
     }
 
@@ -227,7 +274,7 @@ impl Replica {
     ///
     /// Tasks are eligible for expiration when they have status Deleted and have not been modified
     /// for 180 days (about six months). Note that completed tasks are not eligible.
-    pub fn expire_tasks(&mut self) -> anyhow::Result<()> {
+    pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         self.all_tasks()?
             .iter()
@@ -247,7 +294,7 @@ impl Replica {
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
     /// instance is held for a long time and used to apply more than one user-visible change.
-    pub fn add_undo_point(&mut self, force: bool) -> anyhow::Result<()> {
+    pub fn add_undo_point(&mut self, force: bool) -> Result<()> {
         if force || !self.added_undo_point {
             self.taskdb.add_undo_point()?;
             self.added_undo_point = true;
@@ -256,8 +303,13 @@ impl Replica {
     }
 
     /// Get the number of operations local to this replica and not yet synchronized to the server.
-    pub fn num_local_operations(&mut self) -> anyhow::Result<usize> {
+    pub fn num_local_operations(&mut self) -> Result<usize> {
         self.taskdb.num_operations()
+    }
+
+    /// Get the number of undo points available (number of times `undo` will succeed).
+    pub fn num_undo_points(&mut self) -> Result<usize> {
+        self.taskdb.num_undo_points()
     }
 }
 
@@ -405,7 +457,11 @@ mod tests {
             ]
         );
 
-        assert_eq!(rep.num_local_operations().unwrap(), 10);
+        // num_local_operations includes all but the undo point
+        assert_eq!(rep.num_local_operations().unwrap(), 9);
+
+        // num_undo_points includes only the undo point
+        assert_eq!(rep.num_undo_points().unwrap(), 1);
     }
 
     #[test]
@@ -446,11 +502,50 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_working_set_includes_recurring() {
+        let mut rep = Replica::new_inmemory();
+
+        let t = rep
+            .new_task(Status::Completed, "another task".into())
+            .unwrap();
+        let uuid = t.get_uuid();
+
+        let t = rep.get_task(uuid).unwrap().unwrap();
+        {
+            let mut t = t.into_mut(&mut rep);
+            t.set_status(Status::Recurring).unwrap();
+        }
+
+        rep.rebuild_working_set(true).unwrap();
+
+        let ws = rep.working_set().unwrap();
+        assert!(ws.by_uuid(uuid).is_some());
+    }
+
+    #[test]
     fn new_pending_adds_to_working_set() {
         let mut rep = Replica::new_inmemory();
 
         let t = rep
             .new_task(Status::Pending, "to-be-pending".into())
+            .unwrap();
+        let uuid = t.get_uuid();
+
+        let ws = rep.working_set().unwrap();
+        assert_eq!(ws.len(), 1); // only one non-none value
+        assert!(ws.by_index(0).is_none());
+        assert_eq!(ws.by_index(1), Some(uuid));
+
+        let ws = rep.working_set().unwrap();
+        assert_eq!(ws.by_uuid(t.get_uuid()), Some(1));
+    }
+
+    #[test]
+    fn new_recurring_adds_to_working_set() {
+        let mut rep = Replica::new_inmemory();
+
+        let t = rep
+            .new_task(Status::Recurring, "to-be-recurring".into())
             .unwrap();
         let uuid = t.get_uuid();
 
@@ -561,5 +656,22 @@ mod tests {
             dm.dependents(uuids[0]).collect::<HashSet<_>>(),
             set![uuids[1], uuids[2]]
         );
+
+        // mark t[0] as done, removing it from the working set
+        rep.get_task(uuids[0])
+            .unwrap()
+            .unwrap()
+            .into_mut(&mut rep)
+            .done()
+            .unwrap();
+        let dm = rep.dependency_map(true).unwrap();
+
+        assert_eq!(
+            dm.dependencies(uuids[3]).collect::<HashSet<_>>(),
+            set![uuids[1], uuids[2]]
+        );
+        assert_eq!(dm.dependencies(uuids[2]).collect::<HashSet<_>>(), set![]);
+        assert_eq!(dm.dependencies(uuids[1]).collect::<HashSet<_>>(), set![]);
+        assert_eq!(dm.dependents(uuids[0]).collect::<HashSet<_>>(), set![]);
     }
 }

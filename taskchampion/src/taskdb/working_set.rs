@@ -1,3 +1,4 @@
+use crate::errors::Result;
 use crate::storage::{StorageTxn, TaskMap};
 use std::collections::HashSet;
 
@@ -5,7 +6,7 @@ use std::collections::HashSet;
 /// renumbers the existing working-set tasks to eliminate gaps, and also adds any tasks that
 /// are not already in the working set but should be.  The rebuild occurs in a single
 /// trasnsaction against the storage backend.
-pub fn rebuild<F>(txn: &mut dyn StorageTxn, in_working_set: F, renumber: bool) -> anyhow::Result<()>
+pub fn rebuild<F>(txn: &mut dyn StorageTxn, in_working_set: F, renumber: bool) -> Result<()>
 where
     F: Fn(&TaskMap) -> bool,
 {
@@ -69,16 +70,16 @@ mod test {
     use uuid::Uuid;
 
     #[test]
-    fn rebuild_working_set_renumber() -> anyhow::Result<()> {
+    fn rebuild_working_set_renumber() -> Result<()> {
         rebuild_working_set(true)
     }
 
     #[test]
-    fn rebuild_working_set_no_renumber() -> anyhow::Result<()> {
+    fn rebuild_working_set_no_renumber() -> Result<()> {
         rebuild_working_set(false)
     }
 
-    fn rebuild_working_set(renumber: bool) -> anyhow::Result<()> {
+    fn rebuild_working_set(renumber: bool) -> Result<()> {
         let mut db = TaskDb::new_inmemory();
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
@@ -98,7 +99,7 @@ mod test {
         }
         for i in &[0usize, 1, 4] {
             db.apply(SyncOp::Update {
-                uuid: uuids[*i].clone(),
+                uuid: uuids[*i],
                 property: String::from("status"),
                 value: Some("pending".into()),
                 timestamp: Utc::now(),
@@ -119,12 +120,7 @@ mod test {
 
         assert_eq!(
             db.working_set()?,
-            vec![
-                None,
-                Some(uuids[1].clone()),
-                Some(uuids[3].clone()),
-                Some(uuids[4].clone())
-            ]
+            vec![None, Some(uuids[1]), Some(uuids[3]), Some(uuids[4])]
         );
 
         rebuild(
@@ -142,22 +138,11 @@ mod test {
         let exp = if renumber {
             // uuids[1] and uuids[4] are already in the working set, so are compressed
             // to the top, and then uuids[0] is added.
-            vec![
-                None,
-                Some(uuids[1].clone()),
-                Some(uuids[4].clone()),
-                Some(uuids[0].clone()),
-            ]
+            vec![None, Some(uuids[1]), Some(uuids[4]), Some(uuids[0])]
         } else {
             // uuids[1] and uuids[4] are already in the working set, at indexes 1 and 3,
             // and then uuids[0] is added.
-            vec![
-                None,
-                Some(uuids[1].clone()),
-                None,
-                Some(uuids[4].clone()),
-                Some(uuids[0].clone()),
-            ]
+            vec![None, Some(uuids[1]), None, Some(uuids[4]), Some(uuids[0])]
         };
 
         assert_eq!(db.working_set()?, exp);

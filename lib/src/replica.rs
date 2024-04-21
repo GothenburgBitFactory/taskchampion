@@ -2,8 +2,13 @@ use crate::traits::*;
 use crate::types::*;
 use crate::util::err_to_ruststring;
 use std::ptr::NonNull;
+use taskchampion::storage::ReplicaOp;
 use taskchampion::{Replica, StorageConfig};
 
+#[ffizz_header::item]
+#[ffizz(order = 900)]
+/// ***** TCReplica *****
+///
 /// A replica represents an instance of a user's task data, providing an easy interface
 /// for querying and modifying that data.
 ///
@@ -26,6 +31,10 @@ use taskchampion::{Replica, StorageConfig};
 /// Once passed to `tc_replica_free`, a `*TCReplica` becomes invalid and must not be used again.
 ///
 /// TCReplicas are not threadsafe.
+///
+/// ```c
+/// typedef struct TCReplica TCReplica;
+/// ```
 pub struct TCReplica {
     /// The wrapped Replica
     inner: Replica,
@@ -122,8 +131,44 @@ where
     }
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 900)]
+/// ***** TCReplicaOpType *****
+///
+/// ```c
+/// enum TCReplicaOpType
+/// #ifdef __cplusplus
+///   : uint32_t
+/// #endif // __cplusplus
+/// {
+///     Create = 0,
+///     Delete = 1,
+///     Update = 2,
+///     UndoPoint = 3,
+/// };
+/// #ifndef __cplusplus
+/// typedef uint32_t TCReplicaOpType;
+/// #endif // __cplusplus
+/// ```
+#[derive(Debug, Default)]
+#[repr(u32)]
+pub enum TCReplicaOpType {
+    Create = 0,
+    Delete = 1,
+    Update = 2,
+    UndoPoint = 3,
+    #[default]
+    Error = 4,
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 901)]
 /// Create a new TCReplica with an in-memory database.  The contents of the database will be
 /// lost when it is freed with tc_replica_free.
+///
+/// ```c
+/// EXTERN_C struct TCReplica *tc_replica_new_in_memory(void);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_new_in_memory() -> *mut TCReplica {
     let storage = StorageConfig::InMemory
@@ -134,12 +179,21 @@ pub unsafe extern "C" fn tc_replica_new_in_memory() -> *mut TCReplica {
     unsafe { TCReplica::from(Replica::new(storage)).return_ptr() }
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 901)]
 /// Create a new TCReplica with an on-disk database having the given filename.  On error, a string
 /// is written to the error_out parameter (if it is not NULL) and NULL is returned.  The caller
 /// must free this string.
+///
+/// ```c
+/// EXTERN_C struct TCReplica *tc_replica_new_on_disk(struct TCString path,
+///                                          bool create_if_missing,
+///                                          struct TCString *error_out);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_new_on_disk(
     path: TCString,
+    create_if_missing: bool,
     error_out: *mut TCString,
 ) -> *mut TCReplica {
     wrap_constructor(
@@ -150,6 +204,7 @@ pub unsafe extern "C" fn tc_replica_new_on_disk(
             let mut path = unsafe { TCString::val_from_arg(path) };
             let storage = StorageConfig::OnDisk {
                 taskdb_dir: path.to_path_buf_mut()?,
+                create_if_missing,
             }
             .into_storage()?;
 
@@ -162,9 +217,111 @@ pub unsafe extern "C" fn tc_replica_new_on_disk(
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 901)]
+/// ***** TCReplicaOp *****
+///
+/// ```c
+/// struct TCReplicaOp {
+///     TCReplicaOpType operation_type;
+///     void* inner;
+/// };
+///
+/// typedef struct TCReplicaOp TCReplicaOp;
+/// ```
+#[derive(Debug)]
+#[repr(C)]
+pub struct TCReplicaOp {
+    operation_type: TCReplicaOpType,
+    inner: Box<ReplicaOp>,
+}
+
+impl From<ReplicaOp> for TCReplicaOp {
+    fn from(replica_op: ReplicaOp) -> TCReplicaOp {
+        match replica_op {
+            ReplicaOp::Create { .. } => TCReplicaOp {
+                operation_type: TCReplicaOpType::Create,
+                inner: Box::new(replica_op),
+            },
+            ReplicaOp::Delete { .. } => TCReplicaOp {
+                operation_type: TCReplicaOpType::Delete,
+                inner: Box::new(replica_op),
+            },
+            ReplicaOp::Update { .. } => TCReplicaOp {
+                operation_type: TCReplicaOpType::Update,
+                inner: Box::new(replica_op),
+            },
+            ReplicaOp::UndoPoint => TCReplicaOp {
+                operation_type: TCReplicaOpType::UndoPoint,
+                inner: Box::new(replica_op),
+            },
+        }
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 901)]
+/// ***** TCReplicaOpList *****
+///
+/// ```c
+/// struct TCReplicaOpList {
+///     struct TCReplicaOp *items;
+///     size_t len;
+///     size_t capacity;
+/// };
+///
+/// typedef struct TCReplicaOpList TCReplicaOpList;
+/// ```
+#[repr(C)]
+#[derive(Debug)]
+pub struct TCReplicaOpList {
+    items: *mut TCReplicaOp,
+    len: usize,
+    capacity: usize,
+}
+
+impl Default for TCReplicaOpList {
+    fn default() -> Self {
+        // SAFETY:
+        //  - caller will free this value
+        unsafe { TCReplicaOpList::return_val(Vec::new()) }
+    }
+}
+
+impl CList for TCReplicaOpList {
+    type Element = TCReplicaOp;
+
+    unsafe fn from_raw_parts(items: *mut Self::Element, len: usize, cap: usize) -> Self {
+        TCReplicaOpList {
+            len,
+            capacity: cap,
+            items,
+        }
+    }
+
+    fn slice(&mut self) -> &mut [Self::Element] {
+        // SAFETY:
+        //  - because we have &mut self, we have read/write access to items[0..len]
+        //  - all items are properly initialized Element's
+        //  - return value lifetime is equal to &mmut self's, so access is exclusive
+        //  - items and len came from Vec, so total size is < isize::MAX
+        unsafe { std::slice::from_raw_parts_mut(self.items, self.len) }
+    }
+
+    fn into_raw_parts(self) -> (*mut Self::Element, usize, usize) {
+        (self.items, self.len, self.capacity)
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Get a list of all tasks in the replica.
 ///
 /// Returns a TCTaskList with a NULL items field on error.
+///
+/// ```c
+/// EXTERN_C struct TCTaskList tc_replica_all_tasks(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_all_tasks(rep: *mut TCReplica) -> TCTaskList {
     wrap(
@@ -195,11 +352,17 @@ pub unsafe extern "C" fn tc_replica_all_tasks(rep: *mut TCReplica) -> TCTaskList
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Get a list of all uuids for tasks in the replica.
 ///
 /// Returns a TCUuidList with a NULL items field on error.
 ///
 /// The caller must free the UUID list with `tc_uuid_list_free`.
+///
+/// ```c
+/// EXTERN_C struct TCUuidList tc_replica_all_task_uuids(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_all_task_uuids(rep: *mut TCReplica) -> TCUuidList {
     wrap(
@@ -220,10 +383,16 @@ pub unsafe extern "C" fn tc_replica_all_task_uuids(rep: *mut TCReplica) -> TCUui
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Get the current working set for this replica.  The resulting value must be freed
 /// with tc_working_set_free.
 ///
 /// Returns NULL on error.
+///
+/// ```c
+/// EXTERN_C struct TCWorkingSet *tc_replica_working_set(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_working_set(rep: *mut TCReplica) -> *mut TCWorkingSet {
     wrap(
@@ -238,10 +407,16 @@ pub unsafe extern "C" fn tc_replica_working_set(rep: *mut TCReplica) -> *mut TCW
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Get an existing task by its UUID.
 ///
 /// Returns NULL when the task does not exist, and on error.  Consult tc_replica_error
 /// to distinguish the two conditions.
+///
+/// ```c
+/// EXTERN_C struct TCTask *tc_replica_get_task(struct TCReplica *rep, struct TCUuid tcuuid);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_get_task(rep: *mut TCReplica, tcuuid: TCUuid) -> *mut TCTask {
     wrap(
@@ -263,9 +438,17 @@ pub unsafe extern "C" fn tc_replica_get_task(rep: *mut TCReplica, tcuuid: TCUuid
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Create a new task.  The task must not already exist.
 ///
 /// Returns the task, or NULL on error.
+///
+/// ```c
+/// EXTERN_C struct TCTask *tc_replica_new_task(struct TCReplica *rep,
+///                                    enum TCStatus status,
+///                                    struct TCString description);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_new_task(
     rep: *mut TCReplica,
@@ -288,9 +471,15 @@ pub unsafe extern "C" fn tc_replica_new_task(
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Create a new task.  The task must not already exist.
 ///
 /// Returns the task, or NULL on error.
+///
+/// ```c
+/// EXTERN_C struct TCTask *tc_replica_import_task_with_uuid(struct TCReplica *rep, struct TCUuid tcuuid);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_import_task_with_uuid(
     rep: *mut TCReplica,
@@ -312,9 +501,15 @@ pub unsafe extern "C" fn tc_replica_import_task_with_uuid(
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Synchronize this replica with a server.
 ///
 /// The `server` argument remains owned by the caller, and must be freed explicitly.
+///
+/// ```c
+/// EXTERN_C TCResult tc_replica_sync(struct TCReplica *rep, struct TCServer *server, bool avoid_snapshots);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_sync(
     rep: *mut TCReplica,
@@ -338,16 +533,60 @@ pub unsafe extern "C" fn tc_replica_sync(
     )
 }
 
-/// Undo local operations until the most recent UndoPoint.
+#[ffizz_header::item]
+#[ffizz(order = 902)]
+/// Return undo local operations until the most recent UndoPoint.
 ///
-/// If undone_out is not NULL, then on success it is set to 1 if operations were undone, or 0 if
-/// there are no operations that can be done.
+/// ```c
+/// EXTERN_C TCReplicaOpList tc_replica_get_undo_ops(struct TCReplica *rep);
+/// ```
 #[no_mangle]
-pub unsafe extern "C" fn tc_replica_undo(rep: *mut TCReplica, undone_out: *mut i32) -> TCResult {
+pub unsafe extern "C" fn tc_replica_get_undo_ops(rep: *mut TCReplica) -> TCReplicaOpList {
     wrap(
         rep,
         |rep| {
-            let undone = if rep.undo()? { 1 } else { 0 };
+            // SAFETY:
+            //  - caller will free this value, either with tc_replica_commit_undo_ops or
+            //  tc_replica_op_list_free.
+            Ok(unsafe {
+                TCReplicaOpList::return_val(
+                    rep.get_undo_ops()?
+                        .into_iter()
+                        .map(TCReplicaOp::from)
+                        .collect(),
+                )
+            })
+        },
+        TCReplicaOpList::default(),
+    )
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 902)]
+/// Undo local operations in storage.
+///
+/// If undone_out is not NULL, then on success it is set to 1 if operations were undone, or 0 if
+/// there are no operations that can be done.
+///
+/// ```c
+/// EXTERN_C TCResult tc_replica_commit_undo_ops(struct TCReplica *rep, TCReplicaOpList tc_undo_ops, int32_t *undone_out);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_commit_undo_ops(
+    rep: *mut TCReplica,
+    tc_undo_ops: TCReplicaOpList,
+    undone_out: *mut i32,
+) -> TCResult {
+    wrap(
+        rep,
+        |rep| {
+            // SAFETY:
+            // - `tc_undo_ops` is a valid value, as it was acquired from `tc_replica_get_undo_ops`.
+            let undo_ops: Vec<ReplicaOp> = unsafe { TCReplicaOpList::val_from_arg(tc_undo_ops) }
+                .into_iter()
+                .map(|op| *op.inner)
+                .collect();
+            let undone = i32::from(rep.commit_undo_ops(undo_ops)?);
             if !undone_out.is_null() {
                 // SAFETY:
                 //  - undone_out is not NULL (just checked)
@@ -360,7 +599,14 @@ pub unsafe extern "C" fn tc_replica_undo(rep: *mut TCReplica, undone_out: *mut i
     )
 }
 
-/// Get the number of local, un-synchronized operations, or -1 on error
+#[ffizz_header::item]
+#[ffizz(order = 902)]
+/// Get the number of local, un-synchronized operations (not including undo points), or -1 on
+/// error.
+///
+/// ```c
+/// EXTERN_C int64_t tc_replica_num_local_operations(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_num_local_operations(rep: *mut TCReplica) -> i64 {
     wrap(
@@ -373,10 +619,35 @@ pub unsafe extern "C" fn tc_replica_num_local_operations(rep: *mut TCReplica) ->
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
+/// Get the number of undo points (number of undo calls possible), or -1 on error.
+///
+/// ```c
+/// EXTERN_C int64_t tc_replica_num_undo_points(struct TCReplica *rep);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_num_undo_points(rep: *mut TCReplica) -> i64 {
+    wrap(
+        rep,
+        |rep| {
+            let count = rep.num_undo_points()? as i64;
+            Ok(count)
+        },
+        -1,
+    )
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs automatically
 /// when a change is made.  The `force` flag allows forcing a new UndoPoint even if one has already
 /// been created by this Replica, and may be useful when a Replica instance is held for a long time
 /// and used to apply more than one user-visible change.
+///
+/// ```c
+/// EXTERN_C TCResult tc_replica_add_undo_point(struct TCReplica *rep, bool force);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_add_undo_point(rep: *mut TCReplica, force: bool) -> TCResult {
     wrap(
@@ -389,9 +660,15 @@ pub unsafe extern "C" fn tc_replica_add_undo_point(rep: *mut TCReplica, force: b
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Rebuild this replica's working set, based on whether tasks are pending or not.  If `renumber`
 /// is true, then existing tasks may be moved to new working-set indices; in any case, on
 /// completion all pending tasks are in the working set and all non- pending tasks are not.
+///
+/// ```c
+/// EXTERN_C TCResult tc_replica_rebuild_working_set(struct TCReplica *rep, bool renumber);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_rebuild_working_set(
     rep: *mut TCReplica,
@@ -407,9 +684,15 @@ pub unsafe extern "C" fn tc_replica_rebuild_working_set(
     )
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 902)]
 /// Get the latest error for a replica, or a string with NULL ptr if no error exists.  Subsequent
 /// calls to this function will return NULL.  The rep pointer must not be NULL.  The caller must
 /// free the returned string.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_error(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_error(rep: *mut TCReplica) -> TCString {
     // SAFETY:
@@ -427,8 +710,14 @@ pub unsafe extern "C" fn tc_replica_error(rep: *mut TCReplica) -> TCString {
     }
 }
 
+#[ffizz_header::item]
+#[ffizz(order = 903)]
 /// Free a replica.  The replica may not be used after this function returns and must not be freed
 /// more than once.
+///
+/// ```c
+/// EXTERN_C void tc_replica_free(struct TCReplica *rep);
+/// ```
 #[no_mangle]
 pub unsafe extern "C" fn tc_replica_free(rep: *mut TCReplica) {
     // SAFETY:
@@ -440,4 +729,176 @@ pub unsafe extern "C" fn tc_replica_free(rep: *mut TCReplica) {
         panic!("replica is borrowed and cannot be freed");
     }
     drop(replica);
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Free a vector of ReplicaOp.  The vector may not be used after this function returns and must not be freed
+/// more than once.
+///
+/// ```c
+/// EXTERN_C void tc_replica_op_list_free(struct TCReplicaOpList *oplist);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_list_free(oplist: *mut TCReplicaOpList) {
+    debug_assert!(!oplist.is_null());
+    // SAFETY:
+    // - arg is not NULL (just checked)
+    // - `*oplist` is valid (guaranteed by caller not double-freeing this value)
+    unsafe {
+        TCReplicaOpList::take_val_from_arg(
+            oplist,
+            // SAFETY:
+            //  - value is empty, so the caller need not free it.
+            TCReplicaOpList::return_val(Vec::new()),
+        )
+    };
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return uuid field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_uuid(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_uuid(op: *const TCReplicaOp) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Create { uuid }
+    | ReplicaOp::Delete { uuid, .. }
+    | ReplicaOp::Update { uuid, .. } = rop
+    {
+        let uuid_rstr: RustString = uuid.to_string().into();
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(uuid_rstr) }
+    } else {
+        panic!("Operation has no uuid: {:#?}", rop);
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return property field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_property(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_property(op: *const TCReplicaOp) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Update { property, .. } = rop {
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(property.clone().into()) }
+    } else {
+        panic!("Operation has no property: {:#?}", rop);
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return value field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_value(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_value(op: *const TCReplicaOp) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Update { value, .. } = rop {
+        let value_rstr: RustString = value.clone().unwrap_or(String::new()).into();
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(value_rstr) }
+    } else {
+        panic!("Operation has no value: {:#?}", rop);
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return old value field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_old_value(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_old_value(op: *const TCReplicaOp) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Update { old_value, .. } = rop {
+        let old_value_rstr: RustString = old_value.clone().unwrap_or(String::new()).into();
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(old_value_rstr) }
+    } else {
+        panic!("Operation has no old value: {:#?}", rop);
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return timestamp field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_timestamp(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_timestamp(op: *const TCReplicaOp) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Update { timestamp, .. } = rop {
+        let timestamp_rstr: RustString = timestamp.to_string().into();
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(timestamp_rstr) }
+    } else {
+        panic!("Operation has no timestamp: {:#?}", rop);
+    }
+}
+
+#[ffizz_header::item]
+#[ffizz(order = 903)]
+/// Return description field of old task field of ReplicaOp.
+///
+/// ```c
+/// EXTERN_C struct TCString tc_replica_op_get_old_task_description(struct TCReplicaOp *op);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn tc_replica_op_get_old_task_description(
+    op: *const TCReplicaOp,
+) -> TCString {
+    // SAFETY:
+    //   - inner is not null
+    //   - inner is a living object
+    let rop: &ReplicaOp = unsafe { (*op).inner.as_ref() };
+
+    if let ReplicaOp::Delete { old_task, .. } = rop {
+        let description_rstr: RustString = old_task["description"].clone().into();
+        // SAFETY:
+        //  - caller promises to free this string
+        unsafe { TCString::return_val(description_rstr) }
+    } else {
+        panic!("Operation has no timestamp: {:#?}", rop);
+    }
 }

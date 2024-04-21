@@ -34,14 +34,23 @@ Create a server with [`ServerConfig`](crate::ServerConfig).
 The [`server`](crate::server) module defines the interface a server must meet.
 Users can define their own server impelementations.
 
+# Feature Flags
+
+Support for some optional functionality is controlled by feature flags.
+
+Sync server client support:
+
+ * `server-gcp` - sync to Google Cloud Platform
+ * `server-sync` - sync to the taskchampion-sync-server
+
 # See Also
 
 See the [TaskChampion Book](http://taskchampion.github.com/taskchampion)
 for more information about the design and usage of the tool.
 
-# Minimum Supported Rust Version
+# Minimum Supported Rust Version (MSRV)
 
-This crate supports Rust version 1.47 and higher.
+This crate supports Rust version 1.70.0 and higher.
 
  */
 
@@ -63,7 +72,7 @@ pub use errors::Error;
 pub use replica::Replica;
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
-pub use task::{Annotation, Status, Tag, Task, TaskMut};
+pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskMut};
 pub use workingset::WorkingSet;
 
 /// Re-exported type from the `uuid` crate, for ease of compatibility for consumers of this crate.

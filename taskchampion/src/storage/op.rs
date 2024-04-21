@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// A ReplicaOp defines a single change to the task database, as stored locally in the replica.
 /// This contains additional information not included in SyncOp.
-#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum ReplicaOp {
     /// Create a new task.
     ///
@@ -59,6 +59,11 @@ impl ReplicaOp {
         }
     }
 
+    /// Determine whether this is an undo point.
+    pub fn is_undo_point(&self) -> bool {
+        self == &Self::UndoPoint
+    }
+
     /// Generate a sequence of SyncOp's to reverse the effects of this ReplicaOp.
     pub fn reverse_ops(self) -> Vec<SyncOp> {
         match self {
@@ -98,6 +103,7 @@ impl ReplicaOp {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::errors::Result;
     use crate::storage::taskmap_with;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -105,7 +111,7 @@ mod test {
     use ReplicaOp::*;
 
     #[test]
-    fn test_json_create() -> anyhow::Result<()> {
+    fn test_json_create() -> Result<()> {
         let uuid = Uuid::new_v4();
         let op = Create { uuid };
         let json = serde_json::to_string(&op)?;
@@ -116,7 +122,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_delete() -> anyhow::Result<()> {
+    fn test_json_delete() -> Result<()> {
         let uuid = Uuid::new_v4();
         let old_task = vec![("foo".into(), "bar".into())].drain(..).collect();
         let op = Delete { uuid, old_task };
@@ -134,7 +140,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update() -> anyhow::Result<()> {
+    fn test_json_update() -> Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 
@@ -160,7 +166,7 @@ mod test {
     }
 
     #[test]
-    fn test_json_update_none() -> anyhow::Result<()> {
+    fn test_json_update_none() -> Result<()> {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 

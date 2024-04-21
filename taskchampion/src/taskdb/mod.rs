@@ -1,3 +1,4 @@
+use crate::errors::Result;
 use crate::server::{Server, SyncOp};
 use crate::storage::{ReplicaOp, Storage, TaskMap};
 use uuid::Uuid;
@@ -5,7 +6,7 @@ use uuid::Uuid;
 mod apply;
 mod snapshot;
 mod sync;
-mod undo;
+pub mod undo;
 mod working_set;
 
 /// A TaskDb is the backend for a replica.  It manages the storage, operations, synchronization,
@@ -36,38 +37,38 @@ impl TaskDb {
     /// Aside from synchronization operations, this is the only way to modify the TaskDb.  In cases
     /// where an operation does not make sense, this function will do nothing and return an error
     /// (but leave the TaskDb in a consistent state).
-    pub fn apply(&mut self, op: SyncOp) -> anyhow::Result<TaskMap> {
+    pub fn apply(&mut self, op: SyncOp) -> Result<TaskMap> {
         let mut txn = self.storage.txn()?;
         apply::apply_and_record(txn.as_mut(), op)
     }
 
     /// Add an UndoPoint operation to the list of replica operations.
-    pub fn add_undo_point(&mut self) -> anyhow::Result<()> {
+    pub fn add_undo_point(&mut self) -> Result<()> {
         let mut txn = self.storage.txn()?;
         txn.add_operation(ReplicaOp::UndoPoint)?;
         txn.commit()
     }
 
     /// Get all tasks.
-    pub fn all_tasks(&mut self) -> anyhow::Result<Vec<(Uuid, TaskMap)>> {
+    pub fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let mut txn = self.storage.txn()?;
         txn.all_tasks()
     }
 
     /// Get the UUIDs of all tasks
-    pub fn all_task_uuids(&mut self) -> anyhow::Result<Vec<Uuid>> {
+    pub fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
         let mut txn = self.storage.txn()?;
         txn.all_task_uuids()
     }
 
     /// Get the working set
-    pub fn working_set(&mut self) -> anyhow::Result<Vec<Option<Uuid>>> {
+    pub fn working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
         let mut txn = self.storage.txn()?;
         txn.get_working_set()
     }
 
     /// Get a single task, by uuid.
-    pub fn get_task(&mut self, uuid: Uuid) -> anyhow::Result<Option<TaskMap>> {
+    pub fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         let mut txn = self.storage.txn()?;
         txn.get_task(uuid)
     }
@@ -76,11 +77,7 @@ impl TaskDb {
     /// renumbers the existing working-set tasks to eliminate gaps, and also adds any tasks that
     /// are not already in the working set but should be.  The rebuild occurs in a single
     /// trasnsaction against the storage backend.
-    pub fn rebuild_working_set<F>(
-        &mut self,
-        in_working_set: F,
-        renumber: bool,
-    ) -> anyhow::Result<()>
+    pub fn rebuild_working_set<F>(&mut self, in_working_set: F, renumber: bool) -> Result<()>
     where
         F: Fn(&TaskMap) -> bool,
     {
@@ -89,7 +86,7 @@ impl TaskDb {
 
     /// Add the given uuid to the working set and return its index; if it is already in the working
     /// set, its index is returned.  This does *not* renumber any existing tasks.
-    pub fn add_to_working_set(&mut self, uuid: Uuid) -> anyhow::Result<usize> {
+    pub fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         let mut txn = self.storage.txn()?;
         // search for an existing entry for this task..
         for (i, elt) in txn.get_working_set()?.iter().enumerate() {
@@ -112,26 +109,43 @@ impl TaskDb {
     ///
     /// Set this to true on systems more constrained in CPU, memory, or bandwidth than a typical desktop
     /// system
-    pub fn sync(
-        &mut self,
-        server: &mut Box<dyn Server>,
-        avoid_snapshots: bool,
-    ) -> anyhow::Result<()> {
+    pub fn sync(&mut self, server: &mut Box<dyn Server>, avoid_snapshots: bool) -> Result<()> {
         let mut txn = self.storage.txn()?;
         sync::sync(server, txn.as_mut(), avoid_snapshots)
     }
 
-    /// Undo local operations until the most recent UndoPoint, returning false if there are no
+    /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
     /// local operations to undo.
-    pub fn undo(&mut self) -> anyhow::Result<bool> {
+    pub fn get_undo_ops(&mut self) -> Result<Vec<ReplicaOp>> {
         let mut txn = self.storage.txn()?;
-        undo::undo(txn.as_mut())
+        undo::get_undo_ops(txn.as_mut())
     }
 
-    /// Get the number of un-synchronized operations in storage.
-    pub fn num_operations(&mut self) -> anyhow::Result<usize> {
+    /// Undo local operations in storage, returning a boolean indicating success.
+    pub fn commit_undo_ops(&mut self, undo_ops: Vec<ReplicaOp>) -> Result<bool> {
+        let mut txn = self.storage.txn()?;
+        undo::commit_undo_ops(txn.as_mut(), undo_ops)
+    }
+
+    /// Get the number of un-synchronized operations in storage, excluding undo
+    /// operations.
+    pub fn num_operations(&mut self) -> Result<usize> {
         let mut txn = self.storage.txn().unwrap();
-        txn.num_operations()
+        Ok(txn
+            .operations()?
+            .iter()
+            .filter(|o| !o.is_undo_point())
+            .count())
+    }
+
+    /// Get the number of (un-synchronized) undo points in storage.
+    pub fn num_undo_points(&mut self) -> Result<usize> {
+        let mut txn = self.storage.txn().unwrap();
+        Ok(txn
+            .operations()?
+            .iter()
+            .filter(|o| o.is_undo_point())
+            .count())
     }
 
     // functions for supporting tests
@@ -148,7 +162,7 @@ impl TaskDb {
                     .map(|(p, v)| (p.clone(), v.clone()))
                     .collect::<Vec<(String, String)>>();
                 t.sort();
-                (u.clone(), t)
+                (*u, t)
             })
             .collect();
         res.sort();
@@ -158,11 +172,7 @@ impl TaskDb {
     #[cfg(test)]
     pub(crate) fn operations(&mut self) -> Vec<ReplicaOp> {
         let mut txn = self.storage.txn().unwrap();
-        txn.operations()
-            .unwrap()
-            .iter()
-            .map(|o| o.clone())
-            .collect()
+        txn.operations().unwrap().to_vec()
     }
 }
 
@@ -183,7 +193,7 @@ mod tests {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let op = SyncOp::Create { uuid };
-        db.apply(op.clone()).unwrap();
+        db.apply(op).unwrap();
 
         assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
         assert_eq!(db.operations(), vec![ReplicaOp::Create { uuid }]);
@@ -194,6 +204,30 @@ mod tests {
         let mut db = TaskDb::new_inmemory();
         db.add_undo_point().unwrap();
         assert_eq!(db.operations(), vec![ReplicaOp::UndoPoint]);
+    }
+
+    #[test]
+    fn test_num_operations() {
+        let mut db = TaskDb::new_inmemory();
+        db.apply(SyncOp::Create {
+            uuid: Uuid::new_v4(),
+        })
+        .unwrap();
+        db.add_undo_point().unwrap();
+        db.apply(SyncOp::Create {
+            uuid: Uuid::new_v4(),
+        })
+        .unwrap();
+        assert_eq!(db.num_operations().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_num_undo_points() {
+        let mut db = TaskDb::new_inmemory();
+        db.add_undo_point().unwrap();
+        assert_eq!(db.num_undo_points().unwrap(), 1);
+        db.add_undo_point().unwrap();
+        assert_eq!(db.num_undo_points().unwrap(), 2);
     }
 
     fn newdb() -> TaskDb {

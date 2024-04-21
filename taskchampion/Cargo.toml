@@ -3,31 +3,56 @@ name = "taskchampion"
 version = "0.4.1"
 authors = ["Dustin J. Mitchell <dustin@mozilla.com>"]
 description = "Personal task-tracking"
-homepage = "https://taskchampion.github.io/taskchampion/"
+homepage = "https://gothenburgbitfactory.github.io/taskwarrior/taskchampion/"
 documentation = "https://docs.rs/crate/taskchampion"
-repository = "https://github.com/taskchampion/taskchampion"
+repository = "https://github.com/GothenburgBitFactory/taskwarrior"
 readme = "../README.md"
 license = "MIT"
-edition = "2018"
+edition = "2021"
+rust-version = "1.70.0"
+
+[features]
+default = ["server-sync", "server-gcp"]
+
+# Support for sync to a server
+server-sync = ["encryption", "dep:ureq", "dep:url"]
+# Support for sync to GCP
+server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
+# (private) Support for sync protocol encryption
+encryption = ["dep:ring"]
+# (private) Generic support for cloud sync
+cloud = []
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
-uuid = { version = "^0.8.2", features = ["serde", "v4"] }
-serde = { version = "^1.0.125", features = ["derive"] }
-serde_json = "^1.0"
-chrono = { version = "^0.4.10", features = ["serde"] }
-anyhow = "1.0"
-thiserror = "1.0"
-ureq = "^2.1.0"
-log = "^0.4.14"
-rusqlite = { version = "0.25", features = ["bundled"] }
-strum = "0.21"
-strum_macros = "0.21"
-flate2 = "1"
-byteorder = "1.0"
-ring = "0.16"
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
+log.workspace = true
+rusqlite.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+flate2.workspace = true
+byteorder.workspace = true
+ring.workspace = true
+google-cloud-storage.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+google-cloud-storage.optional = true
+tokio.optional = true
+ureq.optional = true
+url.optional = true
+ring.optional = true
 
 [dev-dependencies]
-proptest = "^1.0.0"
-tempfile = "3"
-rstest = "0.10"
-pretty_assertions = "1"
+proptest.workspace = true
+tempfile.workspace = true
+rstest.workspace = true
+pretty_assertions.workspace = true
