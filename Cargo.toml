@@ -1,16 +1,13 @@
 [workspace]
 
 members = [
-    "taskchampion/taskchampion",
-    "taskchampion/lib",
-    "taskchampion/integration-tests",
-    "taskchampion/xtask",
+    "taskchampion",
+    "lib",
+    "integration-tests",
+    "xtask",
 ]
 
 resolver = "2"
-
-# src/tc/rust is just part of the TW build and not a public crate
-exclude = [ "src/tc/rust" ]
 
 # All Rust dependencies are defined here, and then referenced by the
 # Cargo.toml's in the members with `foo.workspace = true`.

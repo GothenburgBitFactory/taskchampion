@@ -1,15 +1,1 @@
-cmake.h
-commit.h
-*~
-.*.swp
-Session.vim
-package-config/osx/binary/task
-/build*/
-install_manifest.txt
-_CPack_Packages
-patches
-*.exe
-tutorials
-.prove
-/target/
-/.idea/
+**/*.rs.bk

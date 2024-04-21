@@ -1,5 +1,0 @@
-Shell environment variables that affect how and what tests are executed:
-
-TASKW_SKIP -> Causes any test that needs Taskwarrior (task binary only) to be skipped (TestCase)
-
-TASK_USE_PATH -> Causes tests to look for "task" in PATH instead of the default location
