@@ -21,11 +21,11 @@ jobs:
           # if this changes, change it in .github/workflows/checks.yml as well
           mdbook-version: '0.4.10'
 
-      - run: mdbook build taskchampion/docs
+      - run: mdbook build docs
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./taskchampion/docs/book
+          publish_dir: ./docs/book
           destination_dir: taskchampion
