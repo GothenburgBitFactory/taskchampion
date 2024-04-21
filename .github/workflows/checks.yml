@@ -3,7 +3,7 @@ name: checks
 on:
   push:
     branches:
-      - develop
+      - main
   pull_request:
     types: [opened, reopened, synchronize]
 
