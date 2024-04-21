@@ -1,5 +1,3 @@
-**NOTE:** TaskChampion is merging with Taskwarrior, so this repository [is archived](https://github.com/taskchampion/taskchampion/discussions/360).
-
 TaskChampion
 ------------
 
@@ -7,10 +5,7 @@ TaskChampion implements the task storage and synchronization behind Taskwarrior.
 It includes an implementation with Rust and C APIs, allowing any application to maintain and manipulate its own replica.
 It also includes a specification for tasks and how they are synchronized, inviting alternative implementations of replicas or task servers.
 
-See the [documentation](https://gothenburgbitfactory.github.io/taskwarrior/taskchampion/) for more!
-
-NOTE: Taskwarrior is currently in the midst of a change to use TaskChampion as its storage.
-Until that is complete, the information here may be out-of-date.
+See the [documentation](https://gothenburgbitfactory.github.io/taskchampion/) for more!
 
 ## Structure
 
