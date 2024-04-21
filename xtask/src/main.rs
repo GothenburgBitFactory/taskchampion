@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 
 /// Tuples of the form (PATH, REGEX) where PATH and REGEX are literals where PATH is a file that
 /// conains the Minimum Supported Rust Version and REGEX is the pattern to find the appropriate
-/// line in the file. PATH is relative to the `taskchampion/` directory in the repo.
+/// line in the file. PATH is relative to the root directory in the repo.
 const MSRV_PATH_REGEX: &[(&str, &str)] = &[
     (
-        "../.github/workflows/checks.yml",
+        ".github/workflows/checks.yml",
         r#"toolchain: "[0-9.]+*" # MSRV"#,
     ),
-    ("../.github/workflows/rust-tests.yml", r#""[0-9.]+" # MSRV"#),
+    (".github/workflows/rust-tests.yml", r#""[0-9.]+" # MSRV"#),
     (
         "taskchampion/src/lib.rs",
         r#"Rust version [0-9.]* and higher"#,
