@@ -18,7 +18,7 @@ log = "^0.4.14"
 nom = "^6.1.2"
 prettytable-rs = "^0.8.0"
 textwrap = { version="^0.13.4", features=["terminal_size"] }
-termcolor = "^1.1.2"
+termcolor = "^1.4.1"
 atty = "^0.2.14"
 toml = "^0.5.8"
 toml_edit = "^0.2.0"
