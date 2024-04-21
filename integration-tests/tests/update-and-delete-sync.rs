@@ -37,7 +37,7 @@ fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     {
         let mut t = rep2.get_task(u)?.unwrap().into_mut(&mut rep2);
         t.delete()?;
-        t.set_modified(Utc.ymd(1980, 1, 1).and_hms(0, 0, 0))?;
+        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap())?;
     }
 
     // sync it back to rep1

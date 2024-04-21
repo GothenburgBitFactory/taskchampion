@@ -633,7 +633,7 @@ mod test {
 
     #[test]
     fn test_entry_set() {
-        let ts = Utc.ymd(1980, 1, 1).and_hms(0, 0, 0);
+        let ts = Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
             Uuid::new_v4(),
             vec![(String::from("entry"), format!("{}", ts.timestamp()))]
@@ -654,7 +654,7 @@ mod test {
 
     #[test]
     fn test_wait_in_past() {
-        let ts = Utc.ymd(1970, 1, 1).and_hms(0, 0, 0);
+        let ts = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
             Uuid::new_v4(),
             vec![(String::from("wait"), format!("{}", ts.timestamp()))]
@@ -669,7 +669,7 @@ mod test {
 
     #[test]
     fn test_wait_in_future() {
-        let ts = Utc.ymd(3000, 1, 1).and_hms(0, 0, 0);
+        let ts = Utc.with_ymd_and_hms(3000, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
             Uuid::new_v4(),
             vec![(String::from("wait"), format!("{}", ts.timestamp()))]
@@ -757,7 +757,7 @@ mod test {
 
     #[test]
     fn test_get_due() {
-        let test_time = Utc.ymd(2033, 1, 1).and_hms(0, 0, 0);
+        let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
             Uuid::new_v4(),
             vec![(String::from("due"), format!("{}", test_time.timestamp()))]
@@ -782,7 +782,7 @@ mod test {
 
     #[test]
     fn test_add_due() {
-        let test_time = Utc.ymd(2033, 1, 1).and_hms(0, 0, 0);
+        let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
         with_mut_task(|mut task| {
             assert_eq!(task.get_due(), None);
             task.set_due(Some(test_time)).unwrap();
@@ -792,7 +792,7 @@ mod test {
 
     #[test]
     fn test_remove_due() {
-        let test_time = Utc.ymd(2033, 1, 1).and_hms(0, 0, 0);
+        let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
         with_mut_task(|mut task| {
             task.set_due(Some(test_time)).unwrap();
             task.reload().unwrap();
@@ -835,11 +835,11 @@ mod test {
             anns,
             vec![
                 Annotation {
-                    entry: Utc.timestamp(1635301873, 0),
+                    entry: Utc.timestamp_opt(1635301873, 0).unwrap(),
                     description: "left message".into()
                 },
                 Annotation {
-                    entry: Utc.timestamp(1635301883, 0),
+                    entry: Utc.timestamp_opt(1635301883, 0).unwrap(),
                     description: "left another message".into()
                 }
             ]
@@ -850,7 +850,7 @@ mod test {
     fn test_add_annotation() {
         with_mut_task(|mut task| {
             task.add_annotation(Annotation {
-                entry: Utc.timestamp(1635301900, 0),
+                entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
                 description: "right message".into(),
             })
             .unwrap();
@@ -860,7 +860,7 @@ mod test {
             assert_eq!(task.taskmap[k], "right message".to_owned());
             // adding with same time overwrites..
             task.add_annotation(Annotation {
-                entry: Utc.timestamp(1635301900, 0),
+                entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
                 description: "right message 2".into(),
             })
             .unwrap();
@@ -876,7 +876,7 @@ mod test {
             task.set_string("annotation_1635301883", Some("left another message".into()))
                 .unwrap();
 
-            task.remove_annotation(Utc.timestamp(1635301873, 0))
+            task.remove_annotation(Utc.timestamp_opt(1635301873, 0).unwrap())
                 .unwrap();
 
             task.reload().unwrap();
@@ -886,7 +886,7 @@ mod test {
             assert_eq!(
                 anns,
                 vec![Annotation {
-                    entry: Utc.timestamp(1635301883, 0),
+                    entry: Utc.timestamp_opt(1635301883, 0).unwrap(),
                     description: "left another message".into()
                 }]
             );
