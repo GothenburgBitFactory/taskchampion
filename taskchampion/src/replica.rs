@@ -583,7 +583,7 @@ mod tests {
         t = rep.new_task(Status::Deleted, "goner".into()).unwrap();
         {
             let mut t = t.into_mut(&mut rep);
-            t.set_modified(Utc.ymd(1980, 1, 1).and_hms(0, 0, 0))
+            t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap())
                 .unwrap();
         }
 
