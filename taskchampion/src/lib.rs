@@ -45,7 +45,7 @@ Sync server client support:
 
 # See Also
 
-See the [TaskChampion Book](http://taskchampion.github.com/taskchampion)
+See the [TaskChampion Book](http://gothenburgbitfactory.github.io/taskchampion)
 for more information about the design and usage of the tool.
 
 # Minimum Supported Rust Version (MSRV)
