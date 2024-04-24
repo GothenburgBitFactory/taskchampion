@@ -58,6 +58,11 @@ impl TestServer {
         let mut inner = self.0.lock().unwrap();
         inner.versions.remove(&parent_version_id);
     }
+
+    pub(crate) fn versions_len(&self) -> usize {
+        let inner = self.0.lock().unwrap();
+        inner.versions.len()
+    }
 }
 
 impl Server for TestServer {
