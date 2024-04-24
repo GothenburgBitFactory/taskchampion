@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::encryption::{Cryptor, Sealed, Secret, Unsealed};
 
 pub struct SyncServer {
-    origin: String,
+    base_url: Url,
     client_id: Uuid,
     cryptor: Cryptor,
     agent: ureq::Agent,
@@ -24,27 +24,36 @@ const SNAPSHOT_CONTENT_TYPE: &str = "application/vnd.taskchampion.snapshot";
 
 /// A SyncServer communicates with a sync server over HTTP.
 impl SyncServer {
-    /// Construct a new SyncServer.  The `origin` is the sync server's protocol and hostname
-    /// without a trailing slash, such as `https://tcsync.example.com`.  Pass a client_id to
-    /// identify this client to the server.  Multiple replicas synchronizing the same task history
+    /// Construct a new SyncServer.
+    ///
+    /// The `url` parameter represents the base URL of the sync server, encompassing the protocol, hostname, and optional path
+    /// components where the server is hosted. When constructing URLs for server endpoints, the respective path components
+    /// will be appended to this base URL.
+    ///
+    /// Pass a client_id to identify this client to the server.  Multiple replicas synchronizing the same task history
     /// should use the same client_id.
-    pub fn new(origin: String, client_id: Uuid, encryption_secret: Vec<u8>) -> Result<SyncServer> {
-        let origin = Url::parse(&origin)
-            .map_err(|_| Error::Server(format!("Could not parse {} as a URL", origin)))?;
-        if origin.path() != "/" {
-            return Err(Error::Server(format!(
-                "Server origin must have an empty path; got {}",
-                origin
-            )));
-        }
+    pub fn new(url: String, client_id: Uuid, encryption_secret: Vec<u8>) -> Result<SyncServer> {
+        let url = Url::parse(&url)
+            .map_err(|_| Error::Server(format!("Could not parse {} as a URL", url)))?;
         Ok(SyncServer {
-            origin: origin.to_string(),
+            base_url: url,
             client_id,
             cryptor: Cryptor::new(client_id, &Secret(encryption_secret.to_vec()))?,
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(Duration::from_secs(10))
                 .timeout_read(Duration::from_secs(60))
                 .build(),
+        })
+    }
+
+    /// Construct a full endpoint URL by joining the base url with additional
+    /// path components.
+    fn construct_endpoint_url(&self, path_components: &str) -> Result<Url> {
+        self.base_url.join(path_components).map_err(|_| {
+            Error::Server(format!(
+                "Could not build url from base {} and path component(s) {}",
+                self.base_url, path_components
+            ))
         })
     }
 }
@@ -94,7 +103,9 @@ impl Server for SyncServer {
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
-        let url = format!("{}v1/client/add-version/{}", self.origin, parent_version_id);
+        let url = self.construct_endpoint_url(
+            format!("v1/client/add-version/{}", parent_version_id).as_str(),
+        )?;
         let unsealed = Unsealed {
             version_id: parent_version_id,
             payload: history_segment,
@@ -102,7 +113,7 @@ impl Server for SyncServer {
         let sealed = self.cryptor.seal(unsealed)?;
         match self
             .agent
-            .post(&url)
+            .post(url.as_str())
             .set("Content-Type", HISTORY_SEGMENT_CONTENT_TYPE)
             .set("X-Client-Id", &self.client_id.to_string())
             .send_bytes(sealed.as_ref())
@@ -126,13 +137,13 @@ impl Server for SyncServer {
     }
 
     fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
-        let url = format!(
-            "{}v1/client/get-child-version/{}",
-            self.origin, parent_version_id
-        );
+        let url = self.construct_endpoint_url(
+            format!("v1/client/get-child-version/{}", parent_version_id).as_str(),
+        )?;
+
         match self
             .agent
-            .get(&url)
+            .get(url.as_str())
             .set("X-Client-Id", &self.client_id.to_string())
             .call()
         {
@@ -156,7 +167,8 @@ impl Server for SyncServer {
     }
 
     fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
-        let url = format!("{}v1/client/add-snapshot/{}", self.origin, version_id);
+        let url =
+            self.construct_endpoint_url(format!("v1/client/add-snapshot/{}", version_id).as_str())?;
         let unsealed = Unsealed {
             version_id,
             payload: snapshot,
@@ -164,7 +176,7 @@ impl Server for SyncServer {
         let sealed = self.cryptor.seal(unsealed)?;
         Ok(self
             .agent
-            .post(&url)
+            .post(url.as_str())
             .set("Content-Type", SNAPSHOT_CONTENT_TYPE)
             .set("X-Client-Id", &self.client_id.to_string())
             .send_bytes(sealed.as_ref())
@@ -172,10 +184,10 @@ impl Server for SyncServer {
     }
 
     fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
-        let url = format!("{}v1/client/snapshot", self.origin);
+        let url = self.construct_endpoint_url("v1/client/snapshot")?;
         match self
             .agent
-            .get(&url)
+            .get(url.as_str())
             .set("X-Client-Id", &self.client_id.to_string())
             .call()
         {
