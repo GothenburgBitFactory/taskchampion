@@ -559,13 +559,13 @@ Including it in the AAD ensures that such data cannot be confused with task data
 </ul>
 <p>The <code>version</code> field identifies this data format, and future formats will have a value other than 1 in this position.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="http-representation"><a class="header" href="#http-representation">HTTP Representation</a></h1>
-<p>The transactions in the sync protocol are realized for an HTTP server at <code>&lt;origin&gt;</code> using the HTTP requests and responses described here.
-The <code>origin</code> <em>should</em> be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.</p>
+<p>The transactions in the sync protocol are realized for an HTTP server at <code>&lt;base_url&gt;</code> using the HTTP requests and responses described here.
+The <code>base_url</code> <em>should</em> be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.</p>
 <p>The replica identifies itself to the server using a <code>client_id</code> in the form of a UUID.
 This value is passed with every request in the <code>X-Client-Id</code> header, in its dashed-hex format.</p>
 <p>The salt used in key derivation is the 16-byte client ID.</p>
 <h2 id="addversion-1"><a class="header" href="#addversion-1">AddVersion</a></h2>
-<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/v1/client/add-version/&lt;parentVersionId&gt;</code>.
+<p>The request is a <code>POST</code> to <code>&lt;base_url&gt;/v1/client/add-version/&lt;parentVersionId&gt;</code>.
 The request body contains the history segment, optionally encoded using any encoding supported by actix-web.
 The content-type must be <code>application/vnd.taskchampion.history-segment</code>.</p>
 <p>The success response is a 200 OK with an empty body.
@@ -575,7 +575,7 @@ If included, a snapshot request appears in the <code>X-Snapshot-Request</code> h
 The expected parent version ID appears in the <code>X-Parent-Version-Id</code> header.</p>
 <p>Other error responses (4xx or 5xx) may be returned and should be treated appropriately to their meanings in the HTTP specification.</p>
 <h2 id="getchildversion-1"><a class="header" href="#getchildversion-1">GetChildVersion</a></h2>
-<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/v1/client/get-child-version/&lt;parentVersionId&gt;</code>.</p>
+<p>The request is a <code>GET</code> to <code>&lt;base_url&gt;/v1/client/get-child-version/&lt;parentVersionId&gt;</code>.</p>
 <p>The response is determined as described above.
 The <em>not-found</em> response is 404 NOT FOUND.
 The <em>gone</em> response is 410 GONE.
@@ -589,13 +589,13 @@ Clients should treat a 410 GONE as a synchronization error.
 If the client has pending changes to send to the server, based on a now-removed version, then those changes cannot be reconciled and will be lost.
 The client should, optionally after consulting the user, download and apply the latest snapshot.</p>
 <h2 id="addsnapshot-1"><a class="header" href="#addsnapshot-1">AddSnapshot</a></h2>
-<p>The request is a <code>POST</code> to <code>&lt;origin&gt;/v1/client/add-snapshot/&lt;versionId&gt;</code>.
+<p>The request is a <code>POST</code> to <code>&lt;base_url&gt;/v1/client/add-snapshot/&lt;versionId&gt;</code>.
 The request body contains the snapshot data, optionally encoded using any encoding supported by actix-web.
 The content-type must be <code>application/vnd.taskchampion.snapshot</code>.</p>
 <p>If the version is invalid, as described above, the response should be 400 BAD REQUEST.
 The server response should be 200 OK on success.</p>
 <h2 id="getsnapshot-1"><a class="header" href="#getsnapshot-1">GetSnapshot</a></h2>
-<p>The request is a <code>GET</code> to <code>&lt;origin&gt;/v1/client/snapshot</code>.</p>
+<p>The request is a <code>GET</code> to <code>&lt;base_url&gt;/v1/client/snapshot</code>.</p>
 <p>The response is a 200 OK.
 The snapshot is returned in the response body, with content-type <code>application/vnd.taskchampion.snapshot</code>.
 The version ID appears in the <code>X-Version-Id</code> header.
