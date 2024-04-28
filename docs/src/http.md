@@ -1,7 +1,7 @@
 # HTTP Representation
 
-The transactions in the sync protocol are realized for an HTTP server at `<origin>` using the HTTP requests and responses described here.
-The `origin` *should* be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.
+The transactions in the sync protocol are realized for an HTTP server at `<base_url>` using the HTTP requests and responses described here.
+The `base_url` *should* be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.
 
 The replica identifies itself to the server using a `client_id` in the form of a UUID.
 This value is passed with every request in the `X-Client-Id` header, in its dashed-hex format.
@@ -10,7 +10,7 @@ The salt used in key derivation is the 16-byte client ID.
 
 ## AddVersion
 
-The request is a `POST` to `<origin>/v1/client/add-version/<parentVersionId>`.
+The request is a `POST` to `<base_url>/v1/client/add-version/<parentVersionId>`.
 The request body contains the history segment, optionally encoded using any encoding supported by actix-web.
 The content-type must be `application/vnd.taskchampion.history-segment`.
 
@@ -25,7 +25,7 @@ Other error responses (4xx or 5xx) may be returned and should be treated appropr
 
 ## GetChildVersion
 
-The request is a `GET` to `<origin>/v1/client/get-child-version/<parentVersionId>`.
+The request is a `GET` to `<base_url>/v1/client/get-child-version/<parentVersionId>`.
 
 The response is determined as described above.
 The _not-found_ response is 404 NOT FOUND.
@@ -44,7 +44,7 @@ The client should, optionally after consulting the user, download and apply the 
 
 ## AddSnapshot
 
-The request is a `POST` to `<origin>/v1/client/add-snapshot/<versionId>`.
+The request is a `POST` to `<base_url>/v1/client/add-snapshot/<versionId>`.
 The request body contains the snapshot data, optionally encoded using any encoding supported by actix-web.
 The content-type must be `application/vnd.taskchampion.snapshot`.
 
@@ -53,7 +53,7 @@ The server response should be 200 OK on success.
 
 ## GetSnapshot
 
-The request is a `GET` to `<origin>/v1/client/snapshot`.
+The request is a `GET` to `<base_url>/v1/client/snapshot`.
 
 The response is a 200 OK.
 The snapshot is returned in the response body, with content-type `application/vnd.taskchampion.snapshot`.

@@ -21,8 +21,8 @@ pub enum ServerConfig {
     /// A remote taskchampion-sync-server instance
     #[cfg(feature = "server-sync")]
     Remote {
-        /// Sync server "origin"; a URL with schema and hostname but no path or trailing `/`
-        origin: String,
+        /// The base URL of the Sync server
+        url: String,
 
         /// Client ID to identify and authenticate this replica to the server
         client_id: Uuid,
@@ -56,10 +56,10 @@ impl ServerConfig {
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
             #[cfg(feature = "server-sync")]
             ServerConfig::Remote {
-                origin,
+                url,
                 client_id,
                 encryption_secret,
-            } => Box::new(SyncServer::new(origin, client_id, encryption_secret)?),
+            } => Box::new(SyncServer::new(url, client_id, encryption_secret)?),
             #[cfg(feature = "server-gcp")]
             ServerConfig::Gcp {
                 bucket,
