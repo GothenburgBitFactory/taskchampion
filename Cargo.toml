@@ -1,11 +1,6 @@
 [workspace]
 
-members = [
-    "taskchampion",
-    "lib",
-    "integration-tests",
-    "xtask",
-]
+members = ["taskchampion", "lib", "integration-tests", "xtask", "py-lib"]
 
 resolver = "2"
 
@@ -18,7 +13,10 @@ cc = "1.0.73"
 chrono = { version = "^0.4.22", features = ["serde"] }
 ffizz-header = "0.5"
 flate2 = "1"
-google-cloud-storage = { version = "0.15.0", default-features = false, features = ["rustls-tls", "auth"] }
+google-cloud-storage = { version = "0.15.0", default-features = false, features = [
+    "rustls-tls",
+    "auth",
+] }
 lazy_static = "1"
 libc = "0.2.136"
 log = "^0.4.17"
