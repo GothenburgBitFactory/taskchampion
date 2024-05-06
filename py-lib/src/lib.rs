@@ -7,10 +7,13 @@ pub mod task;
 use task::*;
 pub mod annotation;
 use annotation::*;
+
 #[pymodule]
 fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Status>()?;
     m.add_class::<Replica>()?;
     m.add_class::<Task>()?;
+    m.add_class::<Annotation>()?;
+
     Ok(())
 }
