@@ -16,6 +16,13 @@ unsafe impl Send for Replica {}
 #[pymethods]
 impl Replica {
     #[new]
+    /// Instantiates the Replica
+    ///
+    /// Args:
+    ///     path (str): path to the directory with the database
+    ///     create_if_missing (bool): create the database if it does not exist
+    /// Raises:
+    ///     OsError: if database does not exist, and create_if_missing is false
     pub fn new(path: String, exists: bool) -> PyResult<Replica> {
         let storage = SqliteStorage::new(path, exists);
         // TODO convert this and other match Result into ? for less boilerplate.
@@ -24,16 +31,21 @@ impl Replica {
             Err(e) => Err(PyOSError::new_err(e.to_string())),
         }
     }
+    /// Create a new task
+    /// The task must not already exist.
     pub fn new_task(&mut self, status: Status, description: String) {
         let _ = self.0.new_task(status.into(), description);
     }
 
+    /// Get a list of all uuids for tasks in the replica.
     pub fn all_task_uuids(&mut self) -> PyResult<Vec<String>> {
         match self.0.all_task_uuids() {
             Ok(r) => Ok(r.iter().map(|uuid| uuid.to_string()).collect()),
             Err(e) => Err(PyOSError::new_err(e.to_string())),
         }
     }
+
+    /// Get a list of all tasks in the replica.
     pub fn all_tasks(&mut self) -> PyResult<HashMap<String, Task>> {
         match self.0.all_tasks() {
             Ok(v) => Ok(v
