@@ -3,7 +3,7 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "py-lib"
+name = "taskchampion"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",
@@ -11,5 +11,16 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[tool.poetry]
+name = "taskchampion"
+version = "0.1.0"
+authors = ["illyalaifu <illyalaifu@gmail.com>"]
+description = ""
+
+[tool.poetry.dependencies]
+python = ">=3.8"
+pytest = "*"
