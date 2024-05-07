@@ -6,7 +6,7 @@ use uuid::Uuid;
 /// typically calculated once and re-used.
 #[derive(Debug, PartialEq, Eq)]
 pub struct DependencyMap {
-    /// Edges of the dependency graph.  If (a, b) is in this array, then task a depends on tsak b.
+    /// Edges of the dependency graph.  If (a, b) is in this array, then task a depends on task b.
     edges: Vec<(Uuid, Uuid)>,
 }
 
