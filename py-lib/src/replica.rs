@@ -4,7 +4,7 @@ use crate::status::Status;
 use crate::{Task, WorkingSet};
 use pyo3::{exceptions::PyOSError, prelude::*};
 use taskchampion::storage::SqliteStorage;
-use taskchampion::Replica as TCReplica;
+use taskchampion::{Replica as TCReplica, Uuid};
 
 #[pyclass]
 /// A replica represents an instance of a user's task data, providing an easy interface
@@ -12,7 +12,6 @@ use taskchampion::Replica as TCReplica;
 pub struct Replica(TCReplica);
 
 unsafe impl Send for Replica {}
-
 #[pymethods]
 impl Replica {
     #[new]
@@ -57,8 +56,17 @@ impl Replica {
         }
     }
 
-    pub fn update_task(&self) {
-        todo!()
+    pub fn update_task(
+        &mut self,
+        uuid: String,
+        property: String,
+        value: Option<String>,
+    ) -> PyResult<HashMap<String, String>> {
+        let uuid = Uuid::parse_str(&uuid).unwrap();
+        match self.0.update_task(uuid, property, value) {
+            Ok(res) => Ok(res),
+            Err(e) => Err(PyOSError::new_err(e.to_string())),
+        }
     }
 
     pub fn working_set(&mut self) -> PyResult<WorkingSet> {
@@ -67,32 +75,49 @@ impl Replica {
             Err(err) => Err(PyOSError::new_err(err.to_string())),
         }
     }
-    pub fn dependency_map(&self, _force: bool) {
-        todo!()
+
+    // pub fn dependency_map(&self, force: bool) {
+    //     self.0.dependency_map(force)
+    // }
+
+    pub fn get_task(&mut self, uuid: String) -> PyResult<Option<Task>> {
+        // TODO: it should be possible to wrap this into a HOF that does two maps automatically
+        // thus reducing boilerplate
+        self.0
+            .get_task(Uuid::parse_str(&uuid).unwrap())
+            .map(|opt| opt.map(|t| Task(t)))
+            .map_err(|e| PyOSError::new_err(e.to_string()))
     }
 
-    pub fn get_task(&mut self, _uuid: String) -> PyResult<Option<Task>> {
-        todo!()
-    }
-
-    pub fn import_task_with_uuid(&self, _uuid: String) -> PyResult<Task> {
-        todo!()
+    pub fn import_task_with_uuid(&mut self, uuid: String) -> PyResult<Task> {
+        self.0
+            .import_task_with_uuid(Uuid::parse_str(&uuid).unwrap())
+            .map(|task| Task(task))
+            .map_err(|err| PyOSError::new_err(err.to_string()))
     }
     pub fn sync(&self, _avoid_snapshots: bool) {
         todo!()
     }
 
-    pub fn rebuild_working_set(&self, _renumber: bool) -> PyResult<()> {
-        todo!()
+    pub fn rebuild_working_set(&mut self, renumber: bool) -> PyResult<()> {
+        self.0
+            .rebuild_working_set(renumber)
+            .map_err(|err| PyOSError::new_err(err.to_string()))
     }
-    pub fn add_undo_point(&mut self, _force: bool) -> PyResult<()> {
-        todo!()
+    pub fn add_undo_point(&mut self, force: bool) -> PyResult<()> {
+        self.0
+            .add_undo_point(force)
+            .map_err(|err| PyOSError::new_err(err.to_string()))
     }
     pub fn num_local_operations(&mut self) -> PyResult<usize> {
-        todo!()
+        self.0
+            .num_local_operations()
+            .map_err(|err| PyOSError::new_err(err.to_string()))
     }
 
-    pub fn num_undo_points(&self) -> PyResult<usize> {
-        todo!()
+    pub fn num_undo_points(&mut self) -> PyResult<usize> {
+        self.0
+            .num_local_operations()
+            .map_err(|err| PyOSError::new_err(err.to_string()))
     }
 }
