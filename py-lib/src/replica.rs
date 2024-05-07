@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::status::Status;
-use crate::Task;
+use crate::{Task, WorkingSet};
 use pyo3::{exceptions::PyOSError, prelude::*};
 use taskchampion::storage::SqliteStorage;
 use taskchampion::Replica as TCReplica;
@@ -25,6 +25,7 @@ impl Replica {
     ///     OsError: if database does not exist, and create_if_missing is false
     pub fn new(path: String, exists: bool) -> PyResult<Replica> {
         let storage = SqliteStorage::new(path, exists);
+
         // TODO convert this and other match Result into ? for less boilerplate.
         match storage {
             Ok(v) => Ok(Replica(TCReplica::new(Box::new(v)))),
@@ -54,5 +55,44 @@ impl Replica {
                 .collect()),
             Err(e) => Err(PyOSError::new_err(e.to_string())),
         }
+    }
+
+    pub fn update_task(&self) {
+        todo!()
+    }
+
+    pub fn working_set(&mut self) -> PyResult<WorkingSet> {
+        match self.0.working_set() {
+            Ok(ws) => Ok(WorkingSet(ws)),
+            Err(err) => Err(PyOSError::new_err(err.to_string())),
+        }
+    }
+    pub fn dependency_map(&self, _force: bool) {
+        todo!()
+    }
+
+    pub fn get_task(&mut self, _uuid: String) -> PyResult<Option<Task>> {
+        todo!()
+    }
+
+    pub fn import_task_with_uuid(&self, _uuid: String) -> PyResult<Task> {
+        todo!()
+    }
+    pub fn sync(&self, _avoid_snapshots: bool) {
+        todo!()
+    }
+
+    pub fn rebuild_working_set(&self, _renumber: bool) -> PyResult<()> {
+        todo!()
+    }
+    pub fn add_undo_point(&mut self, _force: bool) -> PyResult<()> {
+        todo!()
+    }
+    pub fn num_local_operations(&mut self) -> PyResult<usize> {
+        todo!()
+    }
+
+    pub fn num_undo_points(&self) -> PyResult<usize> {
+        todo!()
     }
 }
