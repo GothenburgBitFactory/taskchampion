@@ -95,9 +95,10 @@ def test_num_local_operations(replica_with_tasks: Replica):
 
 def test_num_undo_points(replica_with_tasks: Replica):
     assert replica_with_tasks.num_undo_points() == 10
+    replica_with_tasks.new_task(Status.Pending, "Another task")
     replica_with_tasks.add_undo_point(True)
 
-    assert replica_with_tasks.num_undo_points() == 11
+    assert replica_with_tasks.num_undo_points() == 15
 
 
 def import_task_with_uuid(replica_with_tasks: Replica):
