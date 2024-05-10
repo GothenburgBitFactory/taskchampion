@@ -13,6 +13,8 @@ pub mod tag;
 use tag::*;
 pub mod storage;
 use storage::*;
+pub mod dependency_map;
+use dependency_map::*;
 
 #[pymodule]
 fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -24,6 +26,7 @@ fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Tag>()?;
     m.add_class::<InMemoryStorage>()?;
     m.add_class::<SqliteStorage>()?;
+    m.add_class::<DependencyMap>()?;
 
     Ok(())
 }
