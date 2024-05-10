@@ -22,7 +22,7 @@ impl Replica {
     ///     path (str): path to the directory with the database
     ///     create_if_missing (bool): create the database if it does not exist
     /// Raises:
-    ///     OsError: if database does not exist, and create_if_missing is false
+    ///     RuntimeError: if database does not exist, and create_if_missing is false
     pub fn new(path: String, create_if_missing: bool) -> anyhow::Result<Replica> {
         let storage = SqliteStorage::new(path, create_if_missing)?;
 
@@ -37,30 +37,29 @@ impl Replica {
     }
     /// Create a new task
     /// The task must not already exist.
-    pub fn new_task(&mut self, status: Status, description: String) -> PyResult<Task> {
-        self.0
+    pub fn new_task(&mut self, status: Status, description: String) -> anyhow::Result<Task> {
+        Ok(self
+            .0
             .new_task(status.into(), description)
-            .map(|t| Task(t))
-            .map_err(|e| PyOSError::new_err(e.to_string()))
+            .map(|t| Task(t))?)
     }
 
     /// Get a list of all uuids for tasks in the replica.
-    pub fn all_task_uuids(&mut self) -> PyResult<Vec<String>> {
-        match self.0.all_task_uuids() {
-            Ok(r) => Ok(r.iter().map(|uuid| uuid.to_string()).collect()),
-            Err(e) => Err(PyOSError::new_err(e.to_string())),
-        }
+    pub fn all_task_uuids(&mut self) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .0
+            .all_task_uuids()
+            .map(|v| v.iter().map(|item| item.to_string()).collect())?)
     }
 
     /// Get a list of all tasks in the replica.
-    pub fn all_tasks(&mut self) -> PyResult<HashMap<String, Task>> {
-        match self.0.all_tasks() {
-            Ok(v) => Ok(v
-                .into_iter()
-                .map(|(key, value)| (key.to_string(), Task(value)))
-                .collect()),
-            Err(e) => Err(PyOSError::new_err(e.to_string())),
-        }
+    pub fn all_tasks(&mut self) -> anyhow::Result<HashMap<String, Task>> {
+        Ok(self
+            .0
+            .all_tasks()?
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), Task(value)))
+            .collect())
     }
 
     pub fn update_task(
@@ -68,19 +67,14 @@ impl Replica {
         uuid: String,
         property: String,
         value: Option<String>,
-    ) -> PyResult<HashMap<String, String>> {
-        let uuid = Uuid::parse_str(&uuid).unwrap();
-        match self.0.update_task(uuid, property, value) {
-            Ok(res) => Ok(res),
-            Err(e) => Err(PyOSError::new_err(e.to_string())),
-        }
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let uuid = Uuid::parse_str(&uuid)?;
+
+        Ok(self.0.update_task(uuid, property, value)?)
     }
 
-    pub fn working_set(&mut self) -> PyResult<WorkingSet> {
-        match self.0.working_set() {
-            Ok(ws) => Ok(WorkingSet(ws)),
-            Err(err) => Err(PyOSError::new_err(err.to_string())),
-        }
+    pub fn working_set(&mut self) -> anyhow::Result<WorkingSet> {
+        Ok(self.0.working_set().map(|ws| WorkingSet(ws))?)
     }
 
     pub fn dependency_map(&mut self, force: bool) -> anyhow::Result<DependencyMap> {
@@ -97,44 +91,34 @@ impl Replica {
         Ok(s)
     }
 
-    pub fn get_task(&mut self, uuid: String) -> PyResult<Option<Task>> {
-        // TODO: it should be possible to wrap this into a HOF that does two maps automatically
-        // thus reducing boilerplate
-        self.0
+    pub fn get_task(&mut self, uuid: String) -> anyhow::Result<Option<Task>> {
+        Ok(self
+            .0
             .get_task(Uuid::parse_str(&uuid).unwrap())
-            .map(|opt| opt.map(|t| Task(t)))
-            .map_err(|e| PyOSError::new_err(e.to_string()))
+            .map(|opt| opt.map(|t| Task(t)))?)
     }
 
-    pub fn import_task_with_uuid(&mut self, uuid: String) -> PyResult<Task> {
-        self.0
+    pub fn import_task_with_uuid(&mut self, uuid: String) -> anyhow::Result<Task> {
+        Ok(self
+            .0
             .import_task_with_uuid(Uuid::parse_str(&uuid).unwrap())
-            .map(|task| Task(task))
-            .map_err(|err| PyOSError::new_err(err.to_string()))
+            .map(|task| Task(task))?)
     }
     pub fn sync(&self, _avoid_snapshots: bool) {
         todo!()
     }
 
-    pub fn rebuild_working_set(&mut self, renumber: bool) -> PyResult<()> {
-        self.0
-            .rebuild_working_set(renumber)
-            .map_err(|err| PyOSError::new_err(err.to_string()))
+    pub fn rebuild_working_set(&mut self, renumber: bool) -> anyhow::Result<()> {
+        Ok(self.0.rebuild_working_set(renumber)?)
     }
-    pub fn add_undo_point(&mut self, force: bool) -> PyResult<()> {
-        self.0
-            .add_undo_point(force)
-            .map_err(|err| PyOSError::new_err(err.to_string()))
+    pub fn add_undo_point(&mut self, force: bool) -> anyhow::Result<()> {
+        Ok(self.0.add_undo_point(force)?)
     }
-    pub fn num_local_operations(&mut self) -> PyResult<usize> {
-        self.0
-            .num_local_operations()
-            .map_err(|err| PyOSError::new_err(err.to_string()))
+    pub fn num_local_operations(&mut self) -> anyhow::Result<usize> {
+        Ok(self.0.num_local_operations()?)
     }
 
-    pub fn num_undo_points(&mut self) -> PyResult<usize> {
-        self.0
-            .num_local_operations()
-            .map_err(|err| PyOSError::new_err(err.to_string()))
+    pub fn num_undo_points(&mut self) -> anyhow::Result<usize> {
+        Ok(self.0.num_local_operations()?)
     }
 }

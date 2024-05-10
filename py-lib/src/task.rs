@@ -1,6 +1,6 @@
 use crate::{status::Status, Annotation, Tag};
 use pyo3::prelude::*;
-use taskchampion::{Tag as TCTag, Task as TCTask};
+use taskchampion::{Task as TCTask, TaskMut as TCTaskMut};
 // TODO: actually create a front-facing user class, instead of this data blob
 #[pyclass]
 pub struct Task(pub(crate) TCTask);
