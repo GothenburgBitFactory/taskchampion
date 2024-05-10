@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::status::Status;
 use crate::{Task, WorkingSet};
 use pyo3::{exceptions::PyOSError, prelude::*};
-use taskchampion::storage::SqliteStorage;
+use taskchampion::storage::{InMemoryStorage, SqliteStorage};
 use taskchampion::{Replica as TCReplica, Uuid};
 
 #[pyclass]
@@ -22,19 +22,25 @@ impl Replica {
     ///     create_if_missing (bool): create the database if it does not exist
     /// Raises:
     ///     OsError: if database does not exist, and create_if_missing is false
-    pub fn new(path: String, exists: bool) -> PyResult<Replica> {
-        let storage = SqliteStorage::new(path, exists);
+    pub fn new(path: String, create_if_missing: bool) -> anyhow::Result<Replica> {
+        let storage = SqliteStorage::new(path, create_if_missing)?;
 
-        // TODO convert this and other match Result into ? for less boilerplate.
-        match storage {
-            Ok(v) => Ok(Replica(TCReplica::new(Box::new(v)))),
-            Err(e) => Err(PyOSError::new_err(e.to_string())),
-        }
+        Ok(Replica(TCReplica::new(Box::new(storage))))
+    }
+
+    #[staticmethod]
+    pub fn new_inmemory() -> Self {
+        let storage = InMemoryStorage::new();
+
+        Replica(TCReplica::new(Box::new(storage)))
     }
     /// Create a new task
     /// The task must not already exist.
-    pub fn new_task(&mut self, status: Status, description: String) {
-        let _ = self.0.new_task(status.into(), description);
+    pub fn new_task(&mut self, status: Status, description: String) -> PyResult<Task> {
+        self.0
+            .new_task(status.into(), description)
+            .map(|t| Task(t))
+            .map_err(|e| PyOSError::new_err(e.to_string()))
     }
 
     /// Get a list of all uuids for tasks in the replica.

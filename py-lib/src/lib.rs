@@ -9,6 +9,10 @@ pub mod annotation;
 use annotation::*;
 pub mod working_set;
 use working_set::*;
+pub mod tag;
+use tag::*;
+pub mod storage;
+use storage::*;
 
 #[pymodule]
 fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -17,6 +21,9 @@ fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Task>()?;
     m.add_class::<Annotation>()?;
     m.add_class::<WorkingSet>()?;
+    m.add_class::<Tag>()?;
+    m.add_class::<InMemoryStorage>()?;
+    m.add_class::<SqliteStorage>()?;
 
     Ok(())
 }

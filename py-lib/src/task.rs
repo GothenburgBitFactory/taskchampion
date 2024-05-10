@@ -1,4 +1,4 @@
-use crate::{status::Status, Annotation};
+use crate::{status::Status, Annotation, Tag};
 use pyo3::prelude::*;
 use taskchampion::{Tag as TCTag, Task as TCTask};
 // TODO: actually create a front-facing user class, instead of this data blob
@@ -86,24 +86,16 @@ impl Task {
     ///
     /// Returns:
     ///     bool: if the task has a given tag
-    pub fn has_tag(&self, tag: &str) -> bool {
-        if let Ok(tag) = TCTag::try_from(tag) {
-            self.0.has_tag(&tag)
-        } else {
-            false
-        }
+    pub fn has_tag(&self, tag: &Tag) -> bool {
+        self.0.has_tag(&tag.0)
     }
 
     /// Get task tags
     ///
     /// Returns:
     ///     list[str]: list of tags
-    pub fn get_tags(&self) -> Vec<String> {
-        self.0
-            .get_tags()
-            .into_iter()
-            .map(|v| v.to_string())
-            .collect()
+    pub fn get_tags(&self) -> Vec<Tag> {
+        self.0.get_tags().into_iter().map(|v| Tag(v)).collect()
     }
     /// Get task annotations
     ///

@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 chrono.workspace = true
-pyo3 = "0.20.0"
+pyo3 = { verison = "0.20.0", features = ["anyhow"] }
 
 taskchampion = { path = "../taskchampion", version = "0.5.0" }
+anyhow = "*"
