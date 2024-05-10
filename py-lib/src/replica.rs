@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::status::Status;
-use crate::{Task, WorkingSet};
+use crate::{DependencyMap, Task, WorkingSet};
 use pyo3::{exceptions::PyOSError, prelude::*};
 use taskchampion::storage::{InMemoryStorage, SqliteStorage};
 use taskchampion::{Replica as TCReplica, Uuid};
@@ -82,9 +83,19 @@ impl Replica {
         }
     }
 
-    // pub fn dependency_map(&self, force: bool) {
-    //     self.0.dependency_map(force)
-    // }
+    pub fn dependency_map(&mut self, force: bool) -> anyhow::Result<DependencyMap> {
+        // TODO: kinda spaghetti here, it will do for now
+        let s = self
+            .0
+            .dependency_map(force)
+            .map(|rc| {
+                // TODO: better error handling here
+                Rc::into_inner(rc).unwrap()
+            })
+            .map(|dm| DependencyMap(dm))?;
+
+        Ok(s)
+    }
 
     pub fn get_task(&mut self, uuid: String) -> PyResult<Option<Task>> {
         // TODO: it should be possible to wrap this into a HOF that does two maps automatically

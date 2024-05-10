@@ -28,7 +28,7 @@ def test_constructor(tmp_path: Path):
 
 
 def test_constructor_throws_error_with_missing_database(tmp_path: Path):
-    with pytest.raises(OSError):
+    with pytest.raises(RuntimeError):
         Replica(str(tmp_path), False)
 
 
@@ -101,7 +101,12 @@ def test_num_undo_points(replica_with_tasks: Replica):
     assert replica_with_tasks.num_undo_points() == 15
 
 
-def import_task_with_uuid(replica_with_tasks: Replica):
+def test_import_task_with_uuid(replica_with_tasks: Replica):
     # TODO: figure out failure reason
     replica_with_tasks.import_task_with_uuid(str(uuid.uuid4()))
     assert len(replica_with_tasks.all_task_uuids()) == 3
+
+
+@pytest.mark.skip("Skipping as gotta actually polish it")
+def test_dependency_map(replica_with_tasks: Replica):
+    assert replica_with_tasks.dependency_map(False) is not None

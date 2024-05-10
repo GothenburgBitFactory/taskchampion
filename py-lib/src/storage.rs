@@ -4,6 +4,8 @@ use taskchampion::storage::{
 };
 // TODO: actually make the storage usable and extensible, rn it just exists /shrug
 pub trait Storage {}
+
+#[allow(dead_code)]
 #[pyclass]
 pub struct InMemoryStorage(TCInMemoryStorage);
 
@@ -17,6 +19,7 @@ impl InMemoryStorage {
 
 impl Storage for InMemoryStorage {}
 
+#[allow(dead_code)]
 #[pyclass]
 pub struct SqliteStorage(TCSqliteStorage);
 

@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use taskchampion::{DependencyMap as TCDependencyMap, Uuid};
 
 #[pyclass]
-pub struct DependencyMap(TCDependencyMap);
+pub struct DependencyMap(pub(crate) TCDependencyMap);
 
 #[pymethods]
 impl DependencyMap {
