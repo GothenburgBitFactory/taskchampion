@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use crate::{status::Status, Annotation, Tag};
 use pyo3::prelude::*;
-use taskchampion::{Task as TCTask, TaskMut as TCTaskMut};
+use taskchampion::Task as TCTask;
 // TODO: actually create a front-facing user class, instead of this data blob
 #[pyclass]
 pub struct Task(pub(crate) TCTask);
@@ -24,8 +26,8 @@ impl Task {
         self.0.get_status().into()
     }
 
-    pub fn get_taskmap(&self) -> PyResult<()> {
-        unimplemented!()
+    pub fn get_taskmap(&self) -> HashMap<String, String> {
+        self.0.get_taskmap().clone()
     }
     /// Get the entry timestamp for a task
     ///
@@ -86,6 +88,8 @@ impl Task {
     ///
     /// Returns:
     ///     bool: if the task has a given tag
+    // TODO: Not very user friendly; User has to construct a Tag object and then pass is into here.
+    // Should probably use a string
     pub fn has_tag(&self, tag: &Tag) -> bool {
         self.0.has_tag(&tag.0)
     }

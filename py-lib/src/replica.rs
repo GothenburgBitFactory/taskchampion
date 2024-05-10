@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::status::Status;
 use crate::{DependencyMap, Task, WorkingSet};
-use pyo3::{exceptions::PyOSError, prelude::*};
+use pyo3::prelude::*;
 use taskchampion::storage::{InMemoryStorage, SqliteStorage};
 use taskchampion::{Replica as TCReplica, Uuid};
 
