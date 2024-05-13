@@ -17,7 +17,7 @@ pub mod dependency_map;
 use dependency_map::*;
 
 #[pymodule]
-fn taskchampion(_py: Python, m: &PyModule) -> PyResult<()> {
+fn taskchampion(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Status>()?;
     m.add_class::<Replica>()?;
     m.add_class::<Task>()?;

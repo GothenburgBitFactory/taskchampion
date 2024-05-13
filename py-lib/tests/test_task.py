@@ -70,6 +70,8 @@ def test_get_uuid(new_task: Task):
 def test_get_status(new_task: Task):
     status = new_task.get_status()
 
+    # for whatever reason these are not equivalent
+    # TODO: research if this is a bug
     assert status is Status.Pending
 
 
