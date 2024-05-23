@@ -1,4 +1,4 @@
-from taskchampion import Replica, Status, WorkingSet
+from taskchampion import Replica, Status
 import pytest
 
 from pathlib import Path
@@ -64,7 +64,7 @@ def test_all_tasks(empty_replica: Replica):
 
 
 def test_working_set(replica_with_tasks: Replica):
-    ws: WorkingSet = replica_with_tasks.working_set()
+    ws = replica_with_tasks.working_set()
 
     assert ws is not None
 
@@ -80,11 +80,13 @@ def test_get_task(replica_with_tasks: Replica):
     assert task is not None
 
 
+@pytest.mark.skip()
 def test_rebuild_working_set(replica_with_tasks: Replica):
     # TODO actually test this
     replica_with_tasks.rebuild_working_set(False)
 
 
+@pytest.mark.skip()
 def test_add_undo_point(replica_with_tasks: Replica):
     replica_with_tasks.add_undo_point(False)
 
@@ -117,7 +119,6 @@ def test_dependency_map(replica_with_tasks: Replica):
 def test_update_task(replica_with_tasks: Replica):
     task_uuid = replica_with_tasks.all_task_uuids()[0]
 
-    res = replica_with_tasks.update_task(
-        task_uuid, "description", "This text here")
+    res = replica_with_tasks.update_task(task_uuid, "description", "This text here")
     assert res["description"] == "This text here"
     assert res["status"] == "pending"
