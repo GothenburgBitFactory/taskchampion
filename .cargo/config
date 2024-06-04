@@ -1,2 +1,1 @@
-[alias]
-xtask = "run --package xtask --"
+config.toml
