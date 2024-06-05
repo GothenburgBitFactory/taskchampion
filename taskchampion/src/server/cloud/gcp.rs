@@ -29,12 +29,11 @@ impl GcpService {
     pub(in crate::server) fn new(bucket: String, credential_path: Option<String>) -> Result<Self> {
         let rt = Runtime::new()?;
 
-        let config: ClientConfig = if credential_path.is_none() {
-            rt.block_on(ClientConfig::default().with_auth())?
-        } else {
-            let credentialpathstring = credential_path.unwrap();
-            let credentials = rt.block_on(CredentialsFile::new_from_file(credentialpathstring))?;
+        let config: ClientConfig = if let Some(credentials) = credential_path {
+            let credentials = rt.block_on(CredentialsFile::new_from_file(credentials))?;
             rt.block_on(ClientConfig::default().with_credentials(credentials))?
+        } else {
+            rt.block_on(ClientConfig::default().with_auth())?
         };
 
         Ok(Self {
