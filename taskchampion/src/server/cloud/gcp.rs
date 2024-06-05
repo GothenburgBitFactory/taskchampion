@@ -32,7 +32,7 @@ impl GcpService {
         let config: ClientConfig = if credential_path.is_none() {
             rt.block_on(ClientConfig::default().with_auth())?
         } else {
-            let credentialpathstring = credential_path.expect("gcp credential_path not set");
+            let credentialpathstring = credential_path.unwrap();
             let credentials = rt.block_on(CredentialsFile::new_from_file(credentialpathstring))?;
             rt.block_on(ClientConfig::default().with_credentials(credentials))?
         };
@@ -181,7 +181,7 @@ impl<'a> ObjectIterator<'a> {
     fn fetch_batch(&mut self) -> Result<()> {
         let mut page_token = None;
         if let Some(ref resp) = self.last_response {
-            page_token = resp.next_page_token.clone();
+            page_token.clone_from(&resp.next_page_token.clone());
         }
         self.last_response = Some(self.service.rt.block_on(self.service.client.list_objects(
             &objects::list::ListObjectsRequest {
