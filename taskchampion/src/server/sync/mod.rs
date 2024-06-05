@@ -159,9 +159,7 @@ impl Server for SyncServer {
                     history_segment,
                 })
             }
-            Err(ureq::Error::Status(404, _)) => {
-                Ok(GetVersionResult::NoSuchVersion)
-            }
+            Err(ureq::Error::Status(404, _)) => Ok(GetVersionResult::NoSuchVersion),
             Err(err) => Err(err.into()),
         }
     }
