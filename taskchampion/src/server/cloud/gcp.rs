@@ -180,7 +180,7 @@ impl<'a> ObjectIterator<'a> {
     fn fetch_batch(&mut self) -> Result<()> {
         let mut page_token = None;
         if let Some(ref resp) = self.last_response {
-            page_token.clone_from(&resp.next_page_token.clone());
+            page_token.clone_from(&resp.next_page_token);
         }
         self.last_response = Some(self.service.rt.block_on(self.service.client.list_objects(
             &objects::list::ListObjectsRequest {
