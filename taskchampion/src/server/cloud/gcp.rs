@@ -29,12 +29,11 @@ impl GcpService {
     pub(in crate::server) fn new(bucket: String, credential_path: Option<String>) -> Result<Self> {
         let rt = Runtime::new()?;
 
-        let credentialpathstring = credential_path.clone().unwrap();
-        let config: ClientConfig = if credential_path.unwrap() == "" {
-            rt.block_on(ClientConfig::default().with_auth())?
-        } else {
-            let credentials = rt.block_on(CredentialsFile::new_from_file(credentialpathstring))?;
+        let config: ClientConfig = if let Some(credentials) = credential_path {
+            let credentials = rt.block_on(CredentialsFile::new_from_file(credentials))?;
             rt.block_on(ClientConfig::default().with_credentials(credentials))?
+        } else {
+            rt.block_on(ClientConfig::default().with_auth())?
         };
 
         Ok(Self {
@@ -181,7 +180,7 @@ impl<'a> ObjectIterator<'a> {
     fn fetch_batch(&mut self) -> Result<()> {
         let mut page_token = None;
         if let Some(ref resp) = self.last_response {
-            page_token = resp.next_page_token.clone();
+            page_token.clone_from(&resp.next_page_token);
         }
         self.last_response = Some(self.service.rt.block_on(self.service.client.list_objects(
             &objects::list::ListObjectsRequest {
