@@ -29,10 +29,10 @@ impl GcpService {
     pub(in crate::server) fn new(bucket: String, credential_path: Option<String>) -> Result<Self> {
         let rt = Runtime::new()?;
 
-        let credentialpathstring = credential_path.clone().expect("gcp credential_path not set");
         let config: ClientConfig = if credential_path.is_none() {
             rt.block_on(ClientConfig::default().with_auth())?
         } else {
+            let credentialpathstring = credential_path.expect("gcp credential_path not set");
             let credentials = rt.block_on(CredentialsFile::new_from_file(credentialpathstring))?;
             rt.block_on(ClientConfig::default().with_credentials(credentials))?
         };
