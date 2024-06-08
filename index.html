@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Welcome to TaskChampion - TaskChampion</title>
+        <title>Installation - TaskChampion</title>
                 
 
         <!-- Custom HTML head -->
@@ -82,7 +82,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="welcome.html"><strong aria-hidden="true">1.</strong> Welcome to TaskChampion</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="using-task-command.html"><strong aria-hidden="true">1.2.</strong> Using the Task Command</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="reports.html"><strong aria-hidden="true">1.2.1.</strong> Reports</a></li><li class="chapter-item expanded "><a href="tags.html"><strong aria-hidden="true">1.2.2.</strong> Tags</a></li><li class="chapter-item expanded "><a href="filters.html"><strong aria-hidden="true">1.2.3.</strong> Filters</a></li><li class="chapter-item expanded "><a href="modifications.html"><strong aria-hidden="true">1.2.4.</strong> Modifications</a></li><li class="chapter-item expanded "><a href="time.html"><strong aria-hidden="true">1.2.5.</strong> Dates and Durations</a></li><li class="chapter-item expanded "><a href="config-file.html"><strong aria-hidden="true">1.2.6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="environment.html"><strong aria-hidden="true">1.2.7.</strong> Environment</a></li><li class="chapter-item expanded "><a href="undo.html"><strong aria-hidden="true">1.2.8.</strong> Undo</a></li><li class="chapter-item expanded "><a href="task-sync.html"><strong aria-hidden="true">1.2.9.</strong> Synchronization</a></li></ol></li><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.3.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">2.2.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.4.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>            </div>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="running-sync-server.html"><strong aria-hidden="true">1.1.</strong> Running the Sync Server</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">2.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="data-model.html"><strong aria-hidden="true">2.1.</strong> Data Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">2.1.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">2.1.2.</strong> Task Database</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">2.1.3.</strong> Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">2.2.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">2.2.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">2.2.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">2.2.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="encryption.html"><strong aria-hidden="true">2.2.4.</strong> Encryption</a></li><li class="chapter-item expanded "><a href="http.html"><strong aria-hidden="true">2.2.5.</strong> HTTP Implementation</a></li><li class="chapter-item expanded "><a href="object-store.html"><strong aria-hidden="true">2.2.6.</strong> Object-Store Implementation</a></li><li class="chapter-item expanded "><a href="plans.html"><strong aria-hidden="true">2.2.7.</strong> Planned Functionality</a></li></ol></li></ol></li></ol>            </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
 
@@ -143,53 +143,15 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="taskchampion"><a class="header" href="#taskchampion">TaskChampion</a></h1>
-<p>TaskChampion was a personal task-tracking tool.
-It works from the command line, with simple commands like <code>ta add &quot;fix the kitchen sink&quot;</code>.
-It can synchronize tasks on multiple devices, and does so in an &quot;offline&quot; mode so you can update your tasks even when you can't reach the server.
-If you've heard of <a href="https://taskwarrior.org/">TaskWarrior</a>, this tool is very similar, but with some different design choices and greater reliability.</p>
-<h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
-<blockquote>
-<p>NOTE: TaskChampion is still in development and not yet feature-complete.
-This section is limited to completed functionality.</p>
-</blockquote>
-<p>Once you've <a href="./installation.html">installed TaskChampion</a>, your interface will be via the <code>ta</code> command.
-Start by adding a task:</p>
-<pre><code class="language-shell">$ ta add learn how to use taskchampion
-added task ba57deaf-f97b-4e9c-b9ab-04bc1ecb22b8
-</code></pre>
-<p>You can see all of your pending tasks with <code>ta next</code>, or just <code>ta</code> for short:</p>
-<pre><code class="language-shell">$ ta
- Id Description                    Active  Tags
- 1  learn how to use taskchampion
-</code></pre>
-<p>Tell TaskChampion you're working on the task, using the shorthand id:</p>
-<pre><code class="language-shell">$ ta start 1
-</code></pre>
-<p>and when you're done with the task, mark it as complete:</p>
-<pre><code class="language-shell">$ ta done 1
-</code></pre>
-<h2 id="synchronizing"><a class="header" href="#synchronizing">Synchronizing</a></h2>
-<p>Even if you don't have a server, it's a good idea to sync your task database periodically.
-This acts as a backup and also enables some internal house-cleaning.</p>
-<pre><code class="language-shell">$ ta sync
-</code></pre>
-<p>Typically sync is run from a crontab, on whatever schedule fits your needs.</p>
-<p>To synchronize multiple replicas of your tasks, you will need a sync server and a client key for that server.
-Configure these in <code>~/.config/taskchampion.yml</code>, for example:</p>
-<pre><code class="language-yaml">server_client_key: &quot;f8d4d09d-f6c7-4dd2-ab50-634ed20a3ff2&quot;
-server_origin: &quot;https://taskchampion.example.com&quot;
-</code></pre>
-<p>The next run of <code>ta sync</code> will upload your task history to that server.
-Configuring another device identically and running <code>ta sync</code> will download that task history, and continue to stay in sync with subsequent runs of the command.</p>
-<p>See <a href="./using-task-command.html">Usage</a> for more detailed information on using TaskChampion.</p>
+                        <h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<p>As this is currently in development, installation is by cloning the repository and running &quot;cargo build&quot;.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
-                                                    <a rel="next" href="installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                                    <a rel="next" href="running-sync-server.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -200,7 +162,7 @@ Configuring another device identically and running <code>ta sync</code> will dow
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
-                                    <a rel="next" href="installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                    <a rel="next" href="running-sync-server.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                             </nav>
