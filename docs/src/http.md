@@ -1,7 +1,7 @@
 # HTTP Representation
 
 The transactions in the sync protocol are realized for an HTTP server at `<base_url>` using the HTTP requests and responses described here.
-The `base_url` *should* be an HTTPS endpoint on general principle, but nothing in the functonality or security of the protocol depends on connection encryption.
+The `base_url` *should* be an HTTPS endpoint on general principle, but nothing in the functionality or security of the protocol depends on connection encryption.
 
 The replica identifies itself to the server using a `client_id` in the form of a UUID.
 This value is passed with every request in the `X-Client-Id` header, in its dashed-hex format.

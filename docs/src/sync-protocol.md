@@ -42,7 +42,7 @@ Timestamps are in RFC3339 format with a `Z` suffix.
 
 ### Snapshot
 
-The decrypted form of a snapshot is a JSON object mapping task IDs to task properties.
+The decrypted form of a snapshot is a JSON object mapping task UUIDs to task properties.
 For example (pretty-printed for clarity):
 
 ```json
@@ -93,6 +93,7 @@ If found, it returns the version's
  * encrypted version data.
 
 If not found, it returns an indication that no such version exists.
+Note that this circumstance is not an error, and occurs during every successful sync process.
 
 ### AddSnapshot
 

@@ -1,29 +1,25 @@
-# Tasks
+# Task Model
 
 Tasks are stored internally as a key/value map with string keys and values.
-All fields are optional: the `Create` operation creates an empty task.
 Display layers should apply appropriate defaults where necessary.
-
-## Atomicity
-
-The synchronization process does not support read-modify-write operations.
-For example, suppose tags are updated by reading a list of tags, adding a tag, and writing the result back.
-This would be captured as an `Update` operation containing the amended list of tags.
-Suppose two such `Update` operations are made in different replicas and must be reconciled:
- * `Update("d394be59-60e6-499e-b7e7-ca0142648409", "tags", "oldtag,newtag1", "2020-11-23T14:21:22Z")`
- * `Update("d394be59-60e6-499e-b7e7-ca0142648409", "tags", "oldtag,newtag2", "2020-11-23T15:08:57Z")`
-
-The result of this reconciliation will be `oldtag,newtag2`, while the user almost certainly intended `oldtag,newtag1,newtag2`.
-
-The key names given below avoid this issue, allowing user updates such as adding a tag or deleting a dependency to be represented in a single `Update` operation.
 
 ## Validity
 
-_Any_ key/value map is a valid task.
+Any_ key/value map is a valid task, including an empty task.
 Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information.
 For example, a task with status "completed" but no "end" key present should be interpreted as completed at an unknown time.
 
-## Representations
+## Atomicity
+
+Replicas only synchronize with one another occasionally, so it is impossible to know the "current" state of a task with certainty.
+This makes some kinds of modifications challenging.
+For example, suppose task tags were updated by reading a list of tags from a property of the key/value map, adding a tag, and writing the result back.
+Suppose two such modifications are made in different replicas, one setting `tags` to "oldtag,newtag1" and one setting `tags` to "oldtag,newtag2".
+Reconciling these two changes on a sync operation would result in one change winning, losing one of the new tags.
+
+The key names given below avoid this issue, allowing user updates such as adding a tag or deleting a dependency to be represented in a single modification.
+
+## Value Representations
 
 Integers are stored in decimal notation.
 
@@ -44,7 +40,7 @@ The following keys, and key formats, are defined:
 * `annotation_<timestamp>` - value is an annotation created at the given time; for example, `annotation_1693329505`.
 * `dep_<uuid>` - indicates this task depends on another task identified by `<uuid>`; the value is ignored; for example, `dep_8c4fed9c-c0d2-40c2-936d-36fc44e084a0`
 
-Note that while TaskChampion recognizes "recurring" as a status, it does not implement recurrence directly.
+Note that while TaskChampion recognizes "R" as a status, it does not implement recurrence directly.
 
 ### UDAs
 
