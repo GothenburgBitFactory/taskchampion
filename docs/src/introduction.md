@@ -7,5 +7,5 @@ It also includes a specification for tasks and how they are synchronized, inviti
 ## Relationship with Taskwarrior
 
 TaskChampion was originally developed as a project "inspired by" Taskwarrior, and later incorporated into Taskwarrior in its 3.0 release.
-Taskwarrior embeds TaskChampion, but does not have any kind of privileged access to its implementation details.
-Any other application can also embed TaskChampion and implement similar functionality, and even interoperate with Taskwarrior either in the same replica or via sync.
+Taskwarrior depends on TaskChampion, but does not have any kind of privileged access to its implementation details.
+Any other application can also use TaskChampion to implement similar functionality, and even interoperate with Taskwarrior either in the same replica or via sync.
