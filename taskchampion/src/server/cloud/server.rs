@@ -392,14 +392,13 @@ impl<SVC: Service> Server for CloudServer<SVC> {
     }
 
     fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
-        // The `get_child_versions` function will usually return only one child version for a
-        // parent, in which case the work is easy. Otherwise, if there are several possible
-        // children, only one of those will lead to `latest`, and importantly the others will not
-        // have their own children. So we can detect the "true" child as the one that is equal to
-        // "latest" or has children.
+        // The `get_child_versions` function may return several possible children, only one of
+        // those will lead to `latest`, and importantly the others will not have their own
+        // children. So we can detect the "true" child as the one that is equal to "latest" or has
+        // children. Note that even if `get_child_versions` returns a single version, that version
+        // may not be valid and the appropriate result may be NoSuchVersion.
         let version_id = match &(self.get_child_versions(&parent_version_id)?)[..] {
             [] => return Ok(GetVersionResult::NoSuchVersion),
-            [child] => *child,
             children => {
                 // There are some extra version objects, so a cleanup is warranted.
                 self.cleanup_probability = 255;
@@ -934,6 +933,7 @@ mod tests {
         let mut server = make_server();
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v2, v1, 1000, b"first");
+        server.mock_set_latest(v1);
         assert_eq!(
             server.get_child_version(v1).unwrap(),
             GetVersionResult::NoSuchVersion
@@ -945,6 +945,29 @@ mod tests {
                 parent_version_id: v2,
                 history_segment: b"first".to_vec(),
             }
+        );
+    }
+
+    #[test]
+    fn get_child_version_single_invalid() {
+        // This is a regression test for #387.
+        let mut server = make_server();
+        let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        // Here v2 is latest, so v1 is not a valid child of v2.
+        server.mock_add_version(v2, v1, 1000, b"first");
+        server.mock_add_version(v3, v2, 1000, b"second");
+        server.mock_set_latest(v2);
+        assert_eq!(
+            server.get_child_version(v3).unwrap(),
+            GetVersionResult::Version {
+                version_id: v2,
+                parent_version_id: v3,
+                history_segment: b"second".to_vec(),
+            }
+        );
+        assert_eq!(
+            server.get_child_version(v2).unwrap(),
+            GetVersionResult::NoSuchVersion
         );
     }
 
