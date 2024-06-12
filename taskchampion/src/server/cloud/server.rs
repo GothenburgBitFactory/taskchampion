@@ -953,15 +953,15 @@ mod tests {
         // This is a regression test for #387.
         let mut server = make_server();
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        // Here v2 is latest, so v1 is not a valid child of v2.
-        server.mock_add_version(v2, v1, 1000, b"first");
-        server.mock_add_version(v3, v2, 1000, b"second");
+        // Here v2 is latest, so v3 is not a valid child of v2.
+        server.mock_add_version(v1, v2, 1000, b"second");
+        server.mock_add_version(v2, v3, 1000, b"third");
         server.mock_set_latest(v2);
         assert_eq!(
-            server.get_child_version(v3).unwrap(),
+            server.get_child_version(v1).unwrap(),
             GetVersionResult::Version {
                 version_id: v2,
-                parent_version_id: v3,
+                parent_version_id: v1,
                 history_segment: b"second".to_vec(),
             }
         );
