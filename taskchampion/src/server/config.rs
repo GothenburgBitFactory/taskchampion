@@ -31,17 +31,35 @@ pub enum ServerConfig {
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
     },
-    /// A remote taskchampion-sync-server instance
+    /// A Google Cloud Platform storage bucket.
     #[cfg(feature = "server-gcp")]
     Gcp {
         /// Bucket in which to store the task data. This bucket must not be used for any other
         /// purpose.
+        ///
+        /// No special bucket configuration is reqiured.
         bucket: String,
-        /// Path to a GCP credential file, in JSON format. This is required for GCP access incase
-        /// some other application already makes use of Application Default Credentials.
-        /// See https://cloud.google.com/docs/authentication#service-accounts for more details.
-        /// See https://cloud.google.com/iam/docs/keys-create-delete for instructions on how to
-        /// create a service account key.
+        /// Path to a GCP credential file, in JSON format.
+        ///
+        /// If `None`, then [Application Default
+        /// Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
+        /// are used. Typically these are associated with the user's Google Cloud account.
+        ///
+        /// If `Some(path)`, then the path must be to a service account key. The service account
+        /// must have a role with the following permissions:
+        ///
+        /// - storage.buckets.create
+        /// - storage.buckets.get
+        /// - storage.buckets.update
+        /// - storage.objects.create
+        /// - storage.objects.get
+        /// - storage.objects.list
+        /// - storage.objects.update
+        /// - storage.objects.delete
+        ///
+        /// See the following GCP resources for more information:
+        /// - https://cloud.google.com/docs/authentication#service-accounts
+        /// - https://cloud.google.com/iam/docs/keys-create-delete#creating
         credential_path: Option<String>,
         /// Private encryption secret used to encrypt all data sent to the server.  This can
         /// be any suitably un-guessable string of bytes.
