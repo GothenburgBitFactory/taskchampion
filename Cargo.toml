@@ -15,7 +15,7 @@ resolver = "2"
 anyhow = "1.0"
 byteorder = "1.5"
 cc = "1.0.73"
-chrono = { version = "^0.4.22", features = ["serde"] }
+chrono = { version = "^0.4.38", features = ["serde"] }
 ffizz-header = "0.5"
 flate2 = "1"
 google-cloud-storage = { version = "0.15.0", default-features = false, features = ["rustls-tls", "auth"] }
