@@ -165,7 +165,6 @@ pub(crate) mod types {
     pub(crate) use crate::workingset::TCWorkingSet;
 }
 
-#[cfg(debug_assertions)]
 /// Generate the taskchapion.h header
 pub fn generate_header() -> String {
     ffizz_header::generate()
