@@ -63,6 +63,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod test {
     use super::*;
 
+    #[cfg(feature = "server-sync")]
     #[test]
     fn ureq_error_status() {
         let err = ureq::Error::Status(418, ureq::Response::new(418, "I Am a Teapot", "uhoh").unwrap());
