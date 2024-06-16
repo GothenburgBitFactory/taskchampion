@@ -34,8 +34,6 @@ macro_rules! other_error {
         }
     };
 }
-#[cfg(feature = "server-sync")]
-other_error!(ureq::Error);
 other_error!(io::Error);
 other_error!(serde_json::Error);
 other_error!(rusqlite::Error);
@@ -45,4 +43,29 @@ other_error!(google_cloud_storage::http::Error);
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::client::google_cloud_auth::error::Error);
 
+/// Convert ureq errors more carefully
+#[cfg(feature = "server-sync")]
+impl From<ureq::Error> for Error {
+    fn from(ureq_err: ureq::Error) -> Self {
+        match ureq_err {
+            ureq::Error::Status(status, response) => {
+                let msg = format!("{} responded with {} {}", response.get_url(), status, response.status_text());
+                Self::Server(msg.into())
+            }
+            ureq::Error::Transport(_) => Self::Server(ureq_err.to_string()),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn ureq_error_status() {
+        let err = ureq::Error::Status(418, ureq::Response::new(418, "I Am a Teapot", "uhoh").unwrap());
+        assert_eq!(Error::from(err).to_string(), "Server Error: https://example.com/ responded with 418 I Am a Teapot");
+    }
+}
