@@ -50,7 +50,7 @@ impl From<ureq::Error> for Error {
         match ureq_err {
             ureq::Error::Status(status, response) => {
                 let msg = format!("{} responded with {} {}", response.get_url(), status, response.status_text());
-                Self::Server(msg.into())
+                Self::Server(msg)
             }
             ureq::Error::Transport(_) => Self::Server(ureq_err.to_string()),
         }
