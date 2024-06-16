@@ -49,7 +49,12 @@ impl From<ureq::Error> for Error {
     fn from(ureq_err: ureq::Error) -> Self {
         match ureq_err {
             ureq::Error::Status(status, response) => {
-                let msg = format!("{} responded with {} {}", response.get_url(), status, response.status_text());
+                let msg = format!(
+                    "{} responded with {} {}",
+                    response.get_url(),
+                    status,
+                    response.status_text()
+                );
                 Self::Server(msg)
             }
             ureq::Error::Transport(_) => Self::Server(ureq_err.to_string()),
@@ -66,7 +71,13 @@ mod test {
     #[cfg(feature = "server-sync")]
     #[test]
     fn ureq_error_status() {
-        let err = ureq::Error::Status(418, ureq::Response::new(418, "I Am a Teapot", "uhoh").unwrap());
-        assert_eq!(Error::from(err).to_string(), "Server Error: https://example.com/ responded with 418 I Am a Teapot");
+        let err = ureq::Error::Status(
+            418,
+            ureq::Response::new(418, "I Am a Teapot", "uhoh").unwrap(),
+        );
+        assert_eq!(
+            Error::from(err).to_string(),
+            "Server Error: https://example.com/ responded with 418 I Am a Teapot"
+        );
     }
 }
