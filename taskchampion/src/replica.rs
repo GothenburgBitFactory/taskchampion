@@ -208,9 +208,13 @@ impl Replica {
     }
 
     /// Delete a task.  The task must exist.  Note that this is different from setting status to
-    /// Deleted; this is the final purge of the task.  This is not a public method as deletion
-    /// should only occur through expiration.
-    fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
+    /// Deleted; this is the final purge of the task.
+    ///
+    /// Deletion may interact poorly with modifications to the same task on other replicas. For
+    /// example, if a task is deleted on replica 1 and its description modified on replica 1, then
+    /// after both replicas have fully synced, the resulting task will only have a `description`
+    /// property.
+    pub fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
         self.add_undo_point(false)?;
         self.taskdb.apply(SyncOp::Delete { uuid })?;
         trace!("task {} deleted", uuid);
