@@ -1,3 +1,10 @@
+//! # DEPRECATED
+//!
+//! This crate is deprecated. Consumers of TaskChampion are encouraged to build their own FFI
+//! interface.
+//! [Taskwarrior](https://github.com/GothenburgBitFactory/taskwarrior/tree/develop/src/tc/lib)
+//! provides one example (based on this crate).
+
 #![warn(unsafe_op_in_unsafe_fn)]
 #![allow(unused_unsafe)]
 // Not working yet in stable - https://github.com/rust-lang/rust-clippy/issues/8020
