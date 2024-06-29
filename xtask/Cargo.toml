@@ -5,5 +5,4 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
-taskchampion-lib = { path = "../lib" }
-regex = "^1.10.2"
+regex.workspace = true
