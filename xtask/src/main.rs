@@ -31,25 +31,13 @@ pub fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = env::args().collect();
 
     if arguments.len() < 2 {
-        anyhow::bail!("xtask: Valid arguments are: `codegen`, `msrv <version x.y>`");
+        anyhow::bail!("xtask: Valid arguments are: `msrv <version x.y>`");
     }
 
     match arguments[1].as_str() {
-        "codegen" => codegen(workspace_dir),
         "msrv" => msrv(arguments, workspace_dir),
         _ => anyhow::bail!("xtask: unknown xtask"),
     }
-}
-
-/// `cargo xtask codegen`
-///
-/// This uses ffizz-header to generate `lib/taskchampion.h`.
-fn codegen(workspace_dir: &Path) -> anyhow::Result<()> {
-    let lib_crate_dir = workspace_dir.join("lib");
-    let mut file = File::create(lib_crate_dir.join("taskchampion.h")).unwrap();
-    write!(&mut file, "{}", ::taskchampion_lib::generate_header()).unwrap();
-
-    Ok(())
 }
 
 /// `cargo xtask msrv (X.Y)`

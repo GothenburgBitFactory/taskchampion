@@ -2,8 +2,6 @@
 
 members = [
     "taskchampion",
-    "lib",
-    "integration-tests",
     "xtask",
 ]
 
@@ -14,16 +12,14 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = "1.0"
 byteorder = "1.5"
-cc = "1.0.73"
 chrono = { version = "^0.4.38", features = ["serde"] }
 ffizz-header = "0.5"
 flate2 = "1"
 google-cloud-storage = { version = "0.15.0", default-features = false, features = ["rustls-tls", "auth"] }
-lazy_static = "1"
-libc = "0.2.136"
 log = "^0.4.17"
 pretty_assertions = "1"
 proptest = "^1.5.0"
+regex = "^1.10.2"
 ring = "0.17"
 rstest = "0.17"
 rusqlite = { version = "0.29", features = ["bundled"] }
