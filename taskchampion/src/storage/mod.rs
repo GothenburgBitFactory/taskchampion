@@ -105,7 +105,7 @@ pub trait StorageTxn {
     /// working set.
     fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()>;
 
-    /// Clear all tasks from the working set in preparation for a garbage-collection operation.
+    /// Clear all tasks from the working set in preparation for a renumbering operation.
     /// Note that this is the only way items are removed from the set.
     fn clear_working_set(&mut self) -> Result<()>;
 

@@ -27,8 +27,8 @@ use uuid::Uuid;
 ///
 /// A replica maintains a "working set" of tasks that are of current concern to the user,
 /// specifically pending tasks.  These are indexed with small, easy-to-type integers.  Newly
-/// pending tasks are automatically added to the working set, and the working set is "renumbered"
-/// during the garbage-collection process.
+/// pending tasks are automatically added to the working set, and the working set can be
+/// "renumbered" when necessary.
 pub struct Replica {
     taskdb: TaskDb,
 
