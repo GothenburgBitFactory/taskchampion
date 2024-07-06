@@ -2,7 +2,7 @@ use crate::errors::Result;
 use crate::storage::{ReplicaOp, Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -94,6 +94,9 @@ impl SqliteStorage {
         let con = Connection::open_with_flags(db_file, flags)?;
 
         // Initialize database
+        con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
+            .context("Setting journal_mode=WAL")?;
+
         let queries = vec![
             "CREATE TABLE IF NOT EXISTS operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);",
             "CREATE TABLE IF NOT EXISTS sync_meta (key STRING PRIMARY KEY, value STRING);",
@@ -136,7 +139,9 @@ impl<'t> Txn<'t> {
 
 impl Storage for SqliteStorage {
     fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
-        let txn = self.con.transaction()?;
+        let txn = self
+            .con
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         Ok(Box::new(Txn { txn: Some(txn) }))
     }
 }
@@ -372,6 +377,8 @@ mod test {
     use super::*;
     use crate::storage::taskmap_with;
     use pretty_assertions::assert_eq;
+    use std::thread;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     #[test]
@@ -814,6 +821,34 @@ mod test {
             assert_eq!(ws, vec![None, None, Some(uuid1)]);
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_concurrent_access() -> Result<()> {
+        let tmp_dir = TempDir::new()?;
+        thread::scope(|scope| {
+            // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
+            scope.spawn(|| {
+                let mut storage = SqliteStorage::new(tmp_dir.path(), true).unwrap();
+                let u = Uuid::new_v4();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                thread::sleep(Duration::from_millis(100));
+                txn.commit().unwrap();
+            });
+            // Second thread begins a transaction, waits 50ms, and begins a transaction. This
+            // should wait for the first to complete, but the regression would be a SQLITE_BUSY
+            // failure.
+            scope.spawn(|| {
+                thread::sleep(Duration::from_millis(50));
+                let mut storage = SqliteStorage::new(tmp_dir.path(), true).unwrap();
+                let u = Uuid::new_v4();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                txn.commit().unwrap();
+            });
+        });
         Ok(())
     }
 }
