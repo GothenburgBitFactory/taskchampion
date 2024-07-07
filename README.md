@@ -9,17 +9,10 @@ See the [documentation](https://gothenburgbitfactory.org/taskchampion/) for more
 
 ## Structure
 
-There are four crates here:
+There are two crates here:
 
  * [taskchampion](./taskchampion) - the core of the tool
- * [taskchampion-lib](./lib) - glue code to use _taskchampion_ from C
- * [integration-tests](./integration-tests) (private) - integration tests covering _taskchampion_ and _taskchampion-lib_.
- * [xtask](./xtask) (private) - implementation of the `cargo xtask codegen` command
-
-## Code Generation
-
-The _taskchampion_lib_ crate uses a bit of code generation to create the `lib/taskchampion.h` header file.
-To regenerate this file, run `cargo xtask codegen`.
+ * [xtask](./xtask) (private) - implementation of the `cargo xtask msrv` command
 
 ## Rust API
 
@@ -27,21 +20,3 @@ The Rust API, as defined in [the docs](https://docs.rs/taskchampion/latest/taskc
 
 The Rust API follows semantic versioning.
 As this is still in the `0.x` phase, so breaking changes may occur but will be indicated with a change to the minor version.
-
-## C API
-
-The `taskchampion-lib` crate generates libraries suitable for use from C (or any C-compatible language).
-It is a "normal" Cargo crate that happens to export a number of `extern "C"` symbols, and also contains a `taskchampion.h` defining those symbols.
-
-*WARNING: the C API is not yet stable!*
-
-It is your responsibility to link this into a form usable in your own build process.
-For example, in a typical CMake C++ project, CMakeRust can do this for you.
-In many cases, this is as simple as a rust crate with `src/lib.rs` containing
-
-```rust
-pub use taskchampion_lib::*;
-```
-
-Arrange to use the header file, `lib/taskchampion.h`, by copying it or adding its directory to your include search path.
-[Future work](https://github.com/GothenburgBitFactory/taskwarrior/issues/2870) will provide better automation for this process.
