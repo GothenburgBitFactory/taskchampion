@@ -1,6 +1,7 @@
 use crate::errors::Result;
+use crate::operation::Operation;
 use crate::server::{Server, SyncOp};
-use crate::storage::{ReplicaOp, Storage, TaskMap};
+use crate::storage::{Storage, TaskMap};
 use uuid::Uuid;
 
 mod apply;
@@ -30,7 +31,7 @@ impl TaskDb {
         TaskDb::new(Box::new(InMemoryStorage::new()))
     }
 
-    /// Apply an operation to the TaskDb.  This will update the set of tasks and add a ReplicaOp to
+    /// Apply an operation to the TaskDb.  This will update the set of tasks and add a Operation to
     /// the set of operations in the TaskDb, and return the TaskMap containing the resulting task's
     /// properties (or an empty TaskMap for deletion).
     ///
@@ -45,7 +46,7 @@ impl TaskDb {
     /// Add an UndoPoint operation to the list of replica operations.
     pub fn add_undo_point(&mut self) -> Result<()> {
         let mut txn = self.storage.txn()?;
-        txn.add_operation(ReplicaOp::UndoPoint)?;
+        txn.add_operation(Operation::UndoPoint)?;
         txn.commit()
     }
 
@@ -116,13 +117,13 @@ impl TaskDb {
 
     /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
     /// local operations to undo.
-    pub fn get_undo_ops(&mut self) -> Result<Vec<ReplicaOp>> {
+    pub fn get_undo_ops(&mut self) -> Result<Vec<Operation>> {
         let mut txn = self.storage.txn()?;
         undo::get_undo_ops(txn.as_mut())
     }
 
     /// Undo local operations in storage, returning a boolean indicating success.
-    pub fn commit_undo_ops(&mut self, undo_ops: Vec<ReplicaOp>) -> Result<bool> {
+    pub fn commit_undo_ops(&mut self, undo_ops: Vec<Operation>) -> Result<bool> {
         let mut txn = self.storage.txn()?;
         undo::commit_undo_ops(txn.as_mut(), undo_ops)
     }
@@ -170,7 +171,7 @@ impl TaskDb {
     }
 
     #[cfg(test)]
-    pub(crate) fn operations(&mut self) -> Vec<ReplicaOp> {
+    pub(crate) fn operations(&mut self) -> Vec<Operation> {
         let mut txn = self.storage.txn().unwrap();
         txn.operations().unwrap().to_vec()
     }
@@ -180,7 +181,7 @@ impl TaskDb {
 mod tests {
     use super::*;
     use crate::server::test::TestServer;
-    use crate::storage::{InMemoryStorage, ReplicaOp};
+    use crate::storage::InMemoryStorage;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
@@ -196,14 +197,14 @@ mod tests {
         db.apply(op).unwrap();
 
         assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
-        assert_eq!(db.operations(), vec![ReplicaOp::Create { uuid }]);
+        assert_eq!(db.operations(), vec![Operation::Create { uuid }]);
     }
 
     #[test]
     fn test_add_undo_point() {
         let mut db = TaskDb::new_inmemory();
         db.add_undo_point().unwrap();
-        assert_eq!(db.operations(), vec![ReplicaOp::UndoPoint]);
+        assert_eq!(db.operations(), vec![Operation::UndoPoint]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::errors::Result;
-use crate::storage::{ReplicaOp, Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::operation::Operation;
+use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
@@ -53,17 +54,17 @@ impl ToSql for StoredTaskMap {
     }
 }
 
-/// Stores [`ReplicaOp`] in SQLite
-impl FromSql for ReplicaOp {
+/// Stores [`Operation`] in SQLite
+impl FromSql for Operation {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let o: ReplicaOp = serde_json::from_str(value.as_str()?)
+        let o: Operation = serde_json::from_str(value.as_str()?)
             .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
         Ok(o)
     }
 }
 
-/// Parses ReplicaOp stored as JSON in string column
-impl ToSql for ReplicaOp {
+/// Parses Operation stored as JSON in string column
+impl ToSql for Operation {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         let s = serde_json::to_string(&self)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -250,12 +251,12 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn operations(&mut self) -> Result<Vec<ReplicaOp>> {
+    fn operations(&mut self) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT data FROM operations ORDER BY id ASC")?;
         let rows = q.query_map([], |r| {
-            let data: ReplicaOp = r.get("data")?;
+            let data: Operation = r.get("data")?;
             Ok(data)
         })?;
 
@@ -272,7 +273,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(count)
     }
 
-    fn add_operation(&mut self, op: ReplicaOp) -> Result<()> {
+    fn add_operation(&mut self, op: Operation) -> Result<()> {
         let t = self.get_txn()?;
 
         t.execute("INSERT INTO operations (data) VALUES (?)", params![&op])
@@ -280,7 +281,7 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<ReplicaOp>) -> Result<()> {
+    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()> {
         let t = self.get_txn()?;
         t.execute("DELETE FROM operations", [])
             .context("Clear all existing operations")?;
@@ -626,8 +627,8 @@ mod test {
         // create some operations
         {
             let mut txn = storage.txn()?;
-            txn.add_operation(ReplicaOp::Create { uuid: uuid1 })?;
-            txn.add_operation(ReplicaOp::Create { uuid: uuid2 })?;
+            txn.add_operation(Operation::Create { uuid: uuid1 })?;
+            txn.add_operation(Operation::Create { uuid: uuid2 })?;
             txn.commit()?;
         }
 
@@ -638,8 +639,8 @@ mod test {
             assert_eq!(
                 ops,
                 vec![
-                    ReplicaOp::Create { uuid: uuid1 },
-                    ReplicaOp::Create { uuid: uuid2 },
+                    Operation::Create { uuid: uuid1 },
+                    Operation::Create { uuid: uuid2 },
                 ]
             );
 
@@ -650,11 +651,11 @@ mod test {
         {
             let mut txn = storage.txn()?;
             txn.set_operations(vec![
-                ReplicaOp::Delete {
+                Operation::Delete {
                     uuid: uuid2,
                     old_task: TaskMap::new(),
                 },
-                ReplicaOp::Delete {
+                Operation::Delete {
                     uuid: uuid1,
                     old_task: TaskMap::new(),
                 },
@@ -665,8 +666,8 @@ mod test {
         // create some more operations (to test adding operations after clearing)
         {
             let mut txn = storage.txn()?;
-            txn.add_operation(ReplicaOp::Create { uuid: uuid3 })?;
-            txn.add_operation(ReplicaOp::Delete {
+            txn.add_operation(Operation::Create { uuid: uuid3 })?;
+            txn.add_operation(Operation::Delete {
                 uuid: uuid3,
                 old_task: TaskMap::new(),
             })?;
@@ -680,16 +681,16 @@ mod test {
             assert_eq!(
                 ops,
                 vec![
-                    ReplicaOp::Delete {
+                    Operation::Delete {
                         uuid: uuid2,
                         old_task: TaskMap::new()
                     },
-                    ReplicaOp::Delete {
+                    Operation::Delete {
                         uuid: uuid1,
                         old_task: TaskMap::new()
                     },
-                    ReplicaOp::Create { uuid: uuid3 },
-                    ReplicaOp::Delete {
+                    Operation::Create { uuid: uuid3 },
+                    Operation::Delete {
                         uuid: uuid3,
                         old_task: TaskMap::new()
                     },

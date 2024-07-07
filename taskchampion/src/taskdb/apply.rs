@@ -1,9 +1,10 @@
 use crate::errors::{Error, Result};
+use crate::operation::Operation;
 use crate::server::SyncOp;
-use crate::storage::{ReplicaOp, StorageTxn, TaskMap};
+use crate::storage::{StorageTxn, TaskMap};
 
 /// Apply the given SyncOp to the replica, updating both the task data and adding a
-/// ReplicaOp to the list of operations.  Returns the TaskMap of the task after the
+/// Operation to the list of operations.  Returns the TaskMap of the task after the
 /// operation has been applied (or an empty TaskMap for Delete).  It is not an error
 /// to create an existing task, nor to delete a nonexistent task.
 pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<TaskMap> {
@@ -11,7 +12,7 @@ pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<T
         SyncOp::Create { uuid } => {
             let created = txn.create_task(uuid)?;
             if created {
-                txn.add_operation(ReplicaOp::Create { uuid })?;
+                txn.add_operation(Operation::Create { uuid })?;
                 txn.commit()?;
                 Ok(TaskMap::new())
             } else {
@@ -24,7 +25,7 @@ pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<T
             let task = txn.get_task(uuid)?;
             if let Some(task) = task {
                 txn.delete_task(uuid)?;
-                txn.add_operation(ReplicaOp::Delete {
+                txn.add_operation(Operation::Delete {
                     uuid,
                     old_task: task,
                 })?;
@@ -49,7 +50,7 @@ pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<T
                     task.remove(&property);
                 }
                 txn.set_task(uuid, task.clone())?;
-                txn.add_operation(ReplicaOp::Update {
+                txn.add_operation(Operation::Update {
                     uuid,
                     property,
                     old_value,
@@ -128,7 +129,7 @@ mod tests {
         }
 
         assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
-        assert_eq!(db.operations(), vec![ReplicaOp::Create { uuid }]);
+        assert_eq!(db.operations(), vec![Operation::Create { uuid }]);
         Ok(())
     }
 
@@ -203,8 +204,8 @@ mod tests {
         assert_eq!(
             db.operations(),
             vec![
-                ReplicaOp::Create { uuid },
-                ReplicaOp::Update {
+                Operation::Create { uuid },
+                Operation::Update {
                     uuid,
                     property: "title".into(),
                     old_value: None,
@@ -281,22 +282,22 @@ mod tests {
         assert_eq!(
             db.operations(),
             vec![
-                ReplicaOp::Create { uuid },
-                ReplicaOp::Update {
+                Operation::Create { uuid },
+                Operation::Update {
                     uuid,
                     property: "title".into(),
                     old_value: None,
                     value: Some("my task".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid,
                     property: "priority".into(),
                     old_value: None,
                     value: Some("H".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid,
                     property: "title".into(),
                     old_value: Some("my task".into()),
@@ -374,15 +375,15 @@ mod tests {
         assert_eq!(
             db.operations(),
             vec![
-                ReplicaOp::Create { uuid },
-                ReplicaOp::Update {
+                Operation::Create { uuid },
+                Operation::Update {
                     uuid,
                     property: "priority".into(),
                     old_value: None,
                     value: Some("H".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Delete { uuid, old_task },
+                Operation::Delete { uuid, old_task },
             ]
         );
 
