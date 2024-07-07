@@ -36,7 +36,7 @@ pub(super) fn sync(
         let mut base_version_id = txn.base_version()?;
 
         let mut local_ops = txn.operations()?;
-        let sync_ops = local_ops.drain(..).filter_map(|op| SyncOp::from_op(op));
+        let sync_ops = local_ops.drain(..).filter_map(SyncOp::from_op);
         let mut sync_ops_peekable = sync_ops.peekable();
 
         // batch operations into versions of no more than a million bytes to avoid excessively large http requests.
