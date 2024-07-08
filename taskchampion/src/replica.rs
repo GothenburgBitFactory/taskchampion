@@ -645,9 +645,15 @@ mod tests {
             dm.dependencies(uuids[1]).collect::<HashSet<_>>(),
             HashSet::from([uuids[0]])
         );
-        assert_eq!(dm.dependencies(uuids[0]).collect::<HashSet<_>>(), HashSet::from([]));
+        assert_eq!(
+            dm.dependencies(uuids[0]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
 
-        assert_eq!(dm.dependents(uuids[3]).collect::<HashSet<_>>(),  HashSet::from([]));
+        assert_eq!(
+            dm.dependents(uuids[3]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
         assert_eq!(
             dm.dependents(uuids[2]).collect::<HashSet<_>>(),
             HashSet::from([uuids[3]])
@@ -674,8 +680,17 @@ mod tests {
             dm.dependencies(uuids[3]).collect::<HashSet<_>>(),
             HashSet::from([uuids[1], uuids[2]])
         );
-        assert_eq!(dm.dependencies(uuids[2]).collect::<HashSet<_>>(), HashSet::from([]));
-        assert_eq!(dm.dependencies(uuids[1]).collect::<HashSet<_>>(), HashSet::from([]));
-        assert_eq!(dm.dependents(uuids[0]).collect::<HashSet<_>>(), HashSet::from([]));
+        assert_eq!(
+            dm.dependencies(uuids[2]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
+        assert_eq!(
+            dm.dependencies(uuids[1]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
+        assert_eq!(
+            dm.dependents(uuids[0]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
     }
 }
