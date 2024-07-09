@@ -718,13 +718,13 @@ mod test {
         );
 
         let tags: HashSet<_> = task.get_tags().collect();
-        let exp = set![
+        let exp = HashSet::from([
             utag("abc"),
             utag("def"),
             stag(SyntheticTag::Pending),
             stag(SyntheticTag::Waiting),
             stag(SyntheticTag::Unblocked),
-        ];
+        ]);
         assert_eq!(tags, exp);
     }
 
@@ -747,11 +747,11 @@ mod test {
         let tags: HashSet<_> = task.get_tags().collect();
         assert_eq!(
             tags,
-            set![
+            HashSet::from([
                 utag("ok"),
                 stag(SyntheticTag::Pending),
                 stag(SyntheticTag::Unblocked)
-            ]
+            ])
         );
     }
 

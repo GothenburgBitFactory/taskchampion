@@ -635,30 +635,36 @@ mod tests {
 
         assert_eq!(
             dm.dependencies(uuids[3]).collect::<HashSet<_>>(),
-            set![uuids[1], uuids[2]]
+            HashSet::from([uuids[1], uuids[2]])
         );
         assert_eq!(
             dm.dependencies(uuids[2]).collect::<HashSet<_>>(),
-            set![uuids[0]]
+            HashSet::from([uuids[0]])
         );
         assert_eq!(
             dm.dependencies(uuids[1]).collect::<HashSet<_>>(),
-            set![uuids[0]]
+            HashSet::from([uuids[0]])
         );
-        assert_eq!(dm.dependencies(uuids[0]).collect::<HashSet<_>>(), set![]);
+        assert_eq!(
+            dm.dependencies(uuids[0]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
 
-        assert_eq!(dm.dependents(uuids[3]).collect::<HashSet<_>>(), set![]);
+        assert_eq!(
+            dm.dependents(uuids[3]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
         assert_eq!(
             dm.dependents(uuids[2]).collect::<HashSet<_>>(),
-            set![uuids[3]]
+            HashSet::from([uuids[3]])
         );
         assert_eq!(
             dm.dependents(uuids[1]).collect::<HashSet<_>>(),
-            set![uuids[3]]
+            HashSet::from([uuids[3]])
         );
         assert_eq!(
             dm.dependents(uuids[0]).collect::<HashSet<_>>(),
-            set![uuids[1], uuids[2]]
+            HashSet::from([uuids[1], uuids[2]])
         );
 
         // mark t[0] as done, removing it from the working set
@@ -672,10 +678,19 @@ mod tests {
 
         assert_eq!(
             dm.dependencies(uuids[3]).collect::<HashSet<_>>(),
-            set![uuids[1], uuids[2]]
+            HashSet::from([uuids[1], uuids[2]])
         );
-        assert_eq!(dm.dependencies(uuids[2]).collect::<HashSet<_>>(), set![]);
-        assert_eq!(dm.dependencies(uuids[1]).collect::<HashSet<_>>(), set![]);
-        assert_eq!(dm.dependents(uuids[0]).collect::<HashSet<_>>(), set![]);
+        assert_eq!(
+            dm.dependencies(uuids[2]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
+        assert_eq!(
+            dm.dependencies(uuids[1]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
+        assert_eq!(
+            dm.dependents(uuids[0]).collect::<HashSet<_>>(),
+            HashSet::from([])
+        );
     }
 }

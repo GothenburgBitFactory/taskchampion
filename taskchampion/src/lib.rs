@@ -53,10 +53,6 @@ for more information about the design and usage of the tool.
 This crate supports Rust version 1.70.0 and higher.
 
  */
-
-// NOTE: it's important that this 'mod' comes first so that the macros can be used in other modules
-mod macros;
-
 mod depmap;
 mod errors;
 mod replica;
