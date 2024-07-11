@@ -837,7 +837,7 @@ mod test {
                 thread::sleep(Duration::from_millis(100));
                 txn.commit().unwrap();
             });
-            // Second thread begins a transaction, waits 50ms, and begins a transaction. This
+            // Second thread waits 50ms, and begins a transaction. This
             // should wait for the first to complete, but the regression would be a SQLITE_BUSY
             // failure.
             scope.spawn(|| {
