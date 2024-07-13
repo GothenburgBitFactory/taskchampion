@@ -1,7 +1,8 @@
 use crate::depmap::DependencyMap;
 use crate::errors::Result;
+use crate::operation::Operation;
 use crate::server::{Server, SyncOp};
-use crate::storage::{ReplicaOp, Storage, TaskMap};
+use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
@@ -242,12 +243,12 @@ impl Replica {
 
     /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
     /// local operations to undo.
-    pub fn get_undo_ops(&mut self) -> Result<Vec<ReplicaOp>> {
+    pub fn get_undo_ops(&mut self) -> Result<Vec<Operation>> {
         self.taskdb.get_undo_ops()
     }
 
     /// Undo local operations in storage, returning a boolean indicating success.
-    pub fn commit_undo_ops(&mut self, undo_ops: Vec<ReplicaOp>) -> Result<bool> {
+    pub fn commit_undo_ops(&mut self, undo_ops: Vec<Operation>) -> Result<bool> {
         self.taskdb.commit_undo_ops(undo_ops)
     }
 
@@ -320,7 +321,6 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::ReplicaOp;
     use crate::task::Status;
     use chrono::TimeZone;
     use pretty_assertions::assert_eq;
@@ -363,8 +363,8 @@ mod tests {
         // and check for the corresponding operations, cleaning out the timestamps
         // and modified properties as these are based on the current time
         let now = Utc::now();
-        let clean_op = |op: ReplicaOp| {
-            if let ReplicaOp::Update {
+        let clean_op = |op: Operation| {
+            if let Operation::Update {
                 uuid,
                 property,
                 mut old_value,
@@ -382,7 +382,7 @@ mod tests {
                         old_value = Some("just-now".into());
                     }
                 }
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid,
                     property,
                     old_value,
@@ -400,58 +400,58 @@ mod tests {
                 .map(clean_op)
                 .collect::<Vec<_>>(),
             vec![
-                ReplicaOp::UndoPoint,
-                ReplicaOp::Create { uuid: t.get_uuid() },
-                ReplicaOp::Update {
+                Operation::UndoPoint,
+                Operation::Create { uuid: t.get_uuid() },
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "modified".into(),
                     old_value: None,
                     value: Some("just-now".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "description".into(),
                     old_value: None,
                     value: Some("a task".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "status".into(),
                     old_value: None,
                     value: Some("pending".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "entry".into(),
                     old_value: None,
                     value: Some("just-now".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "modified".into(),
                     old_value: Some("just-now".into()),
                     value: Some("just-now".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "description".into(),
                     old_value: Some("a task".into()),
                     value: Some("past tense".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "end".into(),
                     old_value: None,
                     value: Some("just-now".into()),
                     timestamp: now,
                 },
-                ReplicaOp::Update {
+                Operation::Update {
                     uuid: t.get_uuid(),
                     property: "status".into(),
                     old_value: Some("pending".into()),

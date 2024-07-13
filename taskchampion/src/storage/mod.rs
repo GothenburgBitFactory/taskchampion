@@ -1,30 +1,32 @@
-use crate::errors::Result;
-/**
+/*!
 This module defines the backend storage used by [`Replica`](crate::Replica).
 It defines a [trait](crate::storage::Storage) for storage implementations, and provides a default on-disk implementation as well as an in-memory implementation for testing.
 
 Typical uses of this crate do not interact directly with this module; [`StorageConfig`](crate::StorageConfig) is sufficient.
 However, users who wish to implement their own storage backends can implement the traits defined here and pass the result to [`Replica`](crate::Replica).
 */
+use crate::errors::Result;
+use crate::operation::Operation;
 use std::collections::HashMap;
 use uuid::Uuid;
 
 mod config;
 mod inmemory;
-mod op;
 pub(crate) mod sqlite;
 
 pub use config::StorageConfig;
 pub use inmemory::InMemoryStorage;
 pub use sqlite::SqliteStorage;
 
-pub use op::ReplicaOp;
+#[doc(hidden)]
+/// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
+pub use crate::Operation as ReplicaOp;
 
 /// An in-memory representation of a task as a simple hashmap
 pub type TaskMap = HashMap<String, String>;
 
 #[cfg(test)]
-fn taskmap_with(mut properties: Vec<(String, String)>) -> TaskMap {
+pub(crate) fn taskmap_with(mut properties: Vec<(String, String)>) -> TaskMap {
     let mut rv = TaskMap::new();
     for (p, v) in properties.drain(..) {
         rv.insert(p, v);
@@ -80,7 +82,7 @@ pub trait StorageTxn {
 
     /// Get the current set of outstanding operations (operations that have not been sync'd to the
     /// server yet)
-    fn operations(&mut self) -> Result<Vec<ReplicaOp>>;
+    fn operations(&mut self) -> Result<Vec<Operation>>;
 
     /// Get the current set of outstanding operations (operations that have not been sync'd to the
     /// server yet)
@@ -88,10 +90,10 @@ pub trait StorageTxn {
 
     /// Add an operation to the end of the list of operations in the storage.  Note that this
     /// merely *stores* the operation; it is up to the TaskDb to apply it.
-    fn add_operation(&mut self, op: ReplicaOp) -> Result<()>;
+    fn add_operation(&mut self, op: Operation) -> Result<()>;
 
     /// Replace the current list of operations with a new list.
-    fn set_operations(&mut self, ops: Vec<ReplicaOp>) -> Result<()>;
+    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()>;
 
     /// Get the entire working set, with each task UUID at its appropriate (1-based) index.
     /// Element 0 is always None.

@@ -1,3 +1,4 @@
+use crate::operation::Operation;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -118,13 +119,35 @@ impl SyncOp {
             (_, _) => (Some(operation1), Some(operation2)),
         }
     }
+
+    /// Convert the public Operation type into a SyncOp. `UndoPoint` operations are converted to
+    /// `None`.
+    pub(crate) fn from_op(op: Operation) -> Option<Self> {
+        match op {
+            Operation::Create { uuid } => Some(SyncOp::Create { uuid }),
+            Operation::Delete { uuid, .. } => Some(SyncOp::Delete { uuid }),
+            Operation::Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+                ..
+            } => Some(SyncOp::Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+            }),
+            Operation::UndoPoint => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::errors::Result;
-    use crate::storage::InMemoryStorage;
+    use crate::storage::{InMemoryStorage, TaskMap};
     use crate::taskdb::TaskDb;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
@@ -417,5 +440,52 @@ mod test {
             }
             assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
         }
+    }
+
+    #[test]
+    fn test_from_op_create() {
+        let uuid = Uuid::new_v4();
+        assert_eq!(
+            SyncOp::from_op(Operation::Create { uuid }),
+            Some(SyncOp::Create { uuid })
+        );
+    }
+
+    #[test]
+    fn test_from_op_delete() {
+        let uuid = Uuid::new_v4();
+        assert_eq!(
+            SyncOp::from_op(Operation::Delete {
+                uuid,
+                old_task: TaskMap::new()
+            }),
+            Some(SyncOp::Delete { uuid })
+        );
+    }
+
+    #[test]
+    fn test_from_op_update() {
+        let uuid = Uuid::new_v4();
+        let timestamp = Utc::now();
+        assert_eq!(
+            SyncOp::from_op(Operation::Update {
+                uuid,
+                property: "prop".into(),
+                old_value: Some("foo".into()),
+                value: Some("v".into()),
+                timestamp,
+            }),
+            Some(SyncOp::Update {
+                uuid,
+                property: "prop".into(),
+                value: Some("v".into()),
+                timestamp,
+            })
+        );
+    }
+
+    #[test]
+    fn test_from_op_undo_point() {
+        assert_eq!(SyncOp::from_op(Operation::UndoPoint), None);
     }
 }

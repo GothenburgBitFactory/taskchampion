@@ -55,6 +55,7 @@ This crate supports Rust version 1.70.0 and higher.
  */
 mod depmap;
 mod errors;
+mod operation;
 mod replica;
 pub mod server;
 pub mod storage;
@@ -65,6 +66,7 @@ mod workingset;
 
 pub use depmap::DependencyMap;
 pub use errors::Error;
+pub use operation::Operation;
 pub use replica::Replica;
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
