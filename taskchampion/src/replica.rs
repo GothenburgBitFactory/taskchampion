@@ -6,6 +6,7 @@ use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
+use crate::BasicTask;
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use log::trace;
@@ -184,7 +185,18 @@ impl Replica {
             .map(move |tm| Task::new(uuid, tm, depmap)))
     }
 
+    /// get an existing task by its UUID, as a [`BasicTask`](crate::BasicTask).
+    pub fn get_basic_task(&mut self, uuid: Uuid) -> Result<Option<BasicTask>> {
+        Ok(self
+            .taskdb
+            .get_task(uuid)?
+            .map(move |tm| BasicTask::new(uuid, tm)))
+    }
+
     /// Create a new task.
+    ///
+    /// This uses the high-level task interface. To create a task with the low-level
+    /// interface, use [`BasicTask::create`](crate::BasicTask::create).
     pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
         self.add_undo_point(false)?;
@@ -201,6 +213,7 @@ impl Replica {
     /// Create a new, empty task with the given UUID.  This is useful for importing tasks, but
     /// otherwise should be avoided in favor of `new_task`.  If the task already exists, this
     /// does nothing and returns the existing task.
+    #[deprecated(since = "0.7.0", note = "please use BasicTask instead")]
     pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
         self.add_undo_point(false)?;
         let taskmap = self.taskdb.apply(SyncOp::Create { uuid })?;
@@ -503,6 +516,22 @@ mod tests {
 
         let ws = rep.working_set().unwrap();
         assert!(ws.by_uuid(t.get_uuid()).is_none());
+    }
+
+    #[test]
+    fn get_basic_task() {
+        let mut rep = Replica::new_inmemory();
+
+        let t = rep
+            .new_task(Status::Pending, "another task".into())
+            .unwrap();
+        let uuid = t.get_uuid();
+
+        let t = rep.get_basic_task(uuid).unwrap().unwrap();
+        assert_eq!(t.uuid(), uuid);
+        assert_eq!(t.get("description"), Some("another task"));
+
+        assert!(rep.get_basic_task(Uuid::new_v4()).unwrap().is_none());
     }
 
     #[test]
