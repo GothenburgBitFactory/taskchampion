@@ -2,6 +2,44 @@ use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::server::SyncOp;
 use crate::storage::{StorageTxn, TaskMap};
+use crate::Operations;
+
+/// Apply `operations` to the dataabase, in the given single transaction.
+///
+/// This updates the set of tasks in the database, but does not modify the list of operations.
+///
+/// The transaction is not committed.
+pub(super) fn apply_operations(txn: &mut dyn StorageTxn, operations: &Operations) -> Result<()> {
+    for operation in operations {
+        match operation {
+            Operation::Create { uuid } => {
+                txn.create_task(*uuid)?;
+            }
+            Operation::Delete { uuid, .. } => {
+                txn.delete_task(*uuid)?;
+            }
+            Operation::Update {
+                uuid,
+                property,
+                value,
+                ..
+            } => {
+                // TODO: could cache this value from op to op
+                let task = txn.get_task(*uuid)?;
+                if let Some(mut task) = task {
+                    if let Some(v) = value {
+                        task.insert(property.clone(), v.clone());
+                    } else {
+                        task.remove(property);
+                    }
+                    txn.set_task(*uuid, task)?;
+                }
+            }
+            Operation::UndoPoint => {}
+        }
+    }
+    Ok(())
+}
 
 /// Apply the given SyncOp to the replica, updating both the task data and adding a
 /// Operation to the list of operations.  Returns the TaskMap of the task after the
@@ -108,12 +146,198 @@ pub(super) fn apply_op(txn: &mut dyn StorageTxn, op: &SyncOp) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::TaskMap;
+    use crate::storage::{taskmap_with, TaskMap};
     use crate::taskdb::TaskDb;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use uuid::Uuid;
+
+    #[test]
+    fn apply_operations_create() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_create_exists() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        {
+            let mut txn = db.storage.txn()?;
+            txn.create_task(uuid)?;
+            txn.set_task(uuid, taskmap_with(vec![("foo".into(), "bar".into())]))?;
+            txn.commit()?;
+        }
+
+        {
+            let mut ops = Operations::new();
+            ops.add(Operation::Create { uuid });
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(
+            db.sorted_tasks(),
+            vec![(uuid, vec![("foo".into(), "bar".into())])]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_create_update() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let now = Utc::now();
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("title"),
+            value: Some("my task".into()),
+            timestamp: now,
+            old_value: None,
+        });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(
+            db.sorted_tasks(),
+            vec![(uuid, vec![("title".into(), "my task".into())])]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_create_update_delete_prop() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let now = Utc::now();
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("title"),
+            value: Some("my task".into()),
+            timestamp: now,
+            old_value: None,
+        });
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("priority"),
+            value: Some("H".into()),
+            timestamp: now,
+            old_value: None,
+        });
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("title"),
+            value: None,
+            timestamp: now,
+            old_value: Some("my task".into()),
+        });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(
+            db.sorted_tasks(),
+            vec![(uuid, vec![("priority".into(), "H".into())])]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_update_does_not_exist() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let now = Utc::now();
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("title"),
+            value: Some("my task".into()),
+            timestamp: now,
+            old_value: None,
+        });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(db.sorted_tasks(), vec![]);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_create_delete() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let now = Utc::now();
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
+            uuid,
+            property: String::from("title"),
+            value: Some("my task".into()),
+            timestamp: now,
+            old_value: None,
+        });
+        ops.add(Operation::Delete {
+            uuid,
+            old_task: taskmap_with(vec![]),
+        });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(db.sorted_tasks(), vec![]);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_operations_delete_not_present() -> Result<()> {
+        let mut db = TaskDb::new_inmemory();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        ops.add(Operation::Delete {
+            uuid,
+            old_task: taskmap_with(vec![]),
+        });
+
+        {
+            let mut txn = db.storage.txn()?;
+            apply_operations(txn.as_mut(), &ops)?;
+            txn.commit()?;
+        }
+
+        assert_eq!(db.sorted_tasks(), vec![]);
+        Ok(())
+    }
 
     #[test]
     fn test_apply_create() -> Result<()> {

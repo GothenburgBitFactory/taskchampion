@@ -1,6 +1,6 @@
 use crate::depmap::DependencyMap;
 use crate::errors::Result;
-use crate::operation::Operation;
+use crate::operation::{Operations, Operation};
 use crate::server::{Server, SyncOp};
 use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
@@ -232,6 +232,36 @@ impl Replica {
         self.add_undo_point(false)?;
         self.taskdb.apply(SyncOp::Delete { uuid })?;
         trace!("task {} deleted", uuid);
+        Ok(())
+    }
+
+    /// Commit a set of operations to the replica.
+    ///
+    /// All local state on the replica will be updated accordingly, including the working set and
+    /// and temporarily cached data.
+    pub fn commit_operations(&mut self, operations: Operations) -> Result<()> {
+        // Add tasks to the working set when the status property is updated from anything other
+        // than pending or recurring to one of those two statuses.
+        let pending = Status::Pending.to_taskmap();
+        let recurring = Status::Recurring.to_taskmap();
+        let is_p_or_r = |val: &Option<String>| {
+            if let Some(val) = val {
+                val == pending || val == recurring
+            } else {
+                false
+            }
+        };
+        let add_to_working_set = |op: &Operation| match op {
+            Operation::Update {
+                property,
+                value,
+                old_value,
+                ..
+            } => property == "status" && !is_p_or_r(old_value) && is_p_or_r(value),
+            _ => false,
+        };
+        self.taskdb
+            .commit_operations(operations, add_to_working_set)?;
         Ok(())
     }
 
@@ -490,6 +520,119 @@ mod tests {
 
         rep.delete_task(uuid).unwrap();
         assert_eq!(rep.get_task(uuid).unwrap(), None);
+    }
+
+    #[test]
+    fn commit_operations() -> Result<()> {
+        // This mostly tests the working-set callback, as `TaskDB::commit_operations` has
+        // tests for the remaining functionality.
+        let mut rep = Replica::new_inmemory();
+        let t = rep.new_task(Status::Pending, "a task".into())?;
+        let uuid1 = t.get_uuid();
+
+        let mut ops = Operations::new();
+
+        // uuid2 is created and deleted, but this does not affect the
+        // working set.
+        let uuid2 = Uuid::new_v4();
+        ops.add(Operation::Create { uuid: uuid2 });
+        ops.add(Operation::Delete {
+            uuid: uuid2,
+            old_task: TaskMap::new(),
+        });
+
+        let update_op = |uuid, property: &str, old_value: Option<&str>, value: Option<&str>| {
+            Operation::Update {
+                uuid,
+                property: property.to_string(),
+                value: value.map(|v| v.to_string()),
+                timestamp: Utc::now(),
+                old_value: old_value.map(|v| v.to_string()),
+            }
+        };
+
+        // uuid3 has status deleted, so is not added to the working set.
+        let uuid3 = Uuid::new_v4();
+        ops.add(update_op(uuid3, "status", None, Some("deleted")));
+
+        // uuid4 goes from pending to pending, so is not added to the working set.
+        let uuid4 = Uuid::new_v4();
+        ops.add(update_op(uuid4, "status", Some("pending"), Some("pending")));
+
+        // uuid5 goes from recurring to recurring, so is not added to the working set.
+        let uuid5 = Uuid::new_v4();
+        ops.add(update_op(
+            uuid5,
+            "status",
+            Some("recurring"),
+            Some("recurring"),
+        ));
+
+        // uuid6 goes from recurring to pending, so is not added to the working set.
+        let uuid6 = Uuid::new_v4();
+        ops.add(update_op(
+            uuid6,
+            "status",
+            Some("recurring"),
+            Some("pending"),
+        ));
+
+        // uuid7 goes from pending to recurring, so is not added to the working set.
+        let uuid7 = Uuid::new_v4();
+        ops.add(update_op(
+            uuid7,
+            "status",
+            Some("pending"),
+            Some("recurring"),
+        ));
+
+        // uuid8 goes from no-status to recurring, so is added to the working set.
+        let uuid8 = Uuid::new_v4();
+        ops.add(update_op(uuid8, "status", None, Some("recurring")));
+
+        // uuid9 goes from no-status to pending, so is added to the working set.
+        let uuid9 = Uuid::new_v4();
+        ops.add(update_op(uuid9, "status", None, Some("pending")));
+
+        // uuid10 goes from deleted to pending, so is added to the working set.
+        let uuid10 = Uuid::new_v4();
+        ops.add(update_op(
+            uuid10,
+            "status",
+            Some("deleted"),
+            Some("pending"),
+        ));
+
+        // uuid11 goes from pending to deleted, so is not added to the working set.
+        let uuid11 = Uuid::new_v4();
+        ops.add(update_op(
+            uuid11,
+            "status",
+            Some("pending"),
+            Some("deleted"),
+        ));
+
+        // uuid12 goes from pending to no-status, so is not added to the working set.
+        let uuid12 = Uuid::new_v4();
+        ops.add(update_op(uuid12, "status", Some("pending"), None));
+
+        rep.commit_operations(ops)?;
+
+        let ws = rep.working_set()?;
+        assert!(ws.by_uuid(uuid1).is_some());
+        assert!(ws.by_uuid(uuid2).is_none());
+        assert!(ws.by_uuid(uuid3).is_none());
+        assert!(ws.by_uuid(uuid4).is_none());
+        assert!(ws.by_uuid(uuid5).is_none());
+        assert!(ws.by_uuid(uuid6).is_none());
+        assert!(ws.by_uuid(uuid7).is_none());
+        assert!(ws.by_uuid(uuid8).is_some());
+        assert!(ws.by_uuid(uuid9).is_some());
+        assert!(ws.by_uuid(uuid10).is_some());
+        assert!(ws.by_uuid(uuid11).is_none());
+        assert!(ws.by_uuid(uuid12).is_none());
+
+        Ok(())
     }
 
     #[test]
