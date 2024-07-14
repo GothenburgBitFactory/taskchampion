@@ -3,8 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A Operation defines a single change to the task database, as stored locally in the replica.
-/// This contains additional information not included in SyncOp.
+/// An Operation defines a single change to the task database, as stored locally in the replica.
+///
+/// Operations are the means by which changes are made to the database, typically batched together
+/// into [`Operations`] and committed to the replica.
 #[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
 pub enum Operation {
     /// Create a new task.
@@ -40,6 +42,61 @@ impl Operation {
     /// Determine whether this is an undo point.
     pub fn is_undo_point(&self) -> bool {
         self == &Self::UndoPoint
+    }
+}
+
+/// Operations contains a sequence of [`Operation`] values, which can be committed in a single
+/// transaction with [`Replica::commit`](crate::Replica::commit).
+#[derive(PartialEq, Eq, Debug, Default)]
+pub struct Operations(Vec<Operation>);
+
+impl Operations {
+    /// Create a new, empty set of operations.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new set of operations beginning with an undo point.
+    ///
+    /// This is a convenience method to begin creating a batch of operations that can be
+    /// undone together.
+    pub fn new_with_undo_point() -> Self {
+        let mut ops = Self::default();
+        ops.add(Operation::UndoPoint);
+        ops
+    }
+
+    /// Add a new operation to the end of this sequence.
+    pub fn add(&mut self, op: Operation) {
+        self.0.push(op);
+    }
+
+    /// For tests, it's useful to set the timestamps of all updates to the same value.
+    #[cfg(test)]
+    pub fn set_all_timestamps(&mut self, set_to: DateTime<Utc>) {
+        for op in &mut self.0 {
+            if let Operation::Update { timestamp, .. } = op {
+                *timestamp = set_to;
+            }
+        }
+    }
+}
+
+impl IntoIterator for Operations {
+    type Item = Operation;
+    type IntoIter = std::vec::IntoIter<Operation>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Operations {
+    type Item = &'a Operation;
+    type IntoIter = std::slice::Iter<'a, Operation>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -131,5 +188,25 @@ mod test {
         let deser: Operation = serde_json::from_str(&json)?;
         assert_eq!(deser, op);
         Ok(())
+    }
+
+    #[test]
+    fn operations_empty() {
+        let ops = Operations::new();
+        assert_eq!(ops.0, vec![]);
+    }
+
+    #[test]
+    fn operations_with_undo_point() {
+        let ops = Operations::new_with_undo_point();
+        assert_eq!(ops.0, vec![UndoPoint]);
+    }
+
+    #[test]
+    fn operations_add() {
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        ops.add(Create { uuid });
+        assert_eq!(ops.0, vec![Create { uuid }]);
     }
 }
