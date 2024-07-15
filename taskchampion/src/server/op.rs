@@ -141,6 +141,31 @@ impl SyncOp {
             Operation::UndoPoint => None,
         }
     }
+
+    /// Convert to an Operation. The "old" values are not specified, so this method is only useful
+    /// in tests.
+    #[cfg(test)]
+    pub(crate) fn into_op(self) -> Operation {
+        match self {
+            Create { uuid } => Operation::Create { uuid },
+            Delete { uuid } => Operation::Delete {
+                uuid,
+                old_task: crate::storage::TaskMap::new(),
+            },
+            Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+            } => Operation::Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+                old_value: None,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

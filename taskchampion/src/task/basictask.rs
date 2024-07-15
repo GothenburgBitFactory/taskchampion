@@ -14,7 +14,8 @@ use uuid::Uuid;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct BasicTask {
     uuid: Uuid,
-    taskmap: TaskMap,
+    // Temporarily pub(crate) to allow access from Task.
+    pub(crate) taskmap: TaskMap,
 }
 
 impl BasicTask {
