@@ -200,9 +200,10 @@ fn apply_version(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::server::{test::TestServer, SyncOp};
-    use crate::storage::InMemoryStorage;
+    use crate::server::test::TestServer;
+    use crate::storage::{InMemoryStorage, TaskMap};
     use crate::taskdb::{snapshot::SnapshotTasks, TaskDb};
+    use crate::{Operation, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
@@ -223,24 +224,26 @@ mod test {
 
         // make some changes in parallel to db1 and db2..
         let uuid1 = Uuid::new_v4();
-        db1.apply(SyncOp::Create { uuid: uuid1 }).unwrap();
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid: uuid1 });
+        ops.add(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
 
         let uuid2 = Uuid::new_v4();
-        db2.apply(SyncOp::Create { uuid: uuid2 }).unwrap();
-        db2.apply(SyncOp::Update {
+        ops.add(Operation::Create { uuid: uuid2 });
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "title".into(),
             value: Some("my second task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db1.commit_operations(ops, |_| false)?;
 
         // and synchronize those around
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
@@ -249,20 +252,25 @@ mod test {
         assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
 
         // now make updates to the same task on both sides
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "priority".into(),
             value: Some("H".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
-        db2.apply(SyncOp::Update {
+        });
+        db1.commit_operations(ops, |_| false)?;
+
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "project".into(),
             value: Some("personal".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db1.commit_operations(ops, |_| false)?;
 
         // and synchronize those around
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
@@ -285,14 +293,16 @@ mod test {
 
         // create and update a task..
         let uuid = Uuid::new_v4();
-        db1.apply(SyncOp::Create { uuid }).unwrap();
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db1.commit_operations(ops, |_| false)?;
 
         // and synchronize those around
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
@@ -301,24 +311,31 @@ mod test {
         assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
 
         // delete and re-create the task on db1
-        db1.apply(SyncOp::Delete { uuid }).unwrap();
-        db1.apply(SyncOp::Create { uuid }).unwrap();
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Delete {
+            uuid,
+            old_task: TaskMap::new(),
+        });
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my second task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db1.commit_operations(ops, |_| false)?;
 
         // and on db2, update a property of the task
-        db2.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
             uuid,
             property: "project".into(),
             value: Some("personal".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db2.commit_operations(ops, |_| false)?;
 
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
         sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
@@ -336,13 +353,16 @@ mod test {
         let mut db1 = newdb();
 
         let uuid = Uuid::new_v4();
-        db1.apply(SyncOp::Create { uuid })?;
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        ops.add(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })?;
+        });
+        db1.commit_operations(ops, |_| false)?;
 
         test_server.set_snapshot_urgency(SnapshotUrgency::High);
         sync(&mut server, db1.storage.txn()?.as_mut(), false)?;
@@ -358,12 +378,15 @@ mod test {
         assert_eq!(tasks[0].0, uuid);
 
         // update the taskdb and sync again
-        db1.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task, updated".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })?;
+        });
+        db1.commit_operations(ops, |_| false)?;
         sync(&mut server, db1.storage.txn()?.as_mut(), false)?;
 
         // delete the first version, so that db2 *must* initialize from
@@ -388,7 +411,9 @@ mod test {
         let mut db1 = newdb();
 
         let uuid = Uuid::new_v4();
-        db1.apply(SyncOp::Create { uuid }).unwrap();
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid });
+        db1.commit_operations(ops, |_| false)?;
 
         test_server.set_snapshot_urgency(SnapshotUrgency::Low);
         sync(&mut server, db1.storage.txn()?.as_mut(), true).unwrap();
@@ -411,14 +436,16 @@ mod test {
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
-        db.apply(SyncOp::Create { uuid: uuid1 }).unwrap();
-        db.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid: uuid1 });
+        ops.add(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db.commit_operations(ops, |_| false)?;
 
         sync(&mut server, db.storage.txn()?.as_mut(), true).unwrap();
         assert_eq!(test_server.versions_len(), 1);
@@ -427,15 +454,17 @@ mod test {
         let data = vec!['a'; 400000];
 
         // add some large operations to db
+        let mut ops = Operations::new();
         for _ in 0..3 {
-            db.apply(SyncOp::Update {
+            ops.add(Operation::Update {
                 uuid: uuid1,
                 property: "description".into(),
                 value: Some(data.iter().collect()),
+                old_value: None,
                 timestamp: Utc::now(),
-            })
-            .unwrap();
+            });
         }
+        db.commit_operations(ops, |_| false)?;
 
         // this sync batches the operations into two versions.
         sync(&mut server, db.storage.txn()?.as_mut(), true).unwrap();
@@ -455,27 +484,31 @@ mod test {
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
-        db.apply(SyncOp::Create { uuid: uuid1 }).unwrap();
-        db.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create { uuid: uuid1 });
+        ops.add(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db.commit_operations(ops, |_| false)?;
 
         sync(&mut server, db.storage.txn()?.as_mut(), true).unwrap();
         assert_eq!(test_server.versions_len(), 1);
 
         // add an operation greater than the batch limit
         let data = vec!['a'; 1000001];
-        db.apply(SyncOp::Update {
+        let mut ops = Operations::new();
+        ops.add(Operation::Update {
             uuid: uuid1,
             property: "description".into(),
             value: Some(data.iter().collect()),
+            old_value: None,
             timestamp: Utc::now(),
-        })
-        .unwrap();
+        });
+        db.commit_operations(ops, |_| false)?;
 
         sync(&mut server, db.storage.txn()?.as_mut(), true).unwrap();
         assert_eq!(test_server.versions_len(), 2);

@@ -45,74 +45,6 @@ pub(super) fn apply_operations(txn: &mut dyn StorageTxn, operations: &Operations
     Ok(())
 }
 
-/// Apply the given SyncOp to the replica, updating both the task data and adding a
-/// Operation to the list of operations.  Returns the TaskMap of the task after the
-/// operation has been applied (or an empty TaskMap for Delete).  It is not an error
-/// to create an existing task, nor to delete a nonexistent task.
-#[cfg(test)]
-pub(super) fn apply_and_record(
-    txn: &mut dyn StorageTxn,
-    op: SyncOp,
-) -> Result<crate::storage::TaskMap> {
-    use crate::storage::TaskMap;
-    match op {
-        SyncOp::Create { uuid } => {
-            let created = txn.create_task(uuid)?;
-            if created {
-                txn.add_operation(Operation::Create { uuid })?;
-                txn.commit()?;
-                Ok(TaskMap::new())
-            } else {
-                Ok(txn
-                    .get_task(uuid)?
-                    .expect("create_task failed but task does not exist"))
-            }
-        }
-        SyncOp::Delete { uuid } => {
-            let task = txn.get_task(uuid)?;
-            if let Some(task) = task {
-                txn.delete_task(uuid)?;
-                txn.add_operation(Operation::Delete {
-                    uuid,
-                    old_task: task,
-                })?;
-                txn.commit()?;
-                Ok(TaskMap::new())
-            } else {
-                Ok(TaskMap::new())
-            }
-        }
-        SyncOp::Update {
-            uuid,
-            property,
-            value,
-            timestamp,
-        } => {
-            let task = txn.get_task(uuid)?;
-            if let Some(mut task) = task {
-                let old_value = task.get(&property).cloned();
-                if let Some(ref v) = value {
-                    task.insert(property.clone(), v.clone());
-                } else {
-                    task.remove(&property);
-                }
-                txn.set_task(uuid, task.clone())?;
-                txn.add_operation(Operation::Update {
-                    uuid,
-                    property,
-                    old_value,
-                    value,
-                    timestamp,
-                })?;
-                txn.commit()?;
-                Ok(task)
-            } else {
-                Err(Error::Database(format!("Task {} does not exist", uuid)))
-            }
-        }
-    }
-}
-
 /// Apply a [`SyncOp`] to the TaskDb's set of tasks (without recording it in the list of operations)
 pub(super) fn apply_op(txn: &mut dyn StorageTxn, op: &SyncOp) -> Result<()> {
     match op {
@@ -494,10 +426,7 @@ mod tests {
         {
             let mut txn = db.storage.txn()?;
             assert_eq!(
-                apply_and_record(txn.as_mut(), op)
-                    .err()
-                    .unwrap()
-                    .to_string(),
+                apply_op(txn.as_mut(), &op).err().unwrap().to_string(),
                 format!("Task Database Error: Task {} does not exist", uuid)
             );
             txn.commit()?;

@@ -81,19 +81,6 @@ impl TaskDb {
         txn.commit()
     }
 
-    /// Apply an operation to the TaskDb.  This will update the set of tasks and add a Operation to
-    /// the set of operations in the TaskDb, and return the TaskMap containing the resulting task's
-    /// properties (or an empty TaskMap for deletion).
-    ///
-    /// Aside from synchronization operations, this is the only way to modify the TaskDb.  In cases
-    /// where an operation does not make sense, this function will do nothing and return an error
-    /// (but leave the TaskDb in a consistent state).
-    #[cfg(test)]
-    pub(crate) fn apply(&mut self, op: crate::server::SyncOp) -> Result<TaskMap> {
-        let mut txn = self.storage.txn()?;
-        apply::apply_and_record(txn.as_mut(), op)
-    }
-
     /// Get all tasks.
     pub(crate) fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let mut txn = self.storage.txn()?;
@@ -228,12 +215,8 @@ impl TaskDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::test::TestServer;
-    use crate::server::SyncOp;
-    use crate::storage::InMemoryStorage;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
-    use proptest::prelude::*;
     use uuid::Uuid;
 
     #[test]
@@ -344,70 +327,5 @@ mod tests {
         ops.add(Operation::UndoPoint);
         db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_undo_points().unwrap(), 2);
-    }
-
-    fn newdb() -> TaskDb {
-        TaskDb::new(Box::new(InMemoryStorage::new()))
-    }
-
-    #[derive(Debug)]
-    enum Action {
-        Op(SyncOp),
-        Sync,
-    }
-
-    fn action_sequence_strategy() -> impl Strategy<Value = Vec<(Action, u8)>> {
-        // Create, Update, Delete, or Sync on client 1, 2, .., followed by a round of syncs
-        "([CUDS][123])*S1S2S3S1S2".prop_map(|seq| {
-            let uuid = Uuid::parse_str("83a2f9ef-f455-4195-b92e-a54c161eebfc").unwrap();
-            seq.as_bytes()
-                .chunks(2)
-                .map(|action_on| {
-                    let action = match action_on[0] {
-                        b'C' => Action::Op(SyncOp::Create { uuid }),
-                        b'U' => Action::Op(SyncOp::Update {
-                            uuid,
-                            property: "title".into(),
-                            value: Some("foo".into()),
-                            timestamp: Utc::now(),
-                        }),
-                        b'D' => Action::Op(SyncOp::Delete { uuid }),
-                        b'S' => Action::Sync,
-                        _ => unreachable!(),
-                    };
-                    let acton = action_on[1] - b'1';
-                    (action, acton)
-                })
-                .collect::<Vec<(Action, u8)>>()
-        })
-    }
-
-    proptest! {
-        #[test]
-        // check that various sequences of operations on mulitple db's do not get the db's into an
-        // incompatible state.  The main concern here is that there might be a sequence of create
-        // and delete operations that results in a task existing in one TaskDb but not existing in
-        // another.  So, the generated sequences focus on a single task UUID.
-        fn transform_sequences_of_operations(action_sequence in action_sequence_strategy()) {
-        let mut server: Box<dyn Server> = Box::new(TestServer::new());
-            let mut dbs = [newdb(), newdb(), newdb()];
-
-            for (action, db) in action_sequence {
-                println!("{:?} on db {}", action, db);
-
-                let db = &mut dbs[db as usize];
-                match action {
-                    Action::Op(op) => {
-                        if let Err(e) = db.apply(op) {
-                            println!("  {:?} (ignored)", e);
-                        }
-                    },
-                    Action::Sync => db.sync(&mut server, false).unwrap(),
-                }
-            }
-
-            assert_eq!(dbs[0].sorted_tasks(), dbs[0].sorted_tasks());
-            assert_eq!(dbs[1].sorted_tasks(), dbs[2].sorted_tasks());
-        }
     }
 }
