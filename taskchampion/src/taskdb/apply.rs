@@ -4,18 +4,21 @@ use crate::server::SyncOp;
 use crate::storage::{StorageTxn, TaskMap};
 use crate::Operations;
 
-/// Apply `operations` to the dataabase, in the given single transaction.
+/// Apply `operations` to the database in the given single transaction.
 ///
 /// This updates the set of tasks in the database, but does not modify the list of operations.
+/// If the operation does not make sense in the current state, it is ignored.
 ///
 /// The transaction is not committed.
 pub(super) fn apply_operations(txn: &mut dyn StorageTxn, operations: &Operations) -> Result<()> {
     for operation in operations {
         match operation {
             Operation::Create { uuid } => {
+                // The create_task method will do nothing if the task exists.
                 txn.create_task(*uuid)?;
             }
             Operation::Delete { uuid, .. } => {
+                // The delete_task method will do nothing if the task does not exist.
                 txn.delete_task(*uuid)?;
             }
             Operation::Update {
@@ -26,6 +29,7 @@ pub(super) fn apply_operations(txn: &mut dyn StorageTxn, operations: &Operations
             } => {
                 // TODO: could cache this value from op to op
                 let task = txn.get_task(*uuid)?;
+                // If the task does not exist, do nothing.
                 if let Some(mut task) = task {
                     if let Some(v) = value {
                         task.insert(property.clone(), v.clone());

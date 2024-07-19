@@ -34,10 +34,10 @@ impl TaskDb {
         TaskDb::new(Box::new(InMemoryStorage::new()))
     }
 
-    /// Apply `operations` to the dataabase, in a single transaction.
+    /// Apply `operations` to the database in a single transaction.
     ///
-    /// The resulting operations will be appended to the list of local operations, and the
-    /// set of tasks will be updated accordingly.
+    /// The operations will be appended to the list of local operations, and the set of tasks will
+    /// be updated accordingly.
     ///
     /// Any operations for which `add_to_working_set` returns true will cause the relevant
     /// task to be added to the working set.
@@ -56,22 +56,21 @@ impl TaskDb {
         let mut to_add = Vec::new();
         for operation in &operations {
             if add_to_working_set(operation) {
-                if let Some(uuid) = match operation {
-                    Operation::Create { uuid } => Some(*uuid),
-                    Operation::Update { uuid, .. } => Some(*uuid),
-                    Operation::Delete { uuid, .. } => Some(*uuid),
-                    _ => None,
-                } {
-                    to_add.push(uuid);
+                match operation {
+                    Operation::Create { uuid }
+                    | Operation::Update { uuid, .. }
+                    | Operation::Delete { uuid, .. } => to_add.push(*uuid),
+                    _ => {}
                 }
             }
         }
-        let mut in_working_set: HashSet<Uuid> =
+        let mut working_set: HashSet<Uuid> =
             txn.get_working_set()?.iter().filter_map(|u| *u).collect();
         for uuid in to_add {
-            if !in_working_set.contains(&uuid) {
+            // Double-check that we are not adding a task to the working-set twice.
+            if !working_set.contains(&uuid) {
                 txn.add_to_working_set(uuid)?;
-                in_working_set.insert(uuid);
+                working_set.insert(uuid);
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::depmap::DependencyMap;
 use crate::errors::Result;
-use crate::operation::{Operations, Operation};
+use crate::operation::{Operation, Operations};
 use crate::server::{Server, SyncOp};
 use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
