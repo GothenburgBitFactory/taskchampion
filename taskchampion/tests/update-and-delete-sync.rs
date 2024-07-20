@@ -1,5 +1,5 @@
 use taskchampion::chrono::{TimeZone, Utc};
-use taskchampion::{Replica, ServerConfig, Status, StorageConfig};
+use taskchampion::{Operations, Replica, ServerConfig, Status, StorageConfig, Uuid};
 use tempfile::TempDir;
 
 #[test]
@@ -27,17 +27,24 @@ fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     .into_server()?;
 
     // add a task on rep1, and sync it to rep2
-    let t = rep1.new_task(Status::Pending, "test task".into())?;
-    let u = t.get_uuid();
+    let mut ops = Operations::new();
+    let u = Uuid::new_v4();
+    let mut t = rep1.create_task(u, &mut ops)?;
+    t.set_description("test task".into(), &mut ops)?;
+    t.set_status(Status::Pending, &mut ops)?;
+    t.set_entry(Some(Utc::now()), &mut ops)?;
+    rep1.commit_operations(ops)?;
 
     rep1.sync(&mut server, false)?;
     rep2.sync(&mut server, false)?;
 
     // mark the task as deleted, long in the past, on rep2
     {
-        let mut t = rep2.get_task(u)?.unwrap().into_mut(&mut rep2);
-        t.delete()?;
-        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap())?;
+        let mut ops = Operations::new();
+        let mut t = rep2.get_task(u)?.unwrap();
+        t.delete(&mut ops)?;
+        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)?;
+        rep2.commit_operations(ops)?;
     }
 
     // sync it back to rep1
@@ -50,8 +57,10 @@ fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
 
     // modify the task on rep2
     {
-        let mut t = rep2.get_task(u)?.unwrap().into_mut(&mut rep2);
-        t.set_description("modified".to_string())?;
+        let mut ops = Operations::new();
+        let mut t = rep2.get_task(u)?.unwrap();
+        t.set_description("modified".to_string(), &mut ops)?;
+        rep2.commit_operations(ops)?;
     }
 
     // sync back and forth

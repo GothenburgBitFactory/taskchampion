@@ -2,7 +2,6 @@ use super::tag::{SyntheticTag, TagInner};
 use super::{utc_timestamp, Annotation, Status, Tag, Timestamp};
 use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
-use crate::replica::Replica;
 use crate::storage::TaskMap;
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
@@ -13,30 +12,27 @@ use std::rc::Rc;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/* The Task and TaskMut classes wrap the underlying [`TaskMap`], which is a simple key/value map.
- * They provide semantic meaning to that TaskMap according to the TaskChampion data model.  For
- * example, [`get_status`](Task::get_status) and [`set_status`](TaskMut::set_status) translate from
- * strings in the TaskMap to [`Status`].
- *
- * The same approach applies for more complex data such as dependencies or annotations.  Users of
- * this API should only need the [`get_taskmap`](Task::get_taskmap) method for debugging purposes,
- * and should never need to make changes to the TaskMap directly.
- */
-
-/// A task, as publicly exposed by this crate.
+/// A task, with a high-level interface.
+///
+/// Building on [`crate::TaskData`], this type implements the task model, with ergonomic APIs to
+/// manipulate tasks without deep familiarity with the [task
+/// model](https://gothenburgbitfactory.org/taskchampion/tasks.html#keys). This type `Deref`s to
+/// [`crate::TaskData`] to support lower-level operations.
 ///
 /// Note that Task objects represent a snapshot of the task at a moment in time, and are not
 /// protected by the atomicity of the backend storage.  Concurrent modifications are safe,
 /// but a Task that is cached for more than a few seconds may cause the user to see stale
 /// data.  Fetch, use, and drop Tasks quickly.
-///
-/// This struct contains only getters for various values on the task. The
-/// [`into_mut`](Task::into_mut) method
-/// returns a TaskMut which can be used to modify the task.
 #[derive(Debug, Clone)]
 pub struct Task {
+    // The underlying task data.
     data: TaskData,
+
+    // The dependency map for this replica, for rapidly computing synthetic tags.
     depmap: Rc<DependencyMap>,
+
+    // True if an operation has alredy been emitted to update the `modified` property.
+    updated_modified: bool,
 }
 
 impl PartialEq for Task {
@@ -46,16 +42,18 @@ impl PartialEq for Task {
     }
 }
 
-/// A mutable task, with setter methods.
-///
-/// Most methods are simple setters and not further described.  Calling a setter will update the
-/// referenced Replica, as well as the included Task, immediately.
-///
-/// The [`Task`] methods are available on [`TaskMut`] via [`Deref`](std::ops::Deref).
-pub struct TaskMut<'r> {
-    task: Task,
-    replica: &'r mut Replica,
-    updated_modified: bool,
+impl std::ops::Deref for Task {
+    type Target = TaskData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl std::ops::DerefMut for Task {
+    fn deref_mut(&mut self) -> &mut <Self as std::ops::Deref>::Target {
+        &mut self.data
+    }
 }
 
 /// An enum containing all of the key names defined in the data model, with the exception
@@ -97,29 +95,22 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
 }
 
 impl Task {
-    pub(crate) fn new(uuid: Uuid, taskmap: TaskMap, depmap: Rc<DependencyMap>) -> Task {
+    pub(crate) fn new(data: TaskData, depmap: Rc<DependencyMap>) -> Task {
         Task {
-            data: TaskData::new(uuid, taskmap),
+            data,
             depmap,
-        }
-    }
-
-    pub fn get_uuid(&self) -> Uuid {
-        self.data.get_uuid()
-    }
-
-    pub fn get_taskmap(&self) -> &TaskMap {
-        &self.data.taskmap
-    }
-
-    /// Prepare to mutate this task, requiring a mutable Replica
-    /// in order to update the data it contains.
-    pub fn into_mut(self, replica: &mut Replica) -> TaskMut {
-        TaskMut {
-            task: self,
-            replica,
             updated_modified: false,
         }
+    }
+
+    /// Convert this Task into a TaskData.
+    pub fn into_task_data(self) -> TaskData {
+        self.data
+    }
+
+    #[deprecated(since = "0.7.0", note = "please use TaskData::properties")]
+    pub fn get_taskmap(&self) -> &TaskMap {
+        self.data.get_taskmap()
     }
 
     pub fn get_status(&self) -> Status {
@@ -158,7 +149,7 @@ impl Task {
     /// Determine whether this task is active -- that is, that it has been started
     /// and not stopped.
     pub fn is_active(&self) -> bool {
-        self.data.has(Prop::Start.as_ref())
+        self.has(Prop::Start.as_ref())
     }
 
     /// Determine whether this task is blocked -- that is, has at least one unresolved dependency.
@@ -189,7 +180,7 @@ impl Task {
     /// Check if this task has the given tag
     pub fn has_tag(&self, tag: &Tag) -> bool {
         match tag.inner() {
-            TagInner::User(s) => self.data.has(format!("tag_{}", s)),
+            TagInner::User(s) => self.has(format!("tag_{}", s)),
             TagInner::Synthetic(st) => self.has_synthetic_tag(st),
         }
     }
@@ -298,6 +289,225 @@ impl Task {
         self.data.get(property)
     }
 
+    /// Set the task's status.
+    ///
+    /// This also updates the task's "end" property appropriately.
+    pub fn set_status(&mut self, status: Status, ops: &mut Operations) -> Result<()> {
+        match status {
+            Status::Pending | Status::Recurring => {
+                // clear "end" when a task becomes "pending" or "recurring"
+                if self.has(Prop::End.as_ref()) {
+                    self.set_timestamp(Prop::End.as_ref(), None, ops)?;
+                }
+            }
+            Status::Completed | Status::Deleted => {
+                // set "end" when a task is deleted or completed
+                if !self.has(Prop::End.as_ref()) {
+                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
+                }
+            }
+            _ => {}
+        }
+        self.set_value(
+            Prop::Status.as_ref(),
+            Some(String::from(status.to_taskmap())),
+            ops,
+        )
+    }
+
+    pub fn set_description(&mut self, description: String, ops: &mut Operations) -> Result<()> {
+        self.set_value(Prop::Description.as_ref(), Some(description), ops)
+    }
+
+    pub fn set_priority(&mut self, priority: String, ops: &mut Operations) -> Result<()> {
+        self.set_value(Prop::Priority.as_ref(), Some(priority), ops)
+    }
+
+    pub fn set_entry(&mut self, entry: Option<Timestamp>, ops: &mut Operations) -> Result<()> {
+        self.set_timestamp(Prop::Entry.as_ref(), entry, ops)
+    }
+
+    pub fn set_wait(&mut self, wait: Option<Timestamp>, ops: &mut Operations) -> Result<()> {
+        self.set_timestamp(Prop::Wait.as_ref(), wait, ops)
+    }
+
+    pub fn set_modified(&mut self, modified: Timestamp, ops: &mut Operations) -> Result<()> {
+        self.set_timestamp(Prop::Modified.as_ref(), Some(modified), ops)
+    }
+
+    /// Set a tasks's property by name.
+    ///
+    /// This will automatically update the `modified` timestamp if it has not already been
+    /// modified, but will recognize modifications of the `modified` property and not make further
+    /// updates to it. Use [`TaskData::update`] to modify the task without this behavior.
+    pub fn set_value<S: Into<String>>(
+        &mut self,
+        property: S,
+        value: Option<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let property = property.into();
+
+        // update the modified timestamp unless we are setting it explicitly
+        if &property != "modified" && !self.updated_modified {
+            let now = format!("{}", Utc::now().timestamp());
+            trace!("task {}: set property modified={:?}", self.get_uuid(), now);
+            self.data.update(Prop::Modified.as_ref(), Some(now), ops);
+            self.updated_modified = true;
+        }
+        self.updated_modified = true;
+
+        if let Some(ref v) = value {
+            trace!(
+                "task {}: set property {}={:?}",
+                self.get_uuid(),
+                property,
+                v
+            );
+        } else {
+            trace!("task {}: remove property {}", self.get_uuid(), property);
+        }
+
+        self.data.update(property, value, ops);
+        Ok(())
+    }
+
+    /// Start the task by creating "start": "<timestamp>", if the task is not already
+    /// active.
+    pub fn start(&mut self, ops: &mut Operations) -> Result<()> {
+        if self.is_active() {
+            return Ok(());
+        }
+        self.set_timestamp(Prop::Start.as_ref(), Some(Utc::now()), ops)
+    }
+
+    /// Stop the task by removing the `start` key
+    pub fn stop(&mut self, ops: &mut Operations) -> Result<()> {
+        self.set_timestamp(Prop::Start.as_ref(), None, ops)
+    }
+
+    /// Mark this task as complete
+    pub fn done(&mut self, ops: &mut Operations) -> Result<()> {
+        self.set_status(Status::Completed, ops)
+    }
+
+    /// Mark this task as deleted.
+    ///
+    /// Note that this does not delete the task.  It merely marks the task as
+    /// deleted.
+    pub fn delete(&mut self, ops: &mut Operations) -> Result<()> {
+        self.set_status(Status::Deleted, ops)
+    }
+
+    /// Add a tag to this task.  Does nothing if the tag is already present.
+    pub fn add_tag(&mut self, tag: &Tag, ops: &mut Operations) -> Result<()> {
+        if tag.is_synthetic() {
+            return Err(Error::Usage(String::from(
+                "Synthetic tags cannot be modified",
+            )));
+        }
+        self.set_value(format!("tag_{}", tag), Some("".to_owned()), ops)
+    }
+
+    /// Remove a tag from this task.  Does nothing if the tag is not present.
+    pub fn remove_tag(&mut self, tag: &Tag, ops: &mut Operations) -> Result<()> {
+        if tag.is_synthetic() {
+            return Err(Error::Usage(String::from(
+                "Synthetic tags cannot be modified",
+            )));
+        }
+        self.set_value(format!("tag_{}", tag), None, ops)
+    }
+
+    /// Add a new annotation.  Note that annotations with the same entry time
+    /// will overwrite one another.
+    pub fn add_annotation(&mut self, ann: Annotation, ops: &mut Operations) -> Result<()> {
+        self.set_value(
+            format!("annotation_{}", ann.entry.timestamp()),
+            Some(ann.description),
+            ops,
+        )
+    }
+
+    /// Remove an annotation, based on its entry time.
+    pub fn remove_annotation(&mut self, entry: Timestamp, ops: &mut Operations) -> Result<()> {
+        self.set_value(format!("annotation_{}", entry.timestamp()), None, ops)
+    }
+
+    pub fn set_due(&mut self, due: Option<Timestamp>, ops: &mut Operations) -> Result<()> {
+        self.set_timestamp(Prop::Due.as_ref(), due, ops)
+    }
+
+    /// Set a user-defined attribute (UDA).  This will fail if the key is defined by the data
+    /// model.
+    pub fn set_uda(
+        &mut self,
+        namespace: impl AsRef<str>,
+        key: impl AsRef<str>,
+        value: impl Into<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let key = uda_tuple_to_string(namespace, key);
+        self.set_legacy_uda(key, value, ops)
+    }
+
+    /// Remove a user-defined attribute (UDA).  This will fail if the key is defined by the data
+    /// model.
+    pub fn remove_uda(
+        &mut self,
+        namespace: impl AsRef<str>,
+        key: impl AsRef<str>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let key = uda_tuple_to_string(namespace, key);
+        self.remove_legacy_uda(key, ops)
+    }
+
+    /// Set a user-defined attribute (UDA), where the key is a legacy key.
+    pub fn set_legacy_uda(
+        &mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let key = key.into();
+        if Task::is_known_key(&key) {
+            return Err(Error::Usage(format!(
+                "Property name {} as special meaning in a task and cannot be used as a UDA",
+                key
+            )));
+        }
+        self.set_value(key, Some(value.into()), ops)
+    }
+
+    /// Remove a user-defined attribute (UDA), where the key is a legacy key.
+    pub fn remove_legacy_uda(
+        &mut self,
+        key: impl Into<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let key = key.into();
+        if Task::is_known_key(&key) {
+            return Err(Error::Usage(format!(
+                "Property name {} as special meaning in a task and cannot be used as a UDA",
+                key
+            )));
+        }
+        self.set_value(key, None, ops)
+    }
+
+    /// Add a dependency.
+    pub fn add_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
+        let key = format!("dep_{}", dep);
+        self.set_value(key, Some("".to_string()), ops)
+    }
+
+    /// Remove a dependency.
+    pub fn remove_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
+        let key = format!("dep_{}", dep);
+        self.set_value(key, None, ops)
+    }
+
     // -- utility functions
 
     fn is_known_key(key: &str) -> bool {
@@ -316,251 +526,21 @@ impl Task {
         }
         None
     }
-}
 
-impl<'r> TaskMut<'r> {
-    /// Get the immutable version of this object, ending the exclusive reference to the Replica.
-    pub fn into_immut(self) -> Task {
-        self.task
-    }
-
-    /// Set the task's status.  This also adds the task to the working set if the
-    /// new status puts it in that set.
-    pub fn set_status(&mut self, status: Status) -> Result<()> {
-        match status {
-            Status::Pending | Status::Recurring => {
-                // clear "end" when a task becomes "pending" or "recurring"
-                if self.task.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), None)?;
-                }
-                // ..and add to working set
-                self.replica.add_to_working_set(self.get_uuid())?;
-            }
-            Status::Completed | Status::Deleted => {
-                // set "end" when a task is deleted or completed
-                if !self.task.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()))?;
-                }
-            }
-            _ => {}
-        }
-        self.set_value(
-            Prop::Status.as_ref(),
-            Some(String::from(status.to_taskmap())),
-        )
-    }
-
-    pub fn set_description(&mut self, description: String) -> Result<()> {
-        self.set_value(Prop::Description.as_ref(), Some(description))
-    }
-
-    pub fn set_priority(&mut self, priority: String) -> Result<()> {
-        self.set_value(Prop::Priority.as_ref(), Some(priority))
-    }
-
-    pub fn set_entry(&mut self, entry: Option<Timestamp>) -> Result<()> {
-        self.set_timestamp(Prop::Entry.as_ref(), entry)
-    }
-
-    pub fn set_wait(&mut self, wait: Option<Timestamp>) -> Result<()> {
-        self.set_timestamp(Prop::Wait.as_ref(), wait)
-    }
-
-    pub fn set_modified(&mut self, modified: Timestamp) -> Result<()> {
-        self.set_timestamp(Prop::Modified.as_ref(), Some(modified))
-    }
-
-    /// Set a tasks's property by name.
-    ///
-    /// This will not automatically update the `modified` timestamp or perform any other
-    /// "automatic" operations -- it simply sets the property. Howerver, if property is
-    /// "modified", then subsequent calls to other `set_..` methods will not update the
-    /// `modified` timestamp.
-    pub fn set_value<S: Into<String>>(&mut self, property: S, value: Option<String>) -> Result<()> {
-        let property = property.into();
-        let mut ops = Operations::new();
-
-        // update the modified timestamp unless we are setting it explicitly
-        if &property != "modified" && !self.updated_modified {
-            let now = format!("{}", Utc::now().timestamp());
-            trace!(
-                "task {}: set property modified={:?}",
-                self.task.get_uuid(),
-                now
-            );
-            self.task
-                .data
-                .update(Prop::Modified.as_ref(), Some(now), &mut ops);
-            self.updated_modified = true;
-        }
-        self.updated_modified = true;
-
-        if let Some(ref v) = value {
-            trace!(
-                "task {}: set property {}={:?}",
-                self.get_uuid(),
-                property,
-                v
-            );
-        } else {
-            trace!("task {}: remove property {}", self.get_uuid(), property);
-        }
-
-        self.task.data.update(property, value, &mut ops);
-        self.replica.commit_operations(ops)?;
-        Ok(())
-    }
-
-    /// Start the task by creating "start": "<timestamp>", if the task is not already
-    /// active.
-    pub fn start(&mut self) -> Result<()> {
-        if self.is_active() {
-            return Ok(());
-        }
-        self.set_timestamp(Prop::Start.as_ref(), Some(Utc::now()))
-    }
-
-    /// Stop the task by removing the `start` key
-    pub fn stop(&mut self) -> Result<()> {
-        self.set_timestamp(Prop::Start.as_ref(), None)
-    }
-
-    /// Mark this task as complete
-    pub fn done(&mut self) -> Result<()> {
-        self.set_status(Status::Completed)
-    }
-
-    /// Mark this task as deleted.
-    ///
-    /// Note that this does not delete the task.  It merely marks the task as
-    /// deleted.
-    pub fn delete(&mut self) -> Result<()> {
-        self.set_status(Status::Deleted)
-    }
-
-    /// Add a tag to this task.  Does nothing if the tag is already present.
-    pub fn add_tag(&mut self, tag: &Tag) -> Result<()> {
-        if tag.is_synthetic() {
-            return Err(Error::Usage(String::from(
-                "Synthetic tags cannot be modified",
-            )));
-        }
-        self.set_value(format!("tag_{}", tag), Some("".to_owned()))
-    }
-
-    /// Remove a tag from this task.  Does nothing if the tag is not present.
-    pub fn remove_tag(&mut self, tag: &Tag) -> Result<()> {
-        if tag.is_synthetic() {
-            return Err(Error::Usage(String::from(
-                "Synthetic tags cannot be modified",
-            )));
-        }
-        self.set_value(format!("tag_{}", tag), None)
-    }
-
-    /// Add a new annotation.  Note that annotations with the same entry time
-    /// will overwrite one another.
-    pub fn add_annotation(&mut self, ann: Annotation) -> Result<()> {
-        self.set_value(
-            format!("annotation_{}", ann.entry.timestamp()),
-            Some(ann.description),
-        )
-    }
-
-    /// Remove an annotation, based on its entry time.
-    pub fn remove_annotation(&mut self, entry: Timestamp) -> Result<()> {
-        self.set_value(format!("annotation_{}", entry.timestamp()), None)
-    }
-
-    pub fn set_due(&mut self, due: Option<Timestamp>) -> Result<()> {
-        self.set_timestamp(Prop::Due.as_ref(), due)
-    }
-
-    /// Set a user-defined attribute (UDA).  This will fail if the key is defined by the data
-    /// model.
-    pub fn set_uda(
+    fn set_timestamp(
         &mut self,
-        namespace: impl AsRef<str>,
-        key: impl AsRef<str>,
-        value: impl Into<String>,
+        property: &str,
+        value: Option<Timestamp>,
+        ops: &mut Operations,
     ) -> Result<()> {
-        let key = uda_tuple_to_string(namespace, key);
-        self.set_legacy_uda(key, value)
-    }
-
-    /// Remove a user-defined attribute (UDA).  This will fail if the key is defined by the data
-    /// model.
-    pub fn remove_uda(&mut self, namespace: impl AsRef<str>, key: impl AsRef<str>) -> Result<()> {
-        let key = uda_tuple_to_string(namespace, key);
-        self.remove_legacy_uda(key)
-    }
-
-    /// Set a user-defined attribute (UDA), where the key is a legacy key.
-    pub fn set_legacy_uda(
-        &mut self,
-        key: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Result<()> {
-        let key = key.into();
-        if Task::is_known_key(&key) {
-            return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
-            )));
-        }
-        self.set_value(key, Some(value.into()))
-    }
-
-    /// Remove a user-defined attribute (UDA), where the key is a legacy key.
-    pub fn remove_legacy_uda(&mut self, key: impl Into<String>) -> Result<()> {
-        let key = key.into();
-        if Task::is_known_key(&key) {
-            return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
-            )));
-        }
-        self.set_value(key, None)
-    }
-
-    /// Add a dependency.
-    pub fn add_dependency(&mut self, dep: Uuid) -> Result<()> {
-        let key = format!("dep_{}", dep);
-        self.set_value(key, Some("".to_string()))
-    }
-
-    /// Remove a dependency.
-    pub fn remove_dependency(&mut self, dep: Uuid) -> Result<()> {
-        let key = format!("dep_{}", dep);
-        self.set_value(key, None)
-    }
-
-    // -- utility functions
-
-    fn set_timestamp(&mut self, property: &str, value: Option<Timestamp>) -> Result<()> {
-        self.set_value(property, value.map(|v| v.timestamp().to_string()))
-    }
-
-    /// Used by tests to ensure that updates are properly written
-    #[cfg(test)]
-    fn reload(&mut self) -> Result<()> {
-        let uuid = self.get_uuid();
-        self.task.data = self.replica.get_task_data(uuid)?.unwrap();
-        Ok(())
-    }
-}
-
-impl<'r> std::ops::Deref for TaskMut<'r> {
-    type Target = Task;
-
-    fn deref(&self) -> &Self::Target {
-        &self.task
+        self.set_value(property, value.map(|v| v.timestamp().to_string()), ops)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Replica;
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -568,11 +548,32 @@ mod test {
         Rc::new(DependencyMap::new())
     }
 
-    fn with_mut_task<F: FnOnce(TaskMut)>(f: F) {
+    // Test task mutation by modifying a task and checking the assertions both on the
+    // modified task and on a re-loaded task after the operations are committed.
+    fn with_mut_task<MODIFY: Fn(&mut Task, &mut Operations), ASSERT: Fn(&Task)>(
+        modify: MODIFY,
+        assert: ASSERT,
+    ) {
         let mut replica = Replica::new_inmemory();
-        let task = replica.new_task(Status::Pending, "test".into()).unwrap();
-        let task = task.into_mut(&mut replica);
-        f(task)
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).unwrap();
+        modify(&mut task, &mut ops);
+        // check assertions about the task before committing it
+        assert(&task);
+        println!("commiting operations from first call to modify function");
+        replica.commit_operations(ops).unwrap();
+        // check assertions on task loaded from storage
+        let mut task = replica.get_task(uuid).unwrap().unwrap();
+        assert(&task);
+        let mut ops = Operations::new();
+        modify(&mut task, &mut ops);
+        assert(&task);
+        println!("commiting operations from second call to modify function");
+        replica.commit_operations(ops).unwrap();
+        // check assertions on task loaded from storage again
+        let task = replica.get_task(uuid).unwrap().unwrap();
+        assert(&task);
     }
 
     /// Create a user tag, without checking its validity
@@ -587,17 +588,19 @@ mod test {
 
     #[test]
     fn test_is_active_never_started() {
-        let task = Task::new(Uuid::new_v4(), TaskMap::new(), dm());
+        let task = Task::new(TaskData::new(Uuid::new_v4(), TaskMap::new()), dm());
         assert!(!task.is_active());
     }
 
     #[test]
     fn test_is_active_active() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("start"), String::from("1234"))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("start"), String::from("1234"))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
 
@@ -606,13 +609,13 @@ mod test {
 
     #[test]
     fn test_is_active_inactive() {
-        let task = Task::new(Uuid::new_v4(), Default::default(), dm());
+        let task = Task::new(TaskData::new(Uuid::new_v4(), Default::default()), dm());
         assert!(!task.is_active());
     }
 
     #[test]
     fn test_entry_not_set() {
-        let task = Task::new(Uuid::new_v4(), TaskMap::new(), dm());
+        let task = Task::new(TaskData::new(Uuid::new_v4(), TaskMap::new()), dm());
         assert_eq!(task.get_entry(), None);
     }
 
@@ -620,10 +623,12 @@ mod test {
     fn test_entry_set() {
         let ts = Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("entry"), format!("{}", ts.timestamp()))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("entry"), format!("{}", ts.timestamp()))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
         assert_eq!(task.get_entry(), Some(ts));
@@ -631,7 +636,7 @@ mod test {
 
     #[test]
     fn test_wait_not_set() {
-        let task = Task::new(Uuid::new_v4(), TaskMap::new(), dm());
+        let task = Task::new(TaskData::new(Uuid::new_v4(), TaskMap::new()), dm());
 
         assert!(!task.is_waiting());
         assert_eq!(task.get_wait(), None);
@@ -641,10 +646,12 @@ mod test {
     fn test_wait_in_past() {
         let ts = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("wait"), format!("{}", ts.timestamp()))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("wait"), format!("{}", ts.timestamp()))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
 
@@ -656,10 +663,12 @@ mod test {
     fn test_wait_in_future() {
         let ts = Utc.with_ymd_and_hms(3000, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("wait"), format!("{}", ts.timestamp()))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("wait"), format!("{}", ts.timestamp()))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
 
@@ -670,13 +679,15 @@ mod test {
     #[test]
     fn test_has_tag() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                (String::from("tag_abc"), String::from("")),
-                (String::from("start"), String::from("1234")),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    (String::from("tag_abc"), String::from("")),
+                    (String::from("start"), String::from("1234")),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -690,15 +701,17 @@ mod test {
     #[test]
     fn test_get_tags() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                (String::from("tag_abc"), String::from("")),
-                (String::from("tag_def"), String::from("")),
-                // set `wait` so the synthetic tag WAITING is present
-                (String::from("wait"), String::from("33158909732")),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    (String::from("tag_abc"), String::from("")),
+                    (String::from("tag_def"), String::from("")),
+                    // set `wait` so the synthetic tag WAITING is present
+                    (String::from("wait"), String::from("33158909732")),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -716,15 +729,17 @@ mod test {
     #[test]
     fn test_get_tags_invalid_tags() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                (String::from("tag_ok"), String::from("")),
-                (String::from("tag_"), String::from("")),
-                (String::from("tag_123"), String::from("")),
-                (String::from("tag_a!!"), String::from("")),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    (String::from("tag_ok"), String::from("")),
+                    (String::from("tag_"), String::from("")),
+                    (String::from("tag_123"), String::from("")),
+                    (String::from("tag_a!!"), String::from("")),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -744,10 +759,12 @@ mod test {
     fn test_get_due() {
         let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("due"), format!("{}", test_time.timestamp()))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("due"), format!("{}", test_time.timestamp()))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
         assert_eq!(task.get_due(), Some(test_time))
@@ -756,61 +773,73 @@ mod test {
     #[test]
     fn test_get_invalid_due() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![(String::from("due"), String::from("invalid"))]
-                .drain(..)
-                .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![(String::from("due"), String::from("invalid"))]
+                    .drain(..)
+                    .collect(),
+            ),
             dm(),
         );
         assert_eq!(task.get_due(), None);
     }
 
     #[test]
+    fn test_due_new_task() {
+        with_mut_task(|_task, _ops| {}, |task| assert_eq!(task.get_due(), None));
+    }
+
+    #[test]
     fn test_add_due() {
         let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
-        with_mut_task(|mut task| {
-            assert_eq!(task.get_due(), None);
-            task.set_due(Some(test_time)).unwrap();
-            assert_eq!(task.get_due(), Some(test_time))
-        });
+        with_mut_task(
+            |task, ops| {
+                task.set_due(Some(test_time), ops).unwrap();
+            },
+            |task| assert_eq!(task.get_due(), Some(test_time)),
+        );
     }
 
     #[test]
     fn test_remove_due() {
-        let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
-        with_mut_task(|mut task| {
-            task.set_due(Some(test_time)).unwrap();
-            task.reload().unwrap();
-            assert!(task.task.data.has("due"));
-            task.set_due(None).unwrap();
-            assert!(!task.task.data.has("due"));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.update("due", Some("some-time".into()), ops);
+                assert!(task.has("due"));
+                task.set_due(None, ops).unwrap();
+            },
+            |task| {
+                assert!(!task.has("due"));
+            },
+        );
     }
 
     #[test]
     fn test_get_priority_default() {
-        let task = Task::new(Uuid::new_v4(), TaskMap::new(), dm());
+        let task = Task::new(TaskData::new(Uuid::new_v4(), TaskMap::new()), dm());
         assert_eq!(task.get_priority(), "");
     }
 
     #[test]
     fn test_get_annotations() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                (
-                    String::from("annotation_1635301873"),
-                    String::from("left message"),
-                ),
-                (
-                    String::from("annotation_1635301883"),
-                    String::from("left another message"),
-                ),
-                (String::from("annotation_"), String::from("invalid")),
-                (String::from("annotation_abcde"), String::from("invalid")),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    (
+                        String::from("annotation_1635301873"),
+                        String::from("left message"),
+                    ),
+                    (
+                        String::from("annotation_1635301883"),
+                        String::from("left another message"),
+                    ),
+                    (String::from("annotation_"), String::from("invalid")),
+                    (String::from("annotation_abcde"), String::from("invalid")),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -833,233 +862,295 @@ mod test {
 
     #[test]
     fn test_add_annotation() {
-        with_mut_task(|mut task| {
-            task.add_annotation(Annotation {
-                entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
-                description: "right message".into(),
-            })
-            .unwrap();
-            let k = "annotation_1635301900";
-            assert_eq!(task.task.data.get(k).unwrap(), "right message".to_owned());
-            task.reload().unwrap();
-            assert_eq!(task.task.data.get(k).unwrap(), "right message".to_owned());
-            // adding with same time overwrites..
-            task.add_annotation(Annotation {
-                entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
-                description: "right message 2".into(),
-            })
-            .unwrap();
-            assert_eq!(task.task.data.get(k).unwrap(), "right message 2".to_owned());
-        });
+        with_mut_task(
+            |task, ops| {
+                task.add_annotation(
+                    Annotation {
+                        entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
+                        description: "right message".into(),
+                    },
+                    ops,
+                )
+                .unwrap();
+            },
+            |task| {
+                let k = "annotation_1635301900";
+                assert_eq!(task.get(k).unwrap(), "right message".to_owned());
+            },
+        );
+    }
+
+    #[test]
+    fn test_add_annotation_overwrite() {
+        with_mut_task(
+            |task, ops| {
+                task.add_annotation(
+                    Annotation {
+                        entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
+                        description: "right message".into(),
+                    },
+                    ops,
+                )
+                .unwrap();
+                task.add_annotation(
+                    Annotation {
+                        entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
+                        description: "right message 2".into(),
+                    },
+                    ops,
+                )
+                .unwrap();
+            },
+            |task| {
+                let k = "annotation_1635301900";
+                assert_eq!(task.get(k).unwrap(), "right message 2".to_owned());
+            },
+        );
     }
 
     #[test]
     fn test_remove_annotation() {
-        with_mut_task(|mut task| {
-            task.set_value("annotation_1635301873", Some("left message".into()))
-                .unwrap();
-            task.set_value("annotation_1635301883", Some("left another message".into()))
+        with_mut_task(
+            |task, ops| {
+                task.update("annotation_1635301873", Some("left message".into()), ops);
+                task.set_value(
+                    "annotation_1635301883",
+                    Some("left another message".into()),
+                    ops,
+                )
                 .unwrap();
 
-            task.remove_annotation(Utc.timestamp_opt(1635301873, 0).unwrap())
-                .unwrap();
-
-            task.reload().unwrap();
-
-            let mut anns: Vec<_> = task.get_annotations().collect();
-            anns.sort();
-            assert_eq!(
-                anns,
-                vec![Annotation {
-                    entry: Utc.timestamp_opt(1635301883, 0).unwrap(),
-                    description: "left another message".into()
-                }]
-            );
-        });
+                task.remove_annotation(Utc.timestamp_opt(1635301873, 0).unwrap(), ops)
+                    .unwrap();
+            },
+            |task| {
+                let mut anns: Vec<_> = task.get_annotations().collect();
+                anns.sort();
+                assert_eq!(
+                    anns,
+                    vec![Annotation {
+                        entry: Utc.timestamp_opt(1635301883, 0).unwrap(),
+                        description: "left another message".into()
+                    }]
+                );
+            },
+        );
     }
 
     #[test]
     fn test_set_get_priority() {
-        with_mut_task(|mut task| {
-            assert_eq!(task.get_priority(), "");
-            task.set_priority("H".into()).unwrap();
-            assert_eq!(task.get_priority(), "H");
-        });
+        with_mut_task(
+            |task, ops| {
+                task.set_priority("H".into(), ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_priority(), "H");
+            },
+        );
+    }
+
+    #[test]
+    fn test_get_priority_new_task() {
+        with_mut_task(
+            |_task, _ops| {},
+            |task| {
+                assert_eq!(task.get_priority(), "");
+            },
+        );
     }
 
     #[test]
     fn test_set_status_pending() {
-        with_mut_task(|mut task| {
-            task.done().unwrap();
-
-            task.set_status(Status::Pending).unwrap();
-            assert_eq!(task.get_status(), Status::Pending);
-            assert!(!task.task.data.has("end"));
-            assert!(task.has_tag(&stag(SyntheticTag::Pending)));
-            assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.update("status", Some("completed".into()), ops);
+                task.update("end", Some("right now".into()), ops);
+                task.done(ops).unwrap();
+                task.set_status(Status::Pending, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Pending);
+                assert!(!task.has("end"));
+                assert!(task.has_tag(&stag(SyntheticTag::Pending)));
+                assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_set_status_recurring() {
-        with_mut_task(|mut task| {
-            task.done().unwrap();
-
-            task.set_status(Status::Recurring).unwrap();
-            assert_eq!(task.get_status(), Status::Recurring);
-            assert!(!task.task.data.has("end"));
-            assert!(!task.has_tag(&stag(SyntheticTag::Pending))); // recurring is not +PENDING
-            assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.update("status", Some("completed".into()), ops);
+                task.update("end", Some("right now".into()), ops);
+                task.set_status(Status::Recurring, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Recurring);
+                assert!(!task.has("end"));
+                assert!(!task.has_tag(&stag(SyntheticTag::Pending))); // recurring is not +PENDING
+                assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_set_status_completed() {
-        with_mut_task(|mut task| {
-            task.set_status(Status::Completed).unwrap();
-            assert_eq!(task.get_status(), Status::Completed);
-            assert!(task.task.data.has("end"));
-            assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
-            assert!(task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.set_status(Status::Completed, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Completed);
+                assert!(task.has("end"));
+                assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
+                assert!(task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_set_status_deleted() {
-        with_mut_task(|mut task| {
-            task.set_status(Status::Deleted).unwrap();
-            assert_eq!(task.get_status(), Status::Deleted);
-            assert!(task.task.data.has("end"));
-            assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
-            assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.set_status(Status::Deleted, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Deleted);
+                assert!(task.has("end"));
+                assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
+                assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_set_get_value() {
-        with_mut_task(|mut task| {
-            let property = "property-name";
-            task.set_value(property, Some("value".into())).unwrap();
-            assert_eq!(task.get_value(property), Some("value"));
-            task.set_value(property, None).unwrap();
-            assert_eq!(task.get_value(property), None);
-        });
+        let property = "property-name";
+        with_mut_task(
+            |task, ops| {
+                task.set_value(property, Some("value".into()), ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_value(property), Some("value"));
+            },
+        );
+    }
+
+    #[test]
+    fn test_set_get_value_none() {
+        let property = "property-name";
+        with_mut_task(
+            |task, ops| {
+                task.update(property, Some("value".into()), ops);
+                task.set_value(property, None, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_value(property), None);
+            },
+        );
     }
 
     #[test]
     fn test_start() {
-        with_mut_task(|mut task| {
-            task.start().unwrap();
-            assert!(task.task.data.has("start"));
-
-            task.reload().unwrap();
-            assert!(task.task.data.has("start"));
-
-            // second start doesn't change anything..
-            task.start().unwrap();
-            assert!(task.task.data.has("start"));
-
-            task.reload().unwrap();
-            assert!(task.task.data.has("start"));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.start(ops).unwrap();
+            },
+            |task| {
+                assert!(task.has("start"));
+            },
+        );
     }
 
     #[test]
     fn test_stop() {
-        with_mut_task(|mut task| {
-            task.start().unwrap();
-            task.stop().unwrap();
-            assert!(!task.task.data.has("start"));
-
-            task.reload().unwrap();
-            assert!(!task.task.data.has("start"));
-
-            // redundant call does nothing..
-            task.stop().unwrap();
-            assert!(!task.task.data.has("start"));
-
-            task.reload().unwrap();
-            assert!(!task.task.data.has("start"));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.update("start", Some("right now".into()), ops);
+                task.stop(ops).unwrap();
+            },
+            |task| {
+                assert!(!task.has("start"));
+            },
+        );
     }
 
     #[test]
     fn test_done() {
-        with_mut_task(|mut task| {
-            task.done().unwrap();
-            assert_eq!(task.get_status(), Status::Completed);
-            assert!(task.task.data.has("end"));
-            assert!(task.has_tag(&stag(SyntheticTag::Completed)));
-
-            // redundant call does nothing..
-            task.done().unwrap();
-            assert_eq!(task.get_status(), Status::Completed);
-            assert!(task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.done(ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Completed);
+                assert!(task.has("end"));
+                assert!(task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_delete() {
-        with_mut_task(|mut task| {
-            task.delete().unwrap();
-            assert_eq!(task.get_status(), Status::Deleted);
-            assert!(task.task.data.has("end"));
-            assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
-
-            // redundant call does nothing..
-            task.delete().unwrap();
-            assert_eq!(task.get_status(), Status::Deleted);
-            assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.delete(ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Deleted);
+                assert!(task.has("end"));
+                assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+            },
+        );
     }
 
     #[test]
     fn test_add_tags() {
-        with_mut_task(|mut task| {
-            task.add_tag(&utag("abc")).unwrap();
-            assert!(task.task.data.has("tag_abc"));
-            task.reload().unwrap();
-            assert!(task.task.data.has("tag_abc"));
-            // redundant add has no effect..
-            task.add_tag(&utag("abc")).unwrap();
-            assert!(task.task.data.has("tag_abc"));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.add_tag(&utag("abc"), ops).unwrap();
+            },
+            |task| {
+                assert!(task.has("tag_abc"));
+                assert!(task.has_tag(&utag("abc")));
+            },
+        );
     }
 
     #[test]
     fn test_remove_tags() {
-        with_mut_task(|mut task| {
-            task.add_tag(&utag("abc")).unwrap();
-            task.reload().unwrap();
-            assert!(task.task.data.has("tag_abc"));
-
-            task.remove_tag(&utag("abc")).unwrap();
-            assert!(!task.task.data.has("tag_abc"));
-            // redundant remove has no effect..
-            task.remove_tag(&utag("abc")).unwrap();
-            assert!(!task.task.data.has("tag_abc"));
-        });
+        with_mut_task(
+            |task, ops| {
+                task.update("tag_abc", Some("x".into()), ops);
+                task.remove_tag(&utag("abc"), ops).unwrap();
+            },
+            |task| {
+                assert!(!task.has("tag_abc"));
+            },
+        );
     }
 
     #[test]
     fn test_get_udas() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                ("description".into(), "not a uda".into()),
-                ("modified".into(), "not a uda".into()),
-                ("start".into(), "not a uda".into()),
-                ("status".into(), "not a uda".into()),
-                ("wait".into(), "not a uda".into()),
-                ("start".into(), "not a uda".into()),
-                ("tag_abc".into(), "not a uda".into()),
-                ("dep_1234".into(), "not a uda".into()),
-                ("annotation_1234".into(), "not a uda".into()),
-                ("githubid".into(), "123".into()),
-                ("jira.url".into(), "h://x".into()),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    ("description".into(), "not a uda".into()),
+                    ("modified".into(), "not a uda".into()),
+                    ("start".into(), "not a uda".into()),
+                    ("status".into(), "not a uda".into()),
+                    ("wait".into(), "not a uda".into()),
+                    ("start".into(), "not a uda".into()),
+                    ("tag_abc".into(), "not a uda".into()),
+                    ("dep_1234".into(), "not a uda".into()),
+                    ("annotation_1234".into(), "not a uda".into()),
+                    ("githubid".into(), "123".into()),
+                    ("jira.url".into(), "h://x".into()),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -1074,14 +1165,16 @@ mod test {
     #[test]
     fn test_get_uda() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                ("description".into(), "not a uda".into()),
-                ("githubid".into(), "123".into()),
-                ("jira.url".into(), "h://x".into()),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    ("description".into(), "not a uda".into()),
+                    ("githubid".into(), "123".into()),
+                    ("jira.url".into(), "h://x".into()),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -1094,15 +1187,17 @@ mod test {
     #[test]
     fn test_get_legacy_uda() {
         let task = Task::new(
-            Uuid::new_v4(),
-            vec![
-                ("description".into(), "not a uda".into()),
-                ("dep_1234".into(), "not a uda".into()),
-                ("githubid".into(), "123".into()),
-                ("jira.url".into(), "h://x".into()),
-            ]
-            .drain(..)
-            .collect(),
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    ("description".into(), "not a uda".into()),
+                    ("dep_1234".into(), "not a uda".into()),
+                    ("githubid".into(), "123".into()),
+                    ("jira.url".into(), "h://x".into()),
+                ]
+                .drain(..)
+                .collect(),
+            ),
             dm(),
         );
 
@@ -1115,117 +1210,156 @@ mod test {
 
     #[test]
     fn test_set_uda() {
-        with_mut_task(|mut task| {
-            task.set_uda("jira", "url", "h://y").unwrap();
-            let udas: Vec<_> = task.get_udas().collect();
-            assert_eq!(udas, vec![(("jira", "url"), "h://y")]);
-
-            task.set_uda("", "jiraid", "TW-1234").unwrap();
-
-            let mut udas: Vec<_> = task.get_udas().collect();
-            udas.sort_unstable();
-            assert_eq!(
-                udas,
-                vec![(("", "jiraid"), "TW-1234"), (("jira", "url"), "h://y")]
-            );
-        })
+        with_mut_task(
+            |task, ops| {
+                task.set_uda("jira", "url", "h://y", ops).unwrap();
+                task.set_uda("", "jiraid", "TW-1234", ops).unwrap();
+            },
+            |task| {
+                let mut udas: Vec<_> = task.get_udas().collect();
+                udas.sort_unstable();
+                assert_eq!(
+                    udas,
+                    vec![(("", "jiraid"), "TW-1234"), (("jira", "url"), "h://y")]
+                );
+            },
+        )
     }
 
     #[test]
     fn test_set_legacy_uda() {
-        with_mut_task(|mut task| {
-            task.set_legacy_uda("jira.url", "h://y").unwrap();
-            let udas: Vec<_> = task.get_udas().collect();
-            assert_eq!(udas, vec![(("jira", "url"), "h://y")]);
-
-            task.set_legacy_uda("jiraid", "TW-1234").unwrap();
-
-            let mut udas: Vec<_> = task.get_udas().collect();
-            udas.sort_unstable();
-            assert_eq!(
-                udas,
-                vec![(("", "jiraid"), "TW-1234"), (("jira", "url"), "h://y")]
-            );
-        })
+        with_mut_task(
+            |task, ops| {
+                task.set_legacy_uda("jira.url", "h://y", ops).unwrap();
+                task.set_legacy_uda("jiraid", "TW-1234", ops).unwrap();
+            },
+            |task| {
+                let mut udas: Vec<_> = task.get_udas().collect();
+                udas.sort_unstable();
+                assert_eq!(
+                    udas,
+                    vec![(("", "jiraid"), "TW-1234"), (("jira", "url"), "h://y")]
+                );
+            },
+        )
     }
 
     #[test]
     fn test_set_uda_invalid() {
-        with_mut_task(|mut task| {
-            assert!(task.set_uda("", "modified", "123").is_err());
-            assert!(task.set_uda("", "tag_abc", "123").is_err());
-            assert!(task.set_legacy_uda("modified", "123").is_err());
-            assert!(task.set_legacy_uda("tag_abc", "123").is_err());
-        })
+        with_mut_task(
+            |task, ops| {
+                assert!(task.set_uda("", "modified", "123", ops).is_err());
+                assert!(task.set_uda("", "tag_abc", "123", ops).is_err());
+                assert!(task.set_legacy_uda("modified", "123", ops).is_err());
+                assert!(task.set_legacy_uda("tag_abc", "123", ops).is_err());
+            },
+            |_task| {},
+        )
     }
 
     #[test]
     fn test_remove_uda() {
-        with_mut_task(|mut task| {
-            task.set_value("github.id", Some("123".into())).unwrap();
-            task.remove_uda("github", "id").unwrap();
-
-            let udas: Vec<_> = task.get_udas().collect();
-            assert_eq!(udas, vec![]);
-        })
+        with_mut_task(
+            |task, ops| {
+                task.update("github.id", Some("123".into()), ops);
+                task.remove_uda("github", "id", ops).unwrap();
+            },
+            |task| {
+                let udas: Vec<_> = task.get_udas().collect();
+                assert_eq!(udas, vec![]);
+            },
+        )
     }
 
     #[test]
     fn test_remove_legacy_uda() {
-        with_mut_task(|mut task| {
-            task.set_value("githubid", Some("123".into())).unwrap();
-            task.remove_legacy_uda("githubid").unwrap();
-
-            let udas: Vec<_> = task.get_udas().collect();
-            assert_eq!(udas, vec![]);
-        })
+        with_mut_task(
+            |task, ops| {
+                task.update("githubid", Some("123".into()), ops);
+                task.remove_legacy_uda("githubid", ops).unwrap();
+            },
+            |task| {
+                let udas: Vec<_> = task.get_udas().collect();
+                assert_eq!(udas, vec![]);
+            },
+        )
     }
 
     #[test]
     fn test_remove_uda_invalid() {
-        with_mut_task(|mut task| {
-            assert!(task.remove_uda("", "modified").is_err());
-            assert!(task.remove_uda("", "tag_abc").is_err());
-            assert!(task.remove_legacy_uda("modified").is_err());
-            assert!(task.remove_legacy_uda("tag_abc").is_err());
-        })
+        with_mut_task(
+            |task, ops| {
+                assert!(task.remove_uda("", "modified", ops).is_err());
+                assert!(task.remove_uda("", "tag_abc", ops).is_err());
+                assert!(task.remove_legacy_uda("modified", ops).is_err());
+                assert!(task.remove_legacy_uda("tag_abc", ops).is_err());
+            },
+            |_task| {},
+        )
     }
 
     #[test]
-    fn test_dependencies() {
-        with_mut_task(|mut task| {
-            assert_eq!(task.get_dependencies().collect::<Vec<_>>(), vec![]);
-            let dep1 = Uuid::new_v4();
-            let dep2 = Uuid::new_v4();
+    fn test_dependencies_one() {
+        let dep1 = Uuid::new_v4();
+        with_mut_task(
+            |task, ops| {
+                task.add_dependency(dep1, ops).unwrap();
+            },
+            |task| {
+                let deps = task.get_dependencies().collect::<Vec<_>>();
+                assert!(deps.contains(&dep1));
+            },
+        )
+    }
 
-            task.add_dependency(dep1).unwrap();
-            assert_eq!(task.get_dependencies().collect::<Vec<_>>(), vec![dep1]);
+    #[test]
+    fn test_dependencies_two() {
+        let dep1 = Uuid::new_v4();
+        let dep2 = Uuid::new_v4();
+        with_mut_task(
+            |task, ops| {
+                task.add_dependency(dep1, ops).unwrap();
+                task.add_dependency(dep2, ops).unwrap();
+            },
+            |task| {
+                let deps = task.get_dependencies().collect::<Vec<_>>();
+                assert!(deps.contains(&dep1));
+                assert!(deps.contains(&dep2));
+            },
+        )
+    }
 
-            task.add_dependency(dep1).unwrap(); // add twice is ok
-            task.add_dependency(dep2).unwrap();
-            let deps = task.get_dependencies().collect::<Vec<_>>();
-            assert!(deps.contains(&dep1));
-            assert!(deps.contains(&dep2));
-
-            task.remove_dependency(dep1).unwrap();
-            assert_eq!(task.get_dependencies().collect::<Vec<_>>(), vec![dep2]);
-        })
+    #[test]
+    fn test_dependencies_removed() {
+        let dep1 = Uuid::new_v4();
+        let dep2 = Uuid::new_v4();
+        with_mut_task(
+            |task, ops| {
+                task.add_dependency(dep1, ops).unwrap();
+                task.add_dependency(dep2, ops).unwrap();
+                task.remove_dependency(dep2, ops).unwrap();
+            },
+            |task| {
+                let deps = task.get_dependencies().collect::<Vec<_>>();
+                assert!(deps.contains(&dep1));
+            },
+        )
     }
 
     #[test]
     fn dependencies_tags() {
         let mut rep = Replica::new_inmemory();
-        let uuid1;
-        let uuid2;
-        {
-            let t1 = rep.new_task(Status::Pending, "1".into()).unwrap();
-            uuid1 = t1.get_uuid();
-            let t2 = rep.new_task(Status::Pending, "2".into()).unwrap();
-            uuid2 = t2.get_uuid();
+        let mut ops = Operations::new();
+        let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
 
-            let mut t1 = t1.into_mut(&mut rep);
-            t1.add_dependency(t2.get_uuid()).unwrap();
-        }
+        let mut t1 = rep.create_task(uuid1, &mut ops).unwrap();
+        t1.set_status(Status::Pending, &mut ops).unwrap();
+        t1.add_dependency(uuid2, &mut ops).unwrap();
+
+        let mut t2 = rep.create_task(uuid2, &mut ops).unwrap();
+        t2.set_status(Status::Pending, &mut ops).unwrap();
+
+        rep.commit_operations(ops).unwrap();
 
         // force-refresh depmap
         rep.dependency_map(true).unwrap();
@@ -1242,14 +1376,18 @@ mod test {
 
     #[test]
     fn set_value_modified() {
-        with_mut_task(|mut task| {
-            // set the modified property to something in the past..
-            task.set_value("modified", Some("1671820000".into()))
-                .unwrap();
-            // update another property
-            task.set_description("fun times".into()).unwrap();
-            // verify the modified property was not updated
-            assert_eq!(task.get_value("modified").unwrap(), "1671820000")
-        })
+        with_mut_task(
+            |task, ops| {
+                // set the modified property to something in the past..
+                task.set_value("modified", Some("1671820000".into()), ops)
+                    .unwrap();
+                // update another property
+                task.set_description("fun times".into(), ops).unwrap();
+            },
+            |task| {
+                // verify the modified property was not updated
+                assert_eq!(task.get_value("modified").unwrap(), "1671820000")
+            },
+        )
     }
 }

@@ -116,23 +116,6 @@ impl TaskDb {
         working_set::rebuild(self.storage.txn()?.as_mut(), in_working_set, renumber)
     }
 
-    /// Add the given uuid to the working set and return its index; if it is already in the working
-    /// set, its index is returned.  This does *not* renumber any existing tasks.
-    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
-        let mut txn = self.storage.txn()?;
-        // search for an existing entry for this task..
-        for (i, elt) in txn.get_working_set()?.iter().enumerate() {
-            if *elt == Some(uuid) {
-                // (note that this drops the transaction with no changes made)
-                return Ok(i);
-            }
-        }
-        // and if not found, add one
-        let i = txn.add_to_working_set(uuid)?;
-        txn.commit()?;
-        Ok(i)
-    }
-
     /// Sync to the given server, pulling remote changes and pushing local changes.
     ///
     /// If `avoid_snapshots` is true, the sync operations produces a snapshot only when the server
@@ -264,7 +247,11 @@ mod tests {
         let [uuid1, uuid2, uuid3] = uuids;
 
         // uuid1 already exists in the working set.
-        db.add_to_working_set(uuid1)?;
+        {
+            let mut txn = db.storage.txn()?;
+            txn.add_to_working_set(uuid1)?;
+            txn.commit()?;
+        }
 
         let mut ops = Operations::new();
         ops.add(Operation::Create { uuid: uuid1 });
