@@ -262,6 +262,11 @@ impl Replica {
         };
         self.taskdb
             .commit_operations(operations, add_to_working_set)?;
+
+        // The cached dependency map may now be invalid, do not retain it. Any existing Task values
+        // will continue to use the old map.
+        self.depmap = None;
+
         Ok(())
     }
 
@@ -527,6 +532,11 @@ mod tests {
         // This mostly tests the working-set callback, as `TaskDB::commit_operations` has
         // tests for the remaining functionality.
         let mut rep = Replica::new_inmemory();
+
+        // Generate the depmap so later assertions can verify it is reset.
+        rep.dependency_map(true).unwrap();
+        assert!(rep.depmap.is_some());
+
         let t = rep.new_task(Status::Pending, "a task".into())?;
         let uuid1 = t.get_uuid();
 
@@ -631,6 +641,9 @@ mod tests {
         assert!(ws.by_uuid(uuid10).is_some());
         assert!(ws.by_uuid(uuid11).is_none());
         assert!(ws.by_uuid(uuid12).is_none());
+
+        // Cached dependency map was reset.
+        assert!(rep.depmap.is_none());
 
         Ok(())
     }
