@@ -329,15 +329,31 @@ impl Replica {
         Ok(())
     }
 
-    /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
-    /// local operations to undo.
-    pub fn get_undo_ops(&mut self) -> Result<Vec<Operation>> {
-        self.taskdb.get_undo_ops()
+    /// Return the operations back to and including the last undo point, or since the last sync if
+    /// no undo point is found.
+    ///
+    /// The operations are returned in the order they were applied. Use
+    /// [`commit_reversed_operations`] to "undo" them.
+    pub fn get_undo_operations(&mut self) -> Result<Operations> {
+        self.taskdb.get_undo_operations()
     }
 
-    /// Undo local operations in storage, returning a boolean indicating success.
-    pub fn commit_undo_ops(&mut self, undo_ops: Vec<Operation>) -> Result<bool> {
-        self.taskdb.commit_undo_ops(undo_ops)
+    /// Commit the reverse of the given operations, beginning with the last operation in the given
+    /// operations and proceeding to the first.
+    ///
+    /// This method only supports reversing operations if they precisely match local operations
+    /// that have not yet been synchronized, and will return `false` if this is not the case.
+    pub fn commit_reversed_operations(&mut self, operations: Operations) -> Result<bool> {
+        if !self.taskdb.commit_reversed_operations(operations)? {
+            return Ok(false);
+        }
+
+        // Both the dependency map and the working set are potentially now invalid.
+        self.depmap = None;
+        self.rebuild_working_set(false)
+            .context("Failed to rebuild working set after committing reversed operations")?;
+
+        Ok(true)
     }
 
     /// Rebuild this replica's working set, based on whether tasks are pending or not.  If
