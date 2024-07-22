@@ -41,7 +41,7 @@ jobs:
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features --no-deps
+          args: --all-features --no-deps -- -D warnings
           name: "Clippy Results"
 
   mdbook:
