@@ -343,8 +343,6 @@ impl Replica {
         Ok(())
     }
 
-    fn unused() { todo!() }
-
     /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
