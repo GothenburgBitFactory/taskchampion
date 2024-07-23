@@ -88,16 +88,10 @@ impl TaskDb {
     /// Aside from synchronization operations, this is the only way to modify the TaskDb.  In cases
     /// where an operation does not make sense, this function will do nothing and return an error
     /// (but leave the TaskDb in a consistent state).
+    #[cfg(test)]
     pub(crate) fn apply(&mut self, op: SyncOp) -> Result<TaskMap> {
         let mut txn = self.storage.txn()?;
         apply::apply_and_record(txn.as_mut(), op)
-    }
-
-    /// Add an UndoPoint operation to the list of replica operations.
-    pub(crate) fn add_undo_point(&mut self) -> Result<()> {
-        let mut txn = self.storage.txn()?;
-        txn.add_operation(Operation::UndoPoint)?;
-        txn.commit()
     }
 
     /// Get all tasks.
@@ -336,33 +330,31 @@ mod tests {
     }
 
     #[test]
-    fn test_add_undo_point() {
-        let mut db = TaskDb::new_inmemory();
-        db.add_undo_point().unwrap();
-        assert_eq!(db.operations(), vec![Operation::UndoPoint]);
-    }
-
-    #[test]
     fn test_num_operations() {
         let mut db = TaskDb::new_inmemory();
-        db.apply(SyncOp::Create {
+        let mut ops = Operations::new();
+        ops.add(Operation::Create {
             uuid: Uuid::new_v4(),
-        })
-        .unwrap();
-        db.add_undo_point().unwrap();
-        db.apply(SyncOp::Create {
+        });
+        ops.add(Operation::UndoPoint);
+        ops.add(Operation::Create {
             uuid: Uuid::new_v4(),
-        })
-        .unwrap();
+        });
+        db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_operations().unwrap(), 2);
     }
 
     #[test]
     fn test_num_undo_points() {
         let mut db = TaskDb::new_inmemory();
-        db.add_undo_point().unwrap();
+        let mut ops = Operations::new();
+        ops.add(Operation::UndoPoint);
+        db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_undo_points().unwrap(), 1);
-        db.add_undo_point().unwrap();
+
+        let mut ops = Operations::new();
+        ops.add(Operation::UndoPoint);
+        db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_undo_points().unwrap(), 2);
     }
 

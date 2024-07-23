@@ -71,8 +71,7 @@ impl Replica {
     {
         let value = value.map(|v| v.into());
         let property = property.into();
-        let mut ops = Operations::new();
-        self.add_undo_operation(false, &mut ops);
+        let mut ops = self.make_operations();
         let Some(mut task) = self.get_basic_task(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
@@ -203,8 +202,7 @@ impl Replica {
     /// interface, use [`BasicTask::create`](crate::BasicTask::create).
     pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
-        let mut ops = Operations::new();
-        self.add_undo_operation(false, &mut ops);
+        let mut ops = self.make_operations();
         let now = format!("{}", Utc::now().timestamp());
         let mut task = BasicTask::create(uuid, &mut ops);
         task.update("modified", Some(now.clone()), &mut ops);
@@ -223,8 +221,7 @@ impl Replica {
     /// does nothing and returns the existing task.
     #[deprecated(since = "0.7.0", note = "please use BasicTask instead")]
     pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
-        let mut ops = Operations::new();
-        self.add_undo_operation(false, &mut ops);
+        let mut ops = self.make_operations();
         BasicTask::create(uuid, &mut ops);
         self.commit_operations(ops)?;
         Ok(self
@@ -243,8 +240,7 @@ impl Replica {
         let Some(task) = self.get_basic_task(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
-        let mut ops = Operations::new();
-        self.add_undo_operation(false, &mut ops);
+        let mut ops = self.make_operations();
         task.delete(&mut ops);
         self.commit_operations(ops)?;
         trace!("task {} deleted", uuid);
@@ -373,10 +369,14 @@ impl Replica {
         Ok(())
     }
 
-    fn add_undo_operation(&mut self, force: bool, operations: &mut Operations) {
-        if force || !self.added_undo_point {
-            operations.add(Operation::UndoPoint);
+    /// Make a new `Operations`, with an undo operation if one has not already been added by
+    /// this `Replica` insance
+    fn make_operations(&mut self) -> Operations {
+        if self.added_undo_point {
+            Operations::new()
+        } else {
             self.added_undo_point = true;
+            Operations::new_with_undo_point()
         }
     }
 

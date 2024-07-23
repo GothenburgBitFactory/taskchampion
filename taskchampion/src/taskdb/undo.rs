@@ -106,7 +106,7 @@ pub fn commit_undo_ops(txn: &mut dyn StorageTxn, mut undo_ops: Vec<Operation>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{storage::taskmap_with, taskdb::TaskDb};
+    use crate::{storage::taskmap_with, taskdb::TaskDb, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
@@ -118,45 +118,56 @@ mod tests {
         let uuid2 = Uuid::new_v4();
         let timestamp = Utc::now();
 
+        let mut ops = Operations::new();
         // apply a few ops, capture the DB state, make an undo point, and then apply a few more
         // ops.
-        db.apply(SyncOp::Create { uuid: uuid1 })?;
-        db.apply(SyncOp::Update {
+        ops.add(Operation::Create { uuid: uuid1 });
+        ops.add(Operation::Update {
             uuid: uuid1,
             property: "prop".into(),
             value: Some("v1".into()),
+            old_value: None,
             timestamp,
-        })?;
-        db.apply(SyncOp::Create { uuid: uuid2 })?;
-        db.apply(SyncOp::Update {
+        });
+        ops.add(Operation::Create { uuid: uuid2 });
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "prop".into(),
             value: Some("v2".into()),
+            old_value: None,
             timestamp,
-        })?;
-        db.apply(SyncOp::Update {
+        });
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "prop2".into(),
             value: Some("v3".into()),
+            old_value: Some("v2".into()),
             timestamp,
-        })?;
+        });
+        db.commit_operations(ops, |_| false)?;
 
         let db_state = db.sorted_tasks();
 
-        db.add_undo_point()?;
-        db.apply(SyncOp::Delete { uuid: uuid1 })?;
-        db.apply(SyncOp::Update {
+        let mut ops = Operations::new_with_undo_point();
+        ops.add(Operation::Delete {
+            uuid: uuid1,
+            old_task: [("prop".to_string(), "v1".to_string())].into(),
+        });
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "prop".into(),
             value: None,
+            old_value: Some("v2".into()),
             timestamp,
-        })?;
-        db.apply(SyncOp::Update {
+        });
+        ops.add(Operation::Update {
             uuid: uuid2,
             property: "prop2".into(),
             value: Some("new-value".into()),
+            old_value: Some("v3".into()),
             timestamp,
-        })?;
+        });
+        db.commit_operations(ops, |_| false)?;
 
         assert_eq!(db.operations().len(), 9, "{:#?}", db.operations());
 
