@@ -5,21 +5,21 @@ use uuid::Uuid;
 /// A task.
 ///
 /// This type presents a low-level interface consisting only of a key/value map. Interpretation of
-/// fields is up to the user, and modifications both modify the [`BasicTask`] and create one or
+/// fields is up to the user, and modifications both modify the [`TaskData`] and create one or
 /// more [`Operation`](crate::Operation) values that can later be committed to the replica.
 ///
 /// This interface is intended for sophisticated applications like Taskwarrior which give meaning
 /// to key and values themselves. Use [`Task`](crate::Task) for a higher-level interface with
 /// methods to update status, set tags, and so on.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct BasicTask {
+pub struct TaskData {
     uuid: Uuid,
     // Temporarily pub(crate) to allow access from Task.
     pub(crate) taskmap: TaskMap,
 }
 
-impl BasicTask {
-    /// Constructor for a BasicTask representing an existing task.
+impl TaskData {
+    /// Constructor for a TaskData representing an existing task.
     pub(crate) fn new(uuid: Uuid, taskmap: TaskMap) -> Self {
         Self { uuid, taskmap }
     }
@@ -119,7 +119,7 @@ mod test {
     #[test]
     fn create() {
         let mut ops = Operations::new();
-        let t = BasicTask::create(TEST_UUID, &mut ops);
+        let t = TaskData::create(TEST_UUID, &mut ops);
         assert_eq!(t.uuid, TEST_UUID);
         assert_eq!(t.uuid(), TEST_UUID);
         assert_eq!(t.taskmap, TaskMap::new());
@@ -128,27 +128,27 @@ mod test {
 
     #[test]
     fn uuid() {
-        let t = BasicTask::new(TEST_UUID, TaskMap::new());
+        let t = TaskData::new(TEST_UUID, TaskMap::new());
         assert_eq!(t.uuid(), TEST_UUID);
     }
 
     #[test]
     fn get() {
-        let t = BasicTask::new(TEST_UUID, [("prop".to_string(), "val".to_string())].into());
+        let t = TaskData::new(TEST_UUID, [("prop".to_string(), "val".to_string())].into());
         assert_eq!(t.get("prop"), Some("val"));
         assert_eq!(t.get("nosuch"), None)
     }
 
     #[test]
     fn has() {
-        let t = BasicTask::new(TEST_UUID, [("prop".to_string(), "val".to_string())].into());
+        let t = TaskData::new(TEST_UUID, [("prop".to_string(), "val".to_string())].into());
         assert!(t.has("prop"));
         assert!(!t.has("nosuch"));
     }
 
     #[test]
     fn properties() {
-        let t = BasicTask::new(
+        let t = TaskData::new(
             TEST_UUID,
             [
                 ("prop1".to_string(), "val".to_string()),
@@ -163,7 +163,7 @@ mod test {
 
     #[test]
     fn iter() {
-        let t = BasicTask::new(
+        let t = TaskData::new(
             TEST_UUID,
             [
                 ("prop1".to_string(), "val1".to_string()),
@@ -179,7 +179,7 @@ mod test {
     #[test]
     fn update_new_prop() {
         let mut ops = Operations::new();
-        let mut t = BasicTask::new(TEST_UUID, TaskMap::new());
+        let mut t = TaskData::new(TEST_UUID, TaskMap::new());
         t.update("prop1", Some("val1".into()), &mut ops);
         let now = Utc::now();
         ops.set_all_timestamps(now);
@@ -199,7 +199,7 @@ mod test {
     #[test]
     fn update_existing_prop() {
         let mut ops = Operations::new();
-        let mut t = BasicTask::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
+        let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.update("prop1", Some("new".into()), &mut ops);
         let now = Utc::now();
         ops.set_all_timestamps(now);
@@ -219,7 +219,7 @@ mod test {
     #[test]
     fn update_remove_prop() {
         let mut ops = Operations::new();
-        let mut t = BasicTask::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
+        let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.update("prop1", None, &mut ops);
         let now = Utc::now();
         ops.set_all_timestamps(now);
@@ -239,7 +239,7 @@ mod test {
     #[test]
     fn delete() {
         let mut ops = Operations::new();
-        let t = BasicTask::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
+        let t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.delete(&mut ops);
         assert_eq!(
             ops,

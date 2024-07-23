@@ -4,7 +4,7 @@ use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::replica::Replica;
 use crate::storage::TaskMap;
-use crate::{BasicTask, Operations};
+use crate::{TaskData, Operations};
 use chrono::prelude::*;
 use log::trace;
 use std::convert::AsRef;
@@ -35,14 +35,14 @@ use uuid::Uuid;
 /// returns a TaskMut which can be used to modify the task.
 #[derive(Debug, Clone)]
 pub struct Task {
-    task: BasicTask,
+    data: TaskData,
     depmap: Rc<DependencyMap>,
 }
 
 impl PartialEq for Task {
     fn eq(&self, other: &Task) -> bool {
-        // compare only the basic task; depmap is just present for reference
-        self.task == other.task
+        // compare only the task data; depmap is just present for reference
+        self.data == other.data
     }
 }
 
@@ -99,17 +99,17 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
 impl Task {
     pub(crate) fn new(uuid: Uuid, taskmap: TaskMap, depmap: Rc<DependencyMap>) -> Task {
         Task {
-            task: BasicTask::new(uuid, taskmap),
+            data: TaskData::new(uuid, taskmap),
             depmap,
         }
     }
 
     pub fn get_uuid(&self) -> Uuid {
-        self.task.uuid()
+        self.data.uuid()
     }
 
     pub fn get_taskmap(&self) -> &TaskMap {
-        &self.task.taskmap
+        &self.data.taskmap
     }
 
     /// Prepare to mutate this task, requiring a mutable Replica
@@ -123,14 +123,14 @@ impl Task {
     }
 
     pub fn get_status(&self) -> Status {
-        self.task
+        self.data
             .get(Prop::Status.as_ref())
             .map(Status::from_taskmap)
             .unwrap_or(Status::Pending)
     }
 
     pub fn get_description(&self) -> &str {
-        self.task.get(Prop::Description.as_ref()).unwrap_or("")
+        self.data.get(Prop::Description.as_ref()).unwrap_or("")
     }
 
     pub fn get_entry(&self) -> Option<Timestamp> {
@@ -138,7 +138,7 @@ impl Task {
     }
 
     pub fn get_priority(&self) -> &str {
-        self.task.get(Prop::Priority.as_ref()).unwrap_or("")
+        self.data.get(Prop::Priority.as_ref()).unwrap_or("")
     }
 
     /// Get the wait time.  If this value is set, it will be returned, even
@@ -158,17 +158,17 @@ impl Task {
     /// Determine whether this task is active -- that is, that it has been started
     /// and not stopped.
     pub fn is_active(&self) -> bool {
-        self.task.has(Prop::Start.as_ref())
+        self.data.has(Prop::Start.as_ref())
     }
 
     /// Determine whether this task is blocked -- that is, has at least one unresolved dependency.
     pub fn is_blocked(&self) -> bool {
-        self.depmap.dependencies(self.task.uuid()).next().is_some()
+        self.depmap.dependencies(self.data.uuid()).next().is_some()
     }
 
     /// Determine whether this task is blocking -- that is, has at least one unresolved dependent.
     pub fn is_blocking(&self) -> bool {
-        self.depmap.dependents(self.task.uuid()).next().is_some()
+        self.depmap.dependents(self.data.uuid()).next().is_some()
     }
 
     /// Determine whether a given synthetic tag is present on this task.  All other
@@ -189,7 +189,7 @@ impl Task {
     /// Check if this task has the given tag
     pub fn has_tag(&self, tag: &Tag) -> bool {
         match tag.inner() {
-            TagInner::User(s) => self.task.has(format!("tag_{}", s)),
+            TagInner::User(s) => self.data.has(format!("tag_{}", s)),
             TagInner::Synthetic(st) => self.has_synthetic_tag(st),
         }
     }
@@ -198,7 +198,7 @@ impl Task {
     pub fn get_tags(&self) -> impl Iterator<Item = Tag> + '_ {
         use strum::IntoEnumIterator;
 
-        self.task
+        self.data
             .properties()
             .filter_map(|k| {
                 if let Some(tag) = k.strip_prefix("tag_") {
@@ -218,7 +218,7 @@ impl Task {
 
     /// Iterate over the task's annotations, in arbitrary order.
     pub fn get_annotations(&self) -> impl Iterator<Item = Annotation> + '_ {
-        self.task.iter().filter_map(|(k, v)| {
+        self.data.iter().filter_map(|(k, v)| {
             if let Some(ts) = k.strip_prefix("annotation_") {
                 if let Ok(ts) = ts.parse::<i64>() {
                     return Some(Annotation {
@@ -243,7 +243,7 @@ impl Task {
     /// on the first `.` character.  Legacy keys that do not contain `.` are represented as `("",
     /// key)`.
     pub fn get_udas(&self) -> impl Iterator<Item = ((&str, &str), &str)> + '_ {
-        self.task
+        self.data
             .iter()
             .filter(|(k, _)| !Task::is_known_key(k))
             .map(|(k, v)| (uda_string_to_tuple(k), v.as_ref()))
@@ -255,12 +255,12 @@ impl Task {
         if Task::is_known_key(key) {
             return None;
         }
-        self.task.get(key)
+        self.data.get(key)
     }
 
     /// Like `get_udas`, but returning each UDA key as a single string.
     pub fn get_legacy_udas(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
-        self.task
+        self.data
             .iter()
             .filter(|(p, _)| !Task::is_known_key(p))
             .map(|(p, v)| (p.as_ref(), v.as_ref()))
@@ -281,7 +281,7 @@ impl Task {
     /// This includes all dependencies, regardless of their status.  In fact, it may include
     /// dependencies that do not exist.
     pub fn get_dependencies(&self) -> impl Iterator<Item = Uuid> + '_ {
-        self.task.properties().filter_map(|p| {
+        self.data.properties().filter_map(|p| {
             if let Some(dep_str) = p.strip_prefix("dep_") {
                 if let Ok(u) = Uuid::parse_str(dep_str) {
                     return Some(u);
@@ -295,7 +295,7 @@ impl Task {
     /// Get task's property value by name.
     pub fn get_value<S: Into<String>>(&self, property: S) -> Option<&str> {
         let property = property.into();
-        self.task.get(property)
+        self.data.get(property)
     }
 
     // -- utility functions
@@ -308,7 +308,7 @@ impl Task {
     }
 
     fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
-        if let Some(ts) = self.task.get(property) {
+        if let Some(ts) = self.data.get(property) {
             if let Ok(ts) = ts.parse() {
                 return Some(utc_timestamp(ts));
             }
@@ -330,7 +330,7 @@ impl<'r> TaskMut<'r> {
         match status {
             Status::Pending | Status::Recurring => {
                 // clear "end" when a task becomes "pending" or "recurring"
-                if self.task.task.has(Prop::End.as_ref()) {
+                if self.task.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), None)?;
                 }
                 // ..and add to working set
@@ -338,7 +338,7 @@ impl<'r> TaskMut<'r> {
             }
             Status::Completed | Status::Deleted => {
                 // set "end" when a task is deleted or completed
-                if !self.task.task.has(Prop::End.as_ref()) {
+                if !self.task.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()))?;
                 }
             }
@@ -389,7 +389,7 @@ impl<'r> TaskMut<'r> {
                 now
             );
             self.task
-                .task
+                .data
                 .update(Prop::Modified.as_ref(), Some(now), &mut ops);
             self.updated_modified = true;
         }
@@ -406,7 +406,7 @@ impl<'r> TaskMut<'r> {
             trace!("task {}: remove property {}", self.get_uuid(), property);
         }
 
-        self.task.task.update(property, value, &mut ops);
+        self.task.data.update(property, value, &mut ops);
         self.replica.commit_operations(ops)?;
         Ok(())
     }
@@ -545,7 +545,7 @@ impl<'r> TaskMut<'r> {
     #[cfg(test)]
     fn reload(&mut self) -> Result<()> {
         let uuid = self.get_uuid();
-        self.task.task = self.replica.get_basic_task(uuid)?.unwrap();
+        self.task.data = self.replica.get_task_data(uuid)?.unwrap();
         Ok(())
     }
 }
@@ -781,9 +781,9 @@ mod test {
         with_mut_task(|mut task| {
             task.set_due(Some(test_time)).unwrap();
             task.reload().unwrap();
-            assert!(task.task.task.has("due"));
+            assert!(task.task.data.has("due"));
             task.set_due(None).unwrap();
-            assert!(!task.task.task.has("due"));
+            assert!(!task.task.data.has("due"));
         });
     }
 
@@ -840,16 +840,16 @@ mod test {
             })
             .unwrap();
             let k = "annotation_1635301900";
-            assert_eq!(task.task.task.get(k).unwrap(), "right message".to_owned());
+            assert_eq!(task.task.data.get(k).unwrap(), "right message".to_owned());
             task.reload().unwrap();
-            assert_eq!(task.task.task.get(k).unwrap(), "right message".to_owned());
+            assert_eq!(task.task.data.get(k).unwrap(), "right message".to_owned());
             // adding with same time overwrites..
             task.add_annotation(Annotation {
                 entry: Utc.timestamp_opt(1635301900, 0).unwrap(),
                 description: "right message 2".into(),
             })
             .unwrap();
-            assert_eq!(task.task.task.get(k).unwrap(), "right message 2".to_owned());
+            assert_eq!(task.task.data.get(k).unwrap(), "right message 2".to_owned());
         });
     }
 
@@ -894,7 +894,7 @@ mod test {
 
             task.set_status(Status::Pending).unwrap();
             assert_eq!(task.get_status(), Status::Pending);
-            assert!(!task.task.task.has("end"));
+            assert!(!task.task.data.has("end"));
             assert!(task.has_tag(&stag(SyntheticTag::Pending)));
             assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
         });
@@ -907,7 +907,7 @@ mod test {
 
             task.set_status(Status::Recurring).unwrap();
             assert_eq!(task.get_status(), Status::Recurring);
-            assert!(!task.task.task.has("end"));
+            assert!(!task.task.data.has("end"));
             assert!(!task.has_tag(&stag(SyntheticTag::Pending))); // recurring is not +PENDING
             assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
         });
@@ -918,7 +918,7 @@ mod test {
         with_mut_task(|mut task| {
             task.set_status(Status::Completed).unwrap();
             assert_eq!(task.get_status(), Status::Completed);
-            assert!(task.task.task.has("end"));
+            assert!(task.task.data.has("end"));
             assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
             assert!(task.has_tag(&stag(SyntheticTag::Completed)));
         });
@@ -929,7 +929,7 @@ mod test {
         with_mut_task(|mut task| {
             task.set_status(Status::Deleted).unwrap();
             assert_eq!(task.get_status(), Status::Deleted);
-            assert!(task.task.task.has("end"));
+            assert!(task.task.data.has("end"));
             assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
             assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
         });
@@ -950,17 +950,17 @@ mod test {
     fn test_start() {
         with_mut_task(|mut task| {
             task.start().unwrap();
-            assert!(task.task.task.has("start"));
+            assert!(task.task.data.has("start"));
 
             task.reload().unwrap();
-            assert!(task.task.task.has("start"));
+            assert!(task.task.data.has("start"));
 
             // second start doesn't change anything..
             task.start().unwrap();
-            assert!(task.task.task.has("start"));
+            assert!(task.task.data.has("start"));
 
             task.reload().unwrap();
-            assert!(task.task.task.has("start"));
+            assert!(task.task.data.has("start"));
         });
     }
 
@@ -969,17 +969,17 @@ mod test {
         with_mut_task(|mut task| {
             task.start().unwrap();
             task.stop().unwrap();
-            assert!(!task.task.task.has("start"));
+            assert!(!task.task.data.has("start"));
 
             task.reload().unwrap();
-            assert!(!task.task.task.has("start"));
+            assert!(!task.task.data.has("start"));
 
             // redundant call does nothing..
             task.stop().unwrap();
-            assert!(!task.task.task.has("start"));
+            assert!(!task.task.data.has("start"));
 
             task.reload().unwrap();
-            assert!(!task.task.task.has("start"));
+            assert!(!task.task.data.has("start"));
         });
     }
 
@@ -988,7 +988,7 @@ mod test {
         with_mut_task(|mut task| {
             task.done().unwrap();
             assert_eq!(task.get_status(), Status::Completed);
-            assert!(task.task.task.has("end"));
+            assert!(task.task.data.has("end"));
             assert!(task.has_tag(&stag(SyntheticTag::Completed)));
 
             // redundant call does nothing..
@@ -1003,7 +1003,7 @@ mod test {
         with_mut_task(|mut task| {
             task.delete().unwrap();
             assert_eq!(task.get_status(), Status::Deleted);
-            assert!(task.task.task.has("end"));
+            assert!(task.task.data.has("end"));
             assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
 
             // redundant call does nothing..
@@ -1017,12 +1017,12 @@ mod test {
     fn test_add_tags() {
         with_mut_task(|mut task| {
             task.add_tag(&utag("abc")).unwrap();
-            assert!(task.task.task.has("tag_abc"));
+            assert!(task.task.data.has("tag_abc"));
             task.reload().unwrap();
-            assert!(task.task.task.has("tag_abc"));
+            assert!(task.task.data.has("tag_abc"));
             // redundant add has no effect..
             task.add_tag(&utag("abc")).unwrap();
-            assert!(task.task.task.has("tag_abc"));
+            assert!(task.task.data.has("tag_abc"));
         });
     }
 
@@ -1031,13 +1031,13 @@ mod test {
         with_mut_task(|mut task| {
             task.add_tag(&utag("abc")).unwrap();
             task.reload().unwrap();
-            assert!(task.task.task.has("tag_abc"));
+            assert!(task.task.data.has("tag_abc"));
 
             task.remove_tag(&utag("abc")).unwrap();
-            assert!(!task.task.task.has("tag_abc"));
+            assert!(!task.task.data.has("tag_abc"));
             // redundant remove has no effect..
             task.remove_tag(&utag("abc")).unwrap();
-            assert!(!task.task.task.has("tag_abc"));
+            assert!(!task.task.data.has("tag_abc"));
         });
     }
 

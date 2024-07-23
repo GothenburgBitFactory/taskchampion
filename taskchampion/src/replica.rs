@@ -6,7 +6,7 @@ use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
-use crate::{BasicTask, Error};
+use crate::{TaskData, Error};
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use log::trace;
@@ -58,7 +58,7 @@ impl Replica {
     /// Update an existing task.  If the value is Some, the property is added or updated.  If the
     /// value is None, the property is deleted.  It is not an error to delete a nonexistent
     /// property.
-    #[deprecated(since = "0.7.0", note = "please use BasicTask instead")]
+    #[deprecated(since = "0.7.0", note = "please use TaskData instead")]
     pub fn update_task<S1, S2>(
         &mut self,
         uuid: Uuid,
@@ -72,7 +72,7 @@ impl Replica {
         let value = value.map(|v| v.into());
         let property = property.into();
         let mut ops = self.make_operations();
-        let Some(mut task) = self.get_basic_task(uuid)? else {
+        let Some(mut task) = self.get_task_data(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
         task.update(property, value, &mut ops);
@@ -188,23 +188,23 @@ impl Replica {
             .map(move |tm| Task::new(uuid, tm, depmap)))
     }
 
-    /// get an existing task by its UUID, as a [`BasicTask`](crate::BasicTask).
-    pub fn get_basic_task(&mut self, uuid: Uuid) -> Result<Option<BasicTask>> {
+    /// get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
+    pub fn get_task_data(&mut self, uuid: Uuid) -> Result<Option<TaskData>> {
         Ok(self
             .taskdb
             .get_task(uuid)?
-            .map(move |tm| BasicTask::new(uuid, tm)))
+            .map(move |tm| TaskData::new(uuid, tm)))
     }
 
     /// Create a new task.
     ///
     /// This uses the high-level task interface. To create a task with the low-level
-    /// interface, use [`BasicTask::create`](crate::BasicTask::create).
+    /// interface, use [`TaskData::create`](crate::TaskData::create).
     pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
         let mut ops = self.make_operations();
         let now = format!("{}", Utc::now().timestamp());
-        let mut task = BasicTask::create(uuid, &mut ops);
+        let mut task = TaskData::create(uuid, &mut ops);
         task.update("modified", Some(now.clone()), &mut ops);
         task.update("description", Some(description), &mut ops);
         task.update("status", Some(status.to_taskmap().to_string()), &mut ops);
@@ -219,10 +219,10 @@ impl Replica {
     /// Create a new, empty task with the given UUID.  This is useful for importing tasks, but
     /// otherwise should be avoided in favor of `new_task`.  If the task already exists, this
     /// does nothing and returns the existing task.
-    #[deprecated(since = "0.7.0", note = "please use BasicTask instead")]
+    #[deprecated(since = "0.7.0", note = "please use TaskData instead")]
     pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
         let mut ops = self.make_operations();
-        BasicTask::create(uuid, &mut ops);
+        TaskData::create(uuid, &mut ops);
         self.commit_operations(ops)?;
         Ok(self
             .get_task(uuid)?
@@ -237,7 +237,7 @@ impl Replica {
     /// after both replicas have fully synced, the resulting task will only have a `description`
     /// property.
     pub fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
-        let Some(task) = self.get_basic_task(uuid)? else {
+        let Some(task) = self.get_task_data(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
         let mut ops = self.make_operations();
@@ -700,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn get_basic_task() {
+    fn get_task_data() {
         let mut rep = Replica::new_inmemory();
 
         let t = rep
@@ -708,11 +708,11 @@ mod tests {
             .unwrap();
         let uuid = t.get_uuid();
 
-        let t = rep.get_basic_task(uuid).unwrap().unwrap();
+        let t = rep.get_task_data(uuid).unwrap().unwrap();
         assert_eq!(t.uuid(), uuid);
         assert_eq!(t.get("description"), Some("another task"));
 
-        assert!(rep.get_basic_task(Uuid::new_v4()).unwrap().is_none());
+        assert!(rep.get_task_data(Uuid::new_v4()).unwrap().is_none());
     }
 
     #[test]
