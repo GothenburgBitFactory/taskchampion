@@ -709,7 +709,7 @@ mod tests {
         let uuid = t.get_uuid();
 
         let t = rep.get_task_data(uuid).unwrap().unwrap();
-        assert_eq!(t.uuid(), uuid);
+        assert_eq!(t.get_uuid(), uuid);
         assert_eq!(t.get("description"), Some("another task"));
 
         assert!(rep.get_task_data(Uuid::new_v4()).unwrap().is_none());

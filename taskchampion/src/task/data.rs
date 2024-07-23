@@ -34,7 +34,7 @@ impl TaskData {
     }
 
     /// Get this task's UUID.
-    pub fn uuid(&self) -> Uuid {
+    pub fn get_uuid(&self) -> Uuid {
         self.uuid
     }
 
@@ -121,7 +121,7 @@ mod test {
         let mut ops = Operations::new();
         let t = TaskData::create(TEST_UUID, &mut ops);
         assert_eq!(t.uuid, TEST_UUID);
-        assert_eq!(t.uuid(), TEST_UUID);
+        assert_eq!(t.get_uuid(), TEST_UUID);
         assert_eq!(t.taskmap, TaskMap::new());
         assert_eq!(ops, make_ops(&[Operation::Create { uuid: TEST_UUID }]));
     }
@@ -129,7 +129,7 @@ mod test {
     #[test]
     fn uuid() {
         let t = TaskData::new(TEST_UUID, TaskMap::new());
-        assert_eq!(t.uuid(), TEST_UUID);
+        assert_eq!(t.get_uuid(), TEST_UUID);
     }
 
     #[test]

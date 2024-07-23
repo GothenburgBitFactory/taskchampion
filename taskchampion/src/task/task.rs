@@ -105,7 +105,7 @@ impl Task {
     }
 
     pub fn get_uuid(&self) -> Uuid {
-        self.data.uuid()
+        self.data.get_uuid()
     }
 
     pub fn get_taskmap(&self) -> &TaskMap {
@@ -163,12 +163,12 @@ impl Task {
 
     /// Determine whether this task is blocked -- that is, has at least one unresolved dependency.
     pub fn is_blocked(&self) -> bool {
-        self.depmap.dependencies(self.data.uuid()).next().is_some()
+        self.depmap.dependencies(self.get_uuid()).next().is_some()
     }
 
     /// Determine whether this task is blocking -- that is, has at least one unresolved dependent.
     pub fn is_blocking(&self) -> bool {
-        self.depmap.dependents(self.data.uuid()).next().is_some()
+        self.depmap.dependents(self.get_uuid()).next().is_some()
     }
 
     /// Determine whether a given synthetic tag is present on this task.  All other
