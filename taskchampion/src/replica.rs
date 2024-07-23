@@ -6,7 +6,7 @@ use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
-use crate::{TaskData, Error};
+use crate::{Error, TaskData};
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use log::trace;

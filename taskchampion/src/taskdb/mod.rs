@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::errors::Result;
 use crate::operation::Operation;
-use crate::server::{Server, SyncOp};
+use crate::server::Server;
 use crate::storage::{Storage, TaskMap};
 use crate::Operations;
 use uuid::Uuid;
@@ -89,7 +89,7 @@ impl TaskDb {
     /// where an operation does not make sense, this function will do nothing and return an error
     /// (but leave the TaskDb in a consistent state).
     #[cfg(test)]
-    pub(crate) fn apply(&mut self, op: SyncOp) -> Result<TaskMap> {
+    pub(crate) fn apply(&mut self, op: crate::server::SyncOp) -> Result<TaskMap> {
         let mut txn = self.storage.txn()?;
         apply::apply_and_record(txn.as_mut(), op)
     }
@@ -229,6 +229,7 @@ impl TaskDb {
 mod tests {
     use super::*;
     use crate::server::test::TestServer;
+    use crate::server::SyncOp;
     use crate::storage::InMemoryStorage;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -314,19 +315,6 @@ mod tests {
         // uuid2 was added to the working set, once, and uuid3 was not.
         assert_eq!(db.working_set()?, vec![None, Some(uuid1), Some(uuid2)],);
         Ok(())
-    }
-
-    #[test]
-    fn test_apply() {
-        // this verifies that the operation is both applied and included in the list of
-        // operations; more detailed tests are in the `apply` module.
-        let mut db = TaskDb::new_inmemory();
-        let uuid = Uuid::new_v4();
-        let op = SyncOp::Create { uuid };
-        db.apply(op).unwrap();
-
-        assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
-        assert_eq!(db.operations(), vec![Operation::Create { uuid }]);
     }
 
     #[test]

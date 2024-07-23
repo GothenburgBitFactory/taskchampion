@@ -4,7 +4,7 @@ use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::replica::Replica;
 use crate::storage::TaskMap;
-use crate::{TaskData, Operations};
+use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
 use std::convert::AsRef;
