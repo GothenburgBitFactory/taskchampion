@@ -1,7 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::server::SyncOp;
-use crate::storage::{StorageTxn, TaskMap};
+use crate::storage::StorageTxn;
 use crate::Operations;
 
 /// Apply `operations` to the database in the given single transaction.
@@ -49,7 +49,12 @@ pub(super) fn apply_operations(txn: &mut dyn StorageTxn, operations: &Operations
 /// Operation to the list of operations.  Returns the TaskMap of the task after the
 /// operation has been applied (or an empty TaskMap for Delete).  It is not an error
 /// to create an existing task, nor to delete a nonexistent task.
-pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<TaskMap> {
+#[cfg(test)]
+pub(super) fn apply_and_record(
+    txn: &mut dyn StorageTxn,
+    op: SyncOp,
+) -> Result<crate::storage::TaskMap> {
+    use crate::storage::TaskMap;
     match op {
         SyncOp::Create { uuid } => {
             let created = txn.create_task(uuid)?;
@@ -108,11 +113,8 @@ pub(super) fn apply_and_record(txn: &mut dyn StorageTxn, op: SyncOp) -> Result<T
     }
 }
 
-/// Apply an op to the TaskDb's set of tasks (without recording it in the list of operations)
+/// Apply a [`SyncOp`] to the TaskDb's set of tasks (without recording it in the list of operations)
 pub(super) fn apply_op(txn: &mut dyn StorageTxn, op: &SyncOp) -> Result<()> {
-    // TODO: test
-    // TODO: it'd be nice if this was integrated into apply() somehow, but that clones TaskMaps
-    // unnecessariliy
     match op {
         SyncOp::Create { uuid } => {
             // insert if the task does not already exist
@@ -351,13 +353,11 @@ mod tests {
 
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op)?;
-            assert_eq!(taskmap.len(), 0);
+            apply_op(txn.as_mut(), &op)?;
             txn.commit()?;
         }
 
         assert_eq!(db.sorted_tasks(), vec![(uuid, vec![]),]);
-        assert_eq!(db.operations(), vec![Operation::Create { uuid }]);
         Ok(())
     }
 
@@ -377,12 +377,7 @@ mod tests {
         let op = SyncOp::Create { uuid };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op)?;
-
-            assert_eq!(taskmap.len(), 1);
-            assert_eq!(taskmap.get("foo").unwrap(), "bar");
-
-            txn.commit()?;
+            assert!(apply_op(txn.as_mut(), &op).is_err());
         }
 
         // create did not delete the old task..
@@ -390,8 +385,6 @@ mod tests {
             db.sorted_tasks(),
             vec![(uuid, vec![("foo".into(), "bar".into())])]
         );
-        // create was done "manually" above, and no new op was added
-        assert_eq!(db.operations(), vec![]);
         Ok(())
     }
 
@@ -404,8 +397,7 @@ mod tests {
 
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op1)?;
-            assert_eq!(taskmap.len(), 0);
+            apply_op(txn.as_mut(), &op1)?;
             txn.commit()?;
         }
 
@@ -417,30 +409,13 @@ mod tests {
         };
         {
             let mut txn = db.storage.txn()?;
-            let mut taskmap = apply_and_record(txn.as_mut(), op2)?;
-            assert_eq!(
-                taskmap.drain().collect::<Vec<(_, _)>>(),
-                vec![("title".into(), "my task".into())]
-            );
+            apply_op(txn.as_mut(), &op2)?;
             txn.commit()?;
         }
 
         assert_eq!(
             db.sorted_tasks(),
             vec![(uuid, vec![("title".into(), "my task".into())])]
-        );
-        assert_eq!(
-            db.operations(),
-            vec![
-                Operation::Create { uuid },
-                Operation::Update {
-                    uuid,
-                    property: "title".into(),
-                    old_value: None,
-                    value: Some("my task".into()),
-                    timestamp: now
-                }
-            ]
         );
 
         Ok(())
@@ -454,8 +429,7 @@ mod tests {
         let op1 = SyncOp::Create { uuid };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op1)?;
-            assert_eq!(taskmap.len(), 0);
+            apply_op(txn.as_mut(), &op1)?;
             txn.commit()?;
         }
 
@@ -467,8 +441,7 @@ mod tests {
         };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op2)?;
-            assert_eq!(taskmap.get("title"), Some(&"my task".to_owned()));
+            apply_op(txn.as_mut(), &op2)?;
             txn.commit()?;
         }
 
@@ -480,8 +453,7 @@ mod tests {
         };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op3)?;
-            assert_eq!(taskmap.get("priority"), Some(&"H".to_owned()));
+            apply_op(txn.as_mut(), &op3)?;
             txn.commit()?;
         }
 
@@ -493,9 +465,7 @@ mod tests {
         };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op4)?;
-            assert_eq!(taskmap.get("title"), None);
-            assert_eq!(taskmap.get("priority"), Some(&"H".to_owned()));
+            apply_op(txn.as_mut(), &op4)?;
             txn.commit()?;
         }
 
@@ -506,33 +476,6 @@ mod tests {
         assert_eq!(
             db.sorted_tasks(),
             vec![(uuid, vec![("priority".into(), "H".into())])]
-        );
-        assert_eq!(
-            db.operations(),
-            vec![
-                Operation::Create { uuid },
-                Operation::Update {
-                    uuid,
-                    property: "title".into(),
-                    old_value: None,
-                    value: Some("my task".into()),
-                    timestamp: now,
-                },
-                Operation::Update {
-                    uuid,
-                    property: "priority".into(),
-                    old_value: None,
-                    value: Some("H".into()),
-                    timestamp: now,
-                },
-                Operation::Update {
-                    uuid,
-                    property: "title".into(),
-                    old_value: Some("my task".into()),
-                    value: None,
-                    timestamp: now,
-                }
-            ]
         );
 
         Ok(())
@@ -572,8 +515,8 @@ mod tests {
         let op1 = SyncOp::Create { uuid };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op1)?;
-            assert_eq!(taskmap.len(), 0);
+            apply_op(txn.as_mut(), &op1)?;
+            txn.commit()?;
         }
 
         let op2 = SyncOp::Update {
@@ -584,36 +527,20 @@ mod tests {
         };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op2)?;
-            assert_eq!(taskmap.get("priority"), Some(&"H".to_owned()));
+            apply_op(txn.as_mut(), &op2)?;
             txn.commit()?;
         }
 
         let op3 = SyncOp::Delete { uuid };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op3)?;
-            assert_eq!(taskmap.len(), 0);
+            apply_op(txn.as_mut(), &op3)?;
             txn.commit()?;
         }
 
         assert_eq!(db.sorted_tasks(), vec![]);
         let mut old_task = TaskMap::new();
         old_task.insert("priority".into(), "H".into());
-        assert_eq!(
-            db.operations(),
-            vec![
-                Operation::Create { uuid },
-                Operation::Update {
-                    uuid,
-                    property: "priority".into(),
-                    old_value: None,
-                    value: Some("H".into()),
-                    timestamp: now,
-                },
-                Operation::Delete { uuid, old_task },
-            ]
-        );
 
         Ok(())
     }
@@ -625,8 +552,7 @@ mod tests {
         let op = SyncOp::Delete { uuid };
         {
             let mut txn = db.storage.txn()?;
-            let taskmap = apply_and_record(txn.as_mut(), op)?;
-            assert_eq!(taskmap.len(), 0);
+            assert!(apply_op(txn.as_mut(), &op).is_err());
             txn.commit()?;
         }
 

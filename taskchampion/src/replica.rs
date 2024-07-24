@@ -1,12 +1,12 @@
 use crate::depmap::DependencyMap;
 use crate::errors::Result;
 use crate::operation::{Operation, Operations};
-use crate::server::{Server, SyncOp};
+use crate::server::Server;
 use crate::storage::{Storage, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
-use crate::BasicTask;
+use crate::{Error, TaskData};
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use log::trace;
@@ -58,9 +58,7 @@ impl Replica {
     /// Update an existing task.  If the value is Some, the property is added or updated.  If the
     /// value is None, the property is deleted.  It is not an error to delete a nonexistent
     /// property.
-    ///
-    /// This is a low-level method, and requires knowledge of the Task data model.  Prefer to
-    /// use the [`TaskMut`] methods to modify tasks, where possible.
+    #[deprecated(since = "0.7.0", note = "please use TaskData instead")]
     pub fn update_task<S1, S2>(
         &mut self,
         uuid: Uuid,
@@ -71,13 +69,18 @@ impl Replica {
         S1: Into<String>,
         S2: Into<String>,
     {
-        self.add_undo_point(false)?;
-        self.taskdb.apply(SyncOp::Update {
-            uuid,
-            property: property.into(),
-            value: value.map(|v| v.into()),
-            timestamp: Utc::now(),
-        })
+        let value = value.map(|v| v.into());
+        let property = property.into();
+        let mut ops = self.make_operations();
+        let Some(mut task) = self.get_task_data(uuid)? else {
+            return Err(Error::Database(format!("Task {} does not exist", uuid)));
+        };
+        task.update(property, value, &mut ops);
+        self.commit_operations(ops)?;
+        Ok(self
+            .taskdb
+            .get_task(uuid)?
+            .expect("task should exist after an update"))
     }
 
     /// Add the given uuid to the working set, returning its index.
@@ -185,40 +188,45 @@ impl Replica {
             .map(move |tm| Task::new(uuid, tm, depmap)))
     }
 
-    /// get an existing task by its UUID, as a [`BasicTask`](crate::BasicTask).
-    pub fn get_basic_task(&mut self, uuid: Uuid) -> Result<Option<BasicTask>> {
+    /// get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
+    pub fn get_task_data(&mut self, uuid: Uuid) -> Result<Option<TaskData>> {
         Ok(self
             .taskdb
             .get_task(uuid)?
-            .map(move |tm| BasicTask::new(uuid, tm)))
+            .map(move |tm| TaskData::new(uuid, tm)))
     }
 
     /// Create a new task.
     ///
     /// This uses the high-level task interface. To create a task with the low-level
-    /// interface, use [`BasicTask::create`](crate::BasicTask::create).
+    /// interface, use [`TaskData::create`](crate::TaskData::create).
     pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
-        self.add_undo_point(false)?;
-        let taskmap = self.taskdb.apply(SyncOp::Create { uuid })?;
-        let depmap = self.dependency_map(false)?;
-        let mut task = Task::new(uuid, taskmap, depmap).into_mut(self);
-        task.set_description(description)?;
-        task.set_status(status)?;
-        task.set_entry(Some(Utc::now()))?;
+        let mut ops = self.make_operations();
+        let now = format!("{}", Utc::now().timestamp());
+        let mut task = TaskData::create(uuid, &mut ops);
+        task.update("modified", Some(now.clone()), &mut ops);
+        task.update("description", Some(description), &mut ops);
+        task.update("status", Some(status.to_taskmap().to_string()), &mut ops);
+        task.update("entry", Some(now), &mut ops);
+        self.commit_operations(ops)?;
         trace!("task {} created", uuid);
-        Ok(task.into_immut())
+        Ok(self
+            .get_task(uuid)?
+            .expect("Task should exist after creation"))
     }
 
     /// Create a new, empty task with the given UUID.  This is useful for importing tasks, but
     /// otherwise should be avoided in favor of `new_task`.  If the task already exists, this
     /// does nothing and returns the existing task.
-    #[deprecated(since = "0.7.0", note = "please use BasicTask instead")]
+    #[deprecated(since = "0.7.0", note = "please use TaskData instead")]
     pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
-        self.add_undo_point(false)?;
-        let taskmap = self.taskdb.apply(SyncOp::Create { uuid })?;
-        let depmap = self.dependency_map(false)?;
-        Ok(Task::new(uuid, taskmap, depmap))
+        let mut ops = self.make_operations();
+        TaskData::create(uuid, &mut ops);
+        self.commit_operations(ops)?;
+        Ok(self
+            .get_task(uuid)?
+            .expect("Task should exist after creation"))
     }
 
     /// Delete a task.  The task must exist.  Note that this is different from setting status to
@@ -229,8 +237,12 @@ impl Replica {
     /// after both replicas have fully synced, the resulting task will only have a `description`
     /// property.
     pub fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
-        self.add_undo_point(false)?;
-        self.taskdb.apply(SyncOp::Delete { uuid })?;
+        let Some(task) = self.get_task_data(uuid)? else {
+            return Err(Error::Database(format!("Task {} does not exist", uuid)));
+        };
+        let mut ops = self.make_operations();
+        task.delete(&mut ops);
+        self.commit_operations(ops)?;
         trace!("task {} deleted", uuid);
         Ok(())
     }
@@ -347,12 +359,25 @@ impl Replica {
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
     /// instance is held for a long time and used to apply more than one user-visible change.
+    #[deprecated(since = "0.7.0", note = "commit an Operation::UndoPoint instead")]
     pub fn add_undo_point(&mut self, force: bool) -> Result<()> {
         if force || !self.added_undo_point {
-            self.taskdb.add_undo_point()?;
+            let ops = Operations::new_with_undo_point();
+            self.commit_operations(ops)?;
             self.added_undo_point = true;
         }
         Ok(())
+    }
+
+    /// Make a new `Operations`, with an undo operation if one has not already been added by
+    /// this `Replica` insance
+    fn make_operations(&mut self) -> Operations {
+        if self.added_undo_point {
+            Operations::new()
+        } else {
+            self.added_undo_point = true;
+            Operations::new_with_undo_point()
+        }
     }
 
     /// Get the number of operations local to this replica and not yet synchronized to the server.
@@ -675,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn get_basic_task() {
+    fn get_task_data() {
         let mut rep = Replica::new_inmemory();
 
         let t = rep
@@ -683,11 +708,11 @@ mod tests {
             .unwrap();
         let uuid = t.get_uuid();
 
-        let t = rep.get_basic_task(uuid).unwrap().unwrap();
-        assert_eq!(t.uuid(), uuid);
+        let t = rep.get_task_data(uuid).unwrap().unwrap();
+        assert_eq!(t.get_uuid(), uuid);
         assert_eq!(t.get("description"), Some("another task"));
 
-        assert!(rep.get_basic_task(Uuid::new_v4()).unwrap().is_none());
+        assert!(rep.get_task_data(Uuid::new_v4()).unwrap().is_none());
     }
 
     #[test]

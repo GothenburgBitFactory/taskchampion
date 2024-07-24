@@ -70,7 +70,7 @@ pub use operation::{Operation, Operations};
 pub use replica::Replica;
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
-pub use task::{utc_timestamp, Annotation, BasicTask, Status, Tag, Task, TaskMut};
+pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData, TaskMut};
 pub use workingset::WorkingSet;
 
 /// Re-exported type from the `uuid` crate, for ease of compatibility for consumers of this crate.
