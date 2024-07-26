@@ -19,11 +19,10 @@ use uuid::Uuid;
 ///
 /// ## Tasks
 ///
-/// Tasks are uniquely identified by UUIDs.
-/// Most task modifications are performed via the [`Task`](crate::Task) and
-/// [`TaskMut`](crate::TaskMut) types.  Use of two types for tasks allows easy
-/// read-only manipulation of lots of tasks, with exclusive access required only
-/// for modifications.
+/// Tasks are uniquely identified by UUIDs. Most task modifications are performed via the
+/// [`TaskData`](crate::TaskData) or [`Task`](crate::Task) types. The first is a lower-level type
+/// that wraps the key-value store representing a task, while the second is a higher-level type
+/// that supports methods to update specific properties, maintain dependencies and tags, and so on.
 ///
 /// ## Working Set
 ///
@@ -333,7 +332,7 @@ impl Replica {
     /// no undo point is found.
     ///
     /// The operations are returned in the order they were applied. Use
-    /// [`commit_reversed_operations`] to "undo" them.
+    /// [`Replica::commit_reversed_operations`] to "undo" them.
     pub fn get_undo_operations(&mut self) -> Result<Operations> {
         self.taskdb.get_undo_operations()
     }

@@ -46,7 +46,7 @@ impl Operation {
 }
 
 /// Operations contains a sequence of [`Operation`] values, which can be committed in a single
-/// transaction with [`Replica::commit`](crate::Replica::commit).
+/// transaction with [`Replica::commit`](crate::Replica::commit_operations).
 #[derive(PartialEq, Eq, Debug, Default)]
 pub struct Operations(Vec<Operation>);
 
