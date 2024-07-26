@@ -149,9 +149,37 @@ mod test {
     use crate::errors::Result;
     use crate::storage::{InMemoryStorage, TaskMap};
     use crate::taskdb::TaskDb;
+    use crate::Operations;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
+
+    // Tests of the SyncOp transform verify that the transform is correct by examining its effect
+    // on a TaskDb. But TaskDb requires `Operation` values, so tests use a bit of glue code to
+    // bridge the gap.
+    impl SyncOp {
+        pub(crate) fn into_op(self) -> Operation {
+            match self {
+                Create { uuid } => Operation::Create { uuid },
+                Delete { uuid } => Operation::Delete {
+                    uuid,
+                    old_task: crate::storage::TaskMap::new(),
+                },
+                Update {
+                    uuid,
+                    property,
+                    value,
+                    timestamp,
+                } => Operation::Update {
+                    uuid,
+                    property,
+                    value,
+                    timestamp,
+                    old_value: None,
+                },
+            }
+        }
+    }
 
     #[test]
     fn test_json_create() -> Result<()> {
@@ -238,22 +266,26 @@ mod test {
         // check that the two operation sequences have the same effect, enforcing the invariant of
         // the transform function.
         let mut db1 = TaskDb::new_inmemory();
-        if let Some(ref o) = setup {
-            db1.apply(o.clone()).unwrap();
+        let mut ops1 = Operations::new();
+        if let Some(o) = setup.clone() {
+            ops1.add(o.into_op());
         }
-        db1.apply(o1).unwrap();
+        ops1.add(o1.into_op());
         if let Some(o) = o2p {
-            db1.apply(o).unwrap();
+            ops1.add(o.into_op());
         }
+        db1.commit_operations(ops1, |_| false).unwrap();
 
         let mut db2 = TaskDb::new_inmemory();
-        if let Some(ref o) = setup {
-            db2.apply(o.clone()).unwrap();
+        let mut ops2 = Operations::new();
+        if let Some(o) = setup {
+            ops2.add(o.into_op());
         }
-        db2.apply(o2).unwrap();
+        ops2.add(o2.into_op());
         if let Some(o) = o1p {
-            db2.apply(o).unwrap();
+            ops2.add(o.into_op());
         }
+        db2.commit_operations(ops2, |_| false).unwrap();
 
         assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
     }
@@ -394,50 +426,40 @@ mod test {
           cases: 1024, .. ProptestConfig::default()
         })]
         #[test]
-        // check that the two operation sequences have the same effect, enforcing the invariant of
-        // the transform function.
+        /// Check that, given two operations, their transform produces the same result, as
+        /// required by the invariant.
         fn transform_invariant_holds(o1 in operation_strategy(), o2 in operation_strategy()) {
             let (o1p, o2p) = SyncOp::transform(o1.clone(), o2.clone());
 
+            let mut ops1 = Operations::new();
+            let mut ops2 = Operations::new();
             let mut db1 = TaskDb::new(Box::new(InMemoryStorage::new()));
             let mut db2 = TaskDb::new(Box::new(InMemoryStorage::new()));
 
             // Ensure that any expected tasks already exist
-            if let Update{ uuid, .. } = o1 {
-                let _ = db1.apply(Create{uuid});
-                let _ = db2.apply(Create{uuid});
+            for o in [&o1, &o2] {
+                match o {
+                    Update { uuid, .. } | Delete { uuid } => {
+                        ops1.add(Operation::Create { uuid: *uuid });
+                        ops2.add(Operation::Create { uuid: *uuid });
+                    }
+                    _ => {},
+                }
             }
 
-            if let Update{ uuid, .. } = o2 {
-                let _ = db1.apply(Create{uuid});
-                let _ = db2.apply(Create{uuid});
+            ops1.add(o1.into_op());
+            ops2.add(o2.into_op());
+
+            if let Some(o2p) = o2p {
+                ops1.add(o2p.into_op());
+            }
+            if let Some(o1p) = o1p {
+                ops2.add(o1p.into_op());
             }
 
-            if let Delete{ uuid } = o1 {
-                let _ = db1.apply(Create{uuid});
-                let _ = db2.apply(Create{uuid});
-            }
+            db1.commit_operations(ops1, |_| false).unwrap();
+            db2.commit_operations(ops2, |_| false).unwrap();
 
-            if let Delete{ uuid } = o2 {
-                let _ = db1.apply(Create{uuid});
-                let _ = db2.apply(Create{uuid});
-            }
-
-            // if applying the initial operations fail, that indicates the operation was invalid
-            // in the base state, so consider the case successful.
-            if db1.apply(o1).is_err() {
-                return Ok(());
-            }
-            if db2.apply(o2).is_err() {
-                return Ok(());
-            }
-
-            if let Some(o) = o2p {
-                db1.apply(o).map_err(|e| TestCaseError::Fail(format!("Applying to db1: {}", e).into()))?;
-            }
-            if let Some(o) = o1p {
-                db2.apply(o).map_err(|e| TestCaseError::Fail(format!("Applying to db2: {}", e).into()))?;
-            }
             assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
         }
     }

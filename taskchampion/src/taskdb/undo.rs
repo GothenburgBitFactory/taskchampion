@@ -106,7 +106,8 @@ pub fn commit_undo_ops(txn: &mut dyn StorageTxn, mut undo_ops: Vec<Operation>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{storage::taskmap_with, taskdb::TaskDb, Operations};
+    use crate::{storage::taskmap_with, taskdb::TaskDb};
+    use crate::{Operation, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
