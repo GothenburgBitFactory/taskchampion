@@ -16,8 +16,7 @@ use uuid::Uuid;
 ///
 /// Building on [`crate::TaskData`], this type implements the task model, with ergonomic APIs to
 /// manipulate tasks without deep familiarity with the [task
-/// model](https://gothenburgbitfactory.org/taskchampion/tasks.html#keys). This type `Deref`s to
-/// [`crate::TaskData`] to support lower-level operations.
+/// model](https://gothenburgbitfactory.org/taskchampion/tasks.html#keys).
 ///
 /// Note that Task objects represent a snapshot of the task at a moment in time, and are not
 /// protected by the atomicity of the backend storage.  Concurrent modifications are safe,
@@ -39,20 +38,6 @@ impl PartialEq for Task {
     fn eq(&self, other: &Task) -> bool {
         // compare only the task data; depmap is just present for reference
         self.data == other.data
-    }
-}
-
-impl std::ops::Deref for Task {
-    type Target = TaskData;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl std::ops::DerefMut for Task {
-    fn deref_mut(&mut self) -> &mut <Self as std::ops::Deref>::Target {
-        &mut self.data
     }
 }
 
@@ -108,6 +93,11 @@ impl Task {
         self.data
     }
 
+    /// Get this task's UUID.
+    pub fn get_uuid(&self) -> Uuid {
+        self.data.get_uuid()
+    }
+
     #[deprecated(since = "0.7.0", note = "please use TaskData::properties")]
     pub fn get_taskmap(&self) -> &TaskMap {
         self.data.get_taskmap()
@@ -149,7 +139,7 @@ impl Task {
     /// Determine whether this task is active -- that is, that it has been started
     /// and not stopped.
     pub fn is_active(&self) -> bool {
-        self.has(Prop::Start.as_ref())
+        self.data.has(Prop::Start.as_ref())
     }
 
     /// Determine whether this task is blocked -- that is, has at least one unresolved dependency.
@@ -180,7 +170,7 @@ impl Task {
     /// Check if this task has the given tag
     pub fn has_tag(&self, tag: &Tag) -> bool {
         match tag.inner() {
-            TagInner::User(s) => self.has(format!("tag_{}", s)),
+            TagInner::User(s) => self.data.has(format!("tag_{}", s)),
             TagInner::Synthetic(st) => self.has_synthetic_tag(st),
         }
     }
@@ -296,13 +286,13 @@ impl Task {
         match status {
             Status::Pending | Status::Recurring => {
                 // clear "end" when a task becomes "pending" or "recurring"
-                if self.has(Prop::End.as_ref()) {
+                if self.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), None, ops)?;
                 }
             }
             Status::Completed | Status::Deleted => {
                 // set "end" when a task is deleted or completed
-                if !self.has(Prop::End.as_ref()) {
+                if !self.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
                 }
             }
@@ -395,6 +385,10 @@ impl Task {
     ///
     /// Note that this does not delete the task.  It merely marks the task as
     /// deleted.
+    #[deprecated(
+        since = "0.7.0",
+        note = "please call `Task::set_status` with `Status::Deleted`"
+    )]
     pub fn delete(&mut self, ops: &mut Operations) -> Result<()> {
         self.set_status(Status::Deleted, ops)
     }
@@ -804,12 +798,12 @@ mod test {
     fn test_remove_due() {
         with_mut_task(
             |task, ops| {
-                task.update("due", Some("some-time".into()), ops);
-                assert!(task.has("due"));
+                task.data.update("due", Some("some-time".into()), ops);
+                assert!(task.data.has("due"));
                 task.set_due(None, ops).unwrap();
             },
             |task| {
-                assert!(!task.has("due"));
+                assert!(!task.data.has("due"));
             },
         );
     }
@@ -875,7 +869,7 @@ mod test {
             },
             |task| {
                 let k = "annotation_1635301900";
-                assert_eq!(task.get(k).unwrap(), "right message".to_owned());
+                assert_eq!(task.data.get(k).unwrap(), "right message".to_owned());
             },
         );
     }
@@ -903,7 +897,7 @@ mod test {
             },
             |task| {
                 let k = "annotation_1635301900";
-                assert_eq!(task.get(k).unwrap(), "right message 2".to_owned());
+                assert_eq!(task.data.get(k).unwrap(), "right message 2".to_owned());
             },
         );
     }
@@ -912,7 +906,8 @@ mod test {
     fn test_remove_annotation() {
         with_mut_task(
             |task, ops| {
-                task.update("annotation_1635301873", Some("left message".into()), ops);
+                task.data
+                    .update("annotation_1635301873", Some("left message".into()), ops);
                 task.set_value(
                     "annotation_1635301883",
                     Some("left another message".into()),
@@ -963,14 +958,14 @@ mod test {
     fn test_set_status_pending() {
         with_mut_task(
             |task, ops| {
-                task.update("status", Some("completed".into()), ops);
-                task.update("end", Some("right now".into()), ops);
+                task.data.update("status", Some("completed".into()), ops);
+                task.data.update("end", Some("right now".into()), ops);
                 task.done(ops).unwrap();
                 task.set_status(Status::Pending, ops).unwrap();
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Pending);
-                assert!(!task.has("end"));
+                assert!(!task.data.has("end"));
                 assert!(task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
@@ -981,13 +976,13 @@ mod test {
     fn test_set_status_recurring() {
         with_mut_task(
             |task, ops| {
-                task.update("status", Some("completed".into()), ops);
-                task.update("end", Some("right now".into()), ops);
+                task.data.update("status", Some("completed".into()), ops);
+                task.data.update("end", Some("right now".into()), ops);
                 task.set_status(Status::Recurring, ops).unwrap();
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Recurring);
-                assert!(!task.has("end"));
+                assert!(!task.data.has("end"));
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending))); // recurring is not +PENDING
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
@@ -1002,7 +997,7 @@ mod test {
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Completed);
-                assert!(task.has("end"));
+                assert!(task.data.has("end"));
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(task.has_tag(&stag(SyntheticTag::Completed)));
             },
@@ -1017,7 +1012,7 @@ mod test {
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Deleted);
-                assert!(task.has("end"));
+                assert!(task.data.has("end"));
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
@@ -1042,7 +1037,7 @@ mod test {
         let property = "property-name";
         with_mut_task(
             |task, ops| {
-                task.update(property, Some("value".into()), ops);
+                task.data.update(property, Some("value".into()), ops);
                 task.set_value(property, None, ops).unwrap();
             },
             |task| {
@@ -1058,7 +1053,7 @@ mod test {
                 task.start(ops).unwrap();
             },
             |task| {
-                assert!(task.has("start"));
+                assert!(task.data.has("start"));
             },
         );
     }
@@ -1067,11 +1062,11 @@ mod test {
     fn test_stop() {
         with_mut_task(
             |task, ops| {
-                task.update("start", Some("right now".into()), ops);
+                task.data.update("start", Some("right now".into()), ops);
                 task.stop(ops).unwrap();
             },
             |task| {
-                assert!(!task.has("start"));
+                assert!(!task.data.has("start"));
             },
         );
     }
@@ -1084,7 +1079,7 @@ mod test {
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Completed);
-                assert!(task.has("end"));
+                assert!(task.data.has("end"));
                 assert!(task.has_tag(&stag(SyntheticTag::Completed)));
             },
         );
@@ -1094,11 +1089,12 @@ mod test {
     fn test_delete() {
         with_mut_task(
             |task, ops| {
+                #[allow(deprecated)]
                 task.delete(ops).unwrap();
             },
             |task| {
                 assert_eq!(task.get_status(), Status::Deleted);
-                assert!(task.has("end"));
+                assert!(task.data.has("end"));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
         );
@@ -1111,7 +1107,7 @@ mod test {
                 task.add_tag(&utag("abc"), ops).unwrap();
             },
             |task| {
-                assert!(task.has("tag_abc"));
+                assert!(task.data.has("tag_abc"));
                 assert!(task.has_tag(&utag("abc")));
             },
         );
@@ -1121,11 +1117,11 @@ mod test {
     fn test_remove_tags() {
         with_mut_task(
             |task, ops| {
-                task.update("tag_abc", Some("x".into()), ops);
+                task.data.update("tag_abc", Some("x".into()), ops);
                 task.remove_tag(&utag("abc"), ops).unwrap();
             },
             |task| {
-                assert!(!task.has("tag_abc"));
+                assert!(!task.data.has("tag_abc"));
             },
         );
     }
@@ -1261,7 +1257,7 @@ mod test {
     fn test_remove_uda() {
         with_mut_task(
             |task, ops| {
-                task.update("github.id", Some("123".into()), ops);
+                task.data.update("github.id", Some("123".into()), ops);
                 task.remove_uda("github", "id", ops).unwrap();
             },
             |task| {
@@ -1275,7 +1271,7 @@ mod test {
     fn test_remove_legacy_uda() {
         with_mut_task(
             |task, ops| {
-                task.update("githubid", Some("123".into()), ops);
+                task.data.update("githubid", Some("123".into()), ops);
                 task.remove_legacy_uda("githubid", ops).unwrap();
             },
             |task| {

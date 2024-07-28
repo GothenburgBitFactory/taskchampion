@@ -99,10 +99,13 @@ impl TaskData {
     /// example, if a task is deleted on replica 1 and its description modified on replica 2, then
     /// after both replicas have fully synced, the resulting task will only have a `description`
     /// property.
-    pub fn delete(self, operations: &mut Operations) {
+    ///
+    /// After this call, the `TaskData` value still exists but has no properties and should be
+    /// dropped.
+    pub fn delete(&mut self, operations: &mut Operations) {
         operations.add(Operation::Delete {
             uuid: self.uuid,
-            old_task: self.taskmap,
+            old_task: std::mem::take(&mut self.taskmap),
         });
     }
 }
@@ -245,7 +248,7 @@ mod test {
     #[test]
     fn delete() {
         let mut ops = Operations::new();
-        let t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
+        let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.delete(&mut ops);
         assert_eq!(
             ops,

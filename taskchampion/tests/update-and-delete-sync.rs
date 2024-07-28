@@ -42,7 +42,7 @@ fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     {
         let mut ops = Operations::new();
         let mut t = rep2.get_task(u)?.unwrap();
-        t.delete(&mut ops)?;
+        t.set_status(Status::Deleted, &mut ops)?;
         t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)?;
         rep2.commit_operations(ops)?;
     }

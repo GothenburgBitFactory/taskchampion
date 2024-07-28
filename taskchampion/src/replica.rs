@@ -261,7 +261,7 @@ impl Replica {
     /// property.
     #[deprecated(since = "0.7.0", note = "please use TaskData::delete")]
     pub fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
-        let Some(task) = self.get_task_data(uuid)? else {
+        let Some(mut task) = self.get_task_data(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
         let mut ops = self.make_operations();
@@ -372,7 +372,7 @@ impl Replica {
         let mut ops = Operations::new();
         self.all_tasks()?
             .drain()
-            .filter(|(_, t)| t.get("status") == Some(Status::Deleted.to_taskmap()))
+            .filter(|(_, t)| t.get_status() == Status::Deleted)
             .filter(|(_, t)| {
                 if let Some(m) = t.get_modified() {
                     m < six_mos_ago
