@@ -268,22 +268,22 @@ mod test {
         let mut db1 = TaskDb::new_inmemory();
         let mut ops1 = Operations::new();
         if let Some(o) = setup.clone() {
-            ops1.add(o.into_op());
+            ops1.push(o.into_op());
         }
-        ops1.add(o1.into_op());
+        ops1.push(o1.into_op());
         if let Some(o) = o2p {
-            ops1.add(o.into_op());
+            ops1.push(o.into_op());
         }
         db1.commit_operations(ops1, |_| false).unwrap();
 
         let mut db2 = TaskDb::new_inmemory();
         let mut ops2 = Operations::new();
         if let Some(o) = setup {
-            ops2.add(o.into_op());
+            ops2.push(o.into_op());
         }
-        ops2.add(o2.into_op());
+        ops2.push(o2.into_op());
         if let Some(o) = o1p {
-            ops2.add(o.into_op());
+            ops2.push(o.into_op());
         }
         db2.commit_operations(ops2, |_| false).unwrap();
 
@@ -440,21 +440,21 @@ mod test {
             for o in [&o1, &o2] {
                 match o {
                     Update { uuid, .. } | Delete { uuid } => {
-                        ops1.add(Operation::Create { uuid: *uuid });
-                        ops2.add(Operation::Create { uuid: *uuid });
+                        ops1.push(Operation::Create { uuid: *uuid });
+                        ops2.push(Operation::Create { uuid: *uuid });
                     }
                     _ => {},
                 }
             }
 
-            ops1.add(o1.into_op());
-            ops2.add(o2.into_op());
+            ops1.push(o1.into_op());
+            ops2.push(o2.into_op());
 
             if let Some(o2p) = o2p {
-                ops1.add(o2p.into_op());
+                ops1.push(o2p.into_op());
             }
             if let Some(o1p) = o1p {
-                ops2.add(o1p.into_op());
+                ops2.push(o1p.into_op());
             }
 
             db1.commit_operations(ops1, |_| false).unwrap();

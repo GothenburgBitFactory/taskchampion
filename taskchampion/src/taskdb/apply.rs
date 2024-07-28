@@ -96,7 +96,7 @@ mod tests {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
+        ops.push(Operation::Create { uuid });
 
         {
             let mut txn = db.storage.txn()?;
@@ -121,7 +121,7 @@ mod tests {
 
         {
             let mut ops = Operations::new();
-            ops.add(Operation::Create { uuid });
+            ops.push(Operation::Create { uuid });
             let mut txn = db.storage.txn()?;
             apply_operations(txn.as_mut(), &ops)?;
             txn.commit()?;
@@ -140,8 +140,8 @@ mod tests {
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: Some("my task".into()),
@@ -168,22 +168,22 @@ mod tests {
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: Some("my task".into()),
             timestamp: now,
             old_value: None,
         });
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid,
             property: String::from("priority"),
             value: Some("H".into()),
             timestamp: now,
             old_value: None,
         });
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: None,
@@ -210,7 +210,7 @@ mod tests {
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: Some("my task".into()),
@@ -234,15 +234,15 @@ mod tests {
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: Some("my task".into()),
             timestamp: now,
             old_value: None,
         });
-        ops.add(Operation::Delete {
+        ops.push(Operation::Delete {
             uuid,
             old_task: taskmap_with(vec![]),
         });
@@ -262,7 +262,7 @@ mod tests {
         let mut db = TaskDb::new_inmemory();
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Delete {
+        ops.push(Operation::Delete {
             uuid,
             old_task: taskmap_with(vec![]),
         });

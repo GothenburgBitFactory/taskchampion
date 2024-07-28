@@ -20,9 +20,9 @@ pub fn get_undo_operations(txn: &mut dyn StorageTxn) -> Result<Operations> {
         .find(|(_, op)| op.is_undo_point())
         .map(|(i, _)| i);
     if let Some(last_undo_op_idx) = last_undo_op_idx {
-        Ok(local_ops[last_undo_op_idx..].to_vec().into())
+        Ok(local_ops[last_undo_op_idx..].to_vec())
     } else {
-        Ok(local_ops.into())
+        Ok(local_ops)
     }
 }
 
@@ -116,6 +116,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    #[allow(clippy::vec_init_then_push)]
     fn test_apply_create() -> Result<()> {
         let mut db = TaskDb::new_inmemory();
         let uuid1 = Uuid::new_v4();
@@ -125,23 +126,23 @@ mod tests {
         let mut ops = Operations::new();
         // apply a few ops, capture the DB state, make an undo point, and then apply a few more
         // ops.
-        ops.add(Operation::Create { uuid: uuid1 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid1 });
+        ops.push(Operation::Update {
             uuid: uuid1,
             property: "prop".into(),
             value: Some("v1".into()),
             old_value: None,
             timestamp,
         });
-        ops.add(Operation::Create { uuid: uuid2 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid2 });
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "prop".into(),
             value: Some("v2".into()),
             old_value: None,
             timestamp,
         });
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "prop2".into(),
             value: Some("v3".into()),
@@ -152,19 +153,20 @@ mod tests {
 
         let db_state = db.sorted_tasks();
 
-        let mut ops = Operations::new_with_undo_point();
-        ops.add(Operation::Delete {
+        let mut ops = Operations::new();
+        ops.push(Operation::UndoPoint);
+        ops.push(Operation::Delete {
             uuid: uuid1,
             old_task: [("prop".to_string(), "v1".to_string())].into(),
         });
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "prop".into(),
             value: None,
             old_value: Some("v2".into()),
             timestamp,
         });
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "prop2".into(),
             value: Some("new-value".into()),
@@ -182,7 +184,7 @@ mod tests {
         // Try committing the wrong set of ops.
         assert!(!commit_reversed_operations(
             db.storage.txn()?.as_mut(),
-            undo_ops[1..=2].to_vec().into(),
+            undo_ops[1..=2].to_vec(),
         )?);
 
         assert!(commit_reversed_operations(

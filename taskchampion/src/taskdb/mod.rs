@@ -215,8 +215,8 @@ mod tests {
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: String::from("title"),
             value: Some("my task".into()),
@@ -261,11 +261,11 @@ mod tests {
         }
 
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid: uuid1 });
-        ops.add(Operation::Create { uuid: uuid2 });
-        ops.add(Operation::Create { uuid: uuid3 });
-        ops.add(Operation::Create { uuid: uuid2 });
-        ops.add(Operation::Create { uuid: uuid3 });
+        ops.push(Operation::Create { uuid: uuid1 });
+        ops.push(Operation::Create { uuid: uuid2 });
+        ops.push(Operation::Create { uuid: uuid3 });
+        ops.push(Operation::Create { uuid: uuid2 });
+        ops.push(Operation::Create { uuid: uuid3 });
 
         // return true for updates to uuid1 or uuid2.
         let add_to_working_set = |op: &Operation| match op {
@@ -298,11 +298,11 @@ mod tests {
     fn test_num_operations() {
         let mut db = TaskDb::new_inmemory();
         let mut ops = Operations::new();
-        ops.add(Operation::Create {
+        ops.push(Operation::Create {
             uuid: Uuid::new_v4(),
         });
-        ops.add(Operation::UndoPoint);
-        ops.add(Operation::Create {
+        ops.push(Operation::UndoPoint);
+        ops.push(Operation::Create {
             uuid: Uuid::new_v4(),
         });
         db.commit_operations(ops, |_| false).unwrap();
@@ -313,12 +313,12 @@ mod tests {
     fn test_num_undo_points() {
         let mut db = TaskDb::new_inmemory();
         let mut ops = Operations::new();
-        ops.add(Operation::UndoPoint);
+        ops.push(Operation::UndoPoint);
         db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_undo_points().unwrap(), 1);
 
         let mut ops = Operations::new();
-        ops.add(Operation::UndoPoint);
+        ops.push(Operation::UndoPoint);
         db.commit_operations(ops, |_| false).unwrap();
         assert_eq!(db.num_undo_points().unwrap(), 2);
     }
