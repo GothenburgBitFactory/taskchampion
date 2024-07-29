@@ -543,7 +543,8 @@ mod test {
     }
 
     // Test task mutation by modifying a task and checking the assertions both on the
-    // modified task and on a re-loaded task after the operations are committed.
+    // modified task and on a re-loaded task after the operations are committed. Then,
+    // apply the same operations again and check that the result is the same.
     fn with_mut_task<MODIFY: Fn(&mut Task, &mut Operations), ASSERT: Fn(&Task)>(
         modify: MODIFY,
         assert: ASSERT,
@@ -552,20 +553,29 @@ mod test {
         let mut ops = Operations::new();
         let uuid = Uuid::new_v4();
         let mut task = replica.create_task(uuid, &mut ops).unwrap();
+
+        // Modify the task
         modify(&mut task, &mut ops);
-        // check assertions about the task before committing it
+
+        // Check assertions about the task before committing it.
         assert(&task);
         println!("commiting operations from first call to modify function");
         replica.commit_operations(ops).unwrap();
-        // check assertions on task loaded from storage
+
+        // Check assertions on task loaded from storage
         let mut task = replica.get_task(uuid).unwrap().unwrap();
         assert(&task);
+
+        // Apply the operations again, checking that they do not fail.
         let mut ops = Operations::new();
         modify(&mut task, &mut ops);
+
+        // Changes should still be as expected before commit.
         assert(&task);
         println!("commiting operations from second call to modify function");
         replica.commit_operations(ops).unwrap();
-        // check assertions on task loaded from storage again
+
+        // Changes should still be as expected when loaded from storage.
         let task = replica.get_task(uuid).unwrap().unwrap();
         assert(&task);
     }
