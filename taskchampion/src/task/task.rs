@@ -1342,6 +1342,7 @@ mod test {
             |task| {
                 let deps = task.get_dependencies().collect::<Vec<_>>();
                 assert!(deps.contains(&dep1));
+                assert!(!deps.contains(&dep2));
             },
         )
     }
