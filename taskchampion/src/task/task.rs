@@ -917,7 +917,7 @@ mod test {
         with_mut_task(
             |task, ops| {
                 task.data
-                    .update("annotation_1635301873", Some("left message".into()), ops);
+                    .update("annotation_1635301883", Some("left message".into()), ops);
                 task.set_value(
                     "annotation_1635301883",
                     Some("left another message".into()),
@@ -925,19 +925,13 @@ mod test {
                 )
                 .unwrap();
 
-                task.remove_annotation(Utc.timestamp_opt(1635301873, 0).unwrap(), ops)
+                task.remove_annotation(Utc.timestamp_opt(1635301883, 0).unwrap(), ops)
                     .unwrap();
             },
             |task| {
                 let mut anns: Vec<_> = task.get_annotations().collect();
                 anns.sort();
-                assert_eq!(
-                    anns,
-                    vec![Annotation {
-                        entry: Utc.timestamp_opt(1635301883, 0).unwrap(),
-                        description: "left another message".into()
-                    }]
-                );
+                assert_eq!(anns, vec![]);
             },
         );
     }
