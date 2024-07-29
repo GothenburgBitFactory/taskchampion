@@ -133,17 +133,24 @@ impl TaskDb {
         sync::sync(server, txn.as_mut(), avoid_snapshots)
     }
 
-    /// Return undo local operations until the most recent UndoPoint, returning an empty Vec if there are no
-    /// local operations to undo.
-    pub(crate) fn get_undo_ops(&mut self) -> Result<Vec<Operation>> {
+    /// Return the operations back to and including the last undo point, or since the last sync if
+    /// no undo point is found.
+    ///
+    /// The operations are returned in the order they were applied. Use
+    /// [`commit_reversed_operations`] to "undo" them.
+    pub(crate) fn get_undo_operations(&mut self) -> Result<Operations> {
         let mut txn = self.storage.txn()?;
-        undo::get_undo_ops(txn.as_mut())
+        undo::get_undo_operations(txn.as_mut())
     }
 
-    /// Undo local operations in storage, returning a boolean indicating success.
-    pub(crate) fn commit_undo_ops(&mut self, undo_ops: Vec<Operation>) -> Result<bool> {
+    /// Commit the reverse of the given operations, beginning with the last operation in the given
+    /// operations and proceeding to the first.
+    ///
+    /// This method only supports reversing operations if they precisely match local operations
+    /// that have not yet been synchronized, and will return `false` if this is not the case.
+    pub(crate) fn commit_reversed_operations(&mut self, undo_ops: Operations) -> Result<bool> {
         let mut txn = self.storage.txn()?;
-        undo::commit_undo_ops(txn.as_mut(), undo_ops)
+        undo::commit_reversed_operations(txn.as_mut(), undo_ops)
     }
 
     /// Get the number of un-synchronized operations in storage, excluding undo

@@ -71,11 +71,6 @@ impl Operations {
         self.0.push(op);
     }
 
-    /// Determine if this set of operations is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     /// For tests, it's useful to set the timestamps of all updates to the same value.
     #[cfg(test)]
     pub fn set_all_timestamps(&mut self, set_to: DateTime<Utc>) {
@@ -84,6 +79,20 @@ impl Operations {
                 *timestamp = set_to;
             }
         }
+    }
+}
+
+impl From<Vec<Operation>> for Operations {
+    fn from(value: Vec<Operation>) -> Self {
+        Self(value)
+    }
+}
+
+impl std::ops::Deref for Operations {
+    type Target = [Operation];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
     }
 }
 
