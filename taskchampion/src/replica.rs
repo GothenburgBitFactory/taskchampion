@@ -83,17 +83,21 @@ impl Replica {
             .expect("task should exist after an update"))
     }
 
-    /// Add the given uuid to the working set, returning its index.
-    pub(crate) fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
-        self.taskdb.add_to_working_set(uuid)
-    }
-
     /// Get all tasks represented as a map keyed by UUID
     pub fn all_tasks(&mut self) -> Result<HashMap<Uuid, Task>> {
         let depmap = self.dependency_map(false)?;
         let mut res = HashMap::new();
         for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
-            res.insert(uuid, Task::new(uuid, tm, depmap.clone()));
+            res.insert(uuid, Task::new(TaskData::new(uuid, tm), depmap.clone()));
+        }
+        Ok(res)
+    }
+
+    /// Get all task represented as a map of [`TaskData`] keyed by UUID
+    pub fn all_task_data(&mut self) -> Result<HashMap<Uuid, TaskData>> {
+        let mut res = HashMap::new();
+        for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
+            res.insert(uuid, TaskData::new(uuid, tm));
         }
         Ok(res)
     }
@@ -120,6 +124,9 @@ impl Replica {
     ///
     /// If `force` is true, then the result is re-calculated from the current state of the replica,
     /// although previously-returned dependency maps are not updated.
+    ///
+    /// Calculating this value requires a scan of the full working set and may not be performant.
+    /// The [`TaskData`] API avoids generating this value.
     pub fn dependency_map(&mut self, force: bool) -> Result<Rc<DependencyMap>> {
         if force || self.depmap.is_none() {
             // note: we can't use self.get_task here, as that depends on a
@@ -185,7 +192,7 @@ impl Replica {
         Ok(self
             .taskdb
             .get_task(uuid)?
-            .map(move |tm| Task::new(uuid, tm, depmap)))
+            .map(move |tm| Task::new(TaskData::new(uuid, tm), depmap)))
     }
 
     /// get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
@@ -196,10 +203,14 @@ impl Replica {
             .map(move |tm| TaskData::new(uuid, tm)))
     }
 
-    /// Create a new task.
+    /// Create a new task, setting `modified`, `description`, `status`, and `entry`.
     ///
     /// This uses the high-level task interface. To create a task with the low-level
     /// interface, use [`TaskData::create`](crate::TaskData::create).
+    #[deprecated(
+        since = "0.7.0",
+        note = "please use `create_task` and call `Task` methods `set_status`, `set_description`, and `set_entry`"
+    )]
     pub fn new_task(&mut self, status: Status, description: String) -> Result<Task> {
         let uuid = Uuid::new_v4();
         let mut ops = self.make_operations();
@@ -216,8 +227,20 @@ impl Replica {
             .expect("Task should exist after creation"))
     }
 
+    /// Create a new task.
+    ///
+    /// Use ['Uuid::new_v4`] to invent a new task ID, if necessary. If the task already
+    /// exists, it is returned.
+    pub fn create_task(&mut self, uuid: Uuid, ops: &mut Operations) -> Result<Task> {
+        if let Some(task) = self.get_task(uuid)? {
+            return Ok(task);
+        }
+        let depmap = self.dependency_map(false)?;
+        Ok(Task::new(TaskData::create(uuid, ops), depmap))
+    }
+
     /// Create a new, empty task with the given UUID.  This is useful for importing tasks, but
-    /// otherwise should be avoided in favor of `new_task`.  If the task already exists, this
+    /// otherwise should be avoided in favor of `create_task`.  If the task already exists, this
     /// does nothing and returns the existing task.
     #[deprecated(since = "0.7.0", note = "please use TaskData instead")]
     pub fn import_task_with_uuid(&mut self, uuid: Uuid) -> Result<Task> {
@@ -236,8 +259,9 @@ impl Replica {
     /// example, if a task is deleted on replica 1 and its description modified on replica 1, then
     /// after both replicas have fully synced, the resulting task will only have a `description`
     /// property.
+    #[deprecated(since = "0.7.0", note = "please use TaskData::delete")]
     pub fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
-        let Some(task) = self.get_task_data(uuid)? else {
+        let Some(mut task) = self.get_task_data(uuid)? else {
             return Err(Error::Database(format!("Task {} does not exist", uuid)));
         };
         let mut ops = self.make_operations();
@@ -252,6 +276,10 @@ impl Replica {
     /// All local state on the replica will be updated accordingly, including the working set and
     /// and temporarily cached data.
     pub fn commit_operations(&mut self, operations: Operations) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+
         // Add tasks to the working set when the status property is updated from anything other
         // than pending or recurring to one of those two statuses.
         let pending = Status::Pending.to_taskmap();
@@ -341,8 +369,9 @@ impl Replica {
     /// for 180 days (about six months). Note that completed tasks are not eligible.
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
+        let mut ops = Operations::new();
         self.all_tasks()?
-            .iter()
+            .drain()
             .filter(|(_, t)| t.get_status() == Status::Deleted)
             .filter(|(_, t)| {
                 if let Some(m) = t.get_modified() {
@@ -351,15 +380,18 @@ impl Replica {
                     false
                 }
             })
-            .try_for_each(|(u, _)| self.delete_task(*u))?;
-        Ok(())
+            .for_each(|(_, t)| t.into_task_data().delete(&mut ops));
+        self.commit_operations(ops)
     }
 
     /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
     /// instance is held for a long time and used to apply more than one user-visible change.
-    #[deprecated(since = "0.7.0", note = "commit an Operation::UndoPoint instead")]
+    #[deprecated(
+        since = "0.7.0",
+        note = "Use `Operations::new_with_undo_point` instead."
+    )]
     pub fn add_undo_point(&mut self, force: bool) -> Result<()> {
         if force || !self.added_undo_point {
             let ops = Operations::new_with_undo_point();
@@ -404,6 +436,7 @@ mod tests {
     fn new_task() {
         let mut rep = Replica::new_inmemory();
 
+        #[allow(deprecated)]
         let t = rep.new_task(Status::Pending, "a task".into()).unwrap();
         assert_eq!(t.get_description(), String::from("a task"));
         assert_eq!(t.get_status(), Status::Pending);
@@ -414,21 +447,25 @@ mod tests {
     fn modify_task() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep.new_task(Status::Pending, "a task".into()).unwrap();
+        // Further test the deprecated `new_task` method.
+        #[allow(deprecated)]
+        let mut t = rep.new_task(Status::Pending, "a task".into()).unwrap();
 
-        let mut t = t.into_mut(&mut rep);
-        t.set_description(String::from("past tense")).unwrap();
-        t.set_status(Status::Completed).unwrap();
-        // check that values have changed on the TaskMut
+        let mut ops = Operations::new();
+        t.set_description(String::from("past tense"), &mut ops)
+            .unwrap();
+        t.set_status(Status::Completed, &mut ops).unwrap();
+        // check that values have changed on the Task
         assert_eq!(t.get_description(), "past tense");
         assert_eq!(t.get_status(), Status::Completed);
 
-        // check that values have changed after into_immut
-        let t = t.into_immut();
-        assert_eq!(t.get_description(), "past tense");
-        assert_eq!(t.get_status(), Status::Completed);
+        // check that values have not changed in storage, yet
+        let t = rep.get_task(t.get_uuid()).unwrap().unwrap();
+        assert_eq!(t.get_description(), "a task");
+        assert_eq!(t.get_status(), Status::Pending);
 
-        // check that values have changed in storage, too
+        // check that values have changed in storage after commit
+        rep.commit_operations(ops).unwrap();
         let t = rep.get_task(t.get_uuid()).unwrap().unwrap();
         assert_eq!(t.get_description(), "past tense");
         assert_eq!(t.get_status(), Status::Completed);
@@ -545,11 +582,35 @@ mod tests {
     fn delete_task() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep.new_task(Status::Pending, "a task".into()).unwrap();
-        let uuid = t.get_uuid();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        rep.create_task(uuid, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
+        #[allow(deprecated)]
         rep.delete_task(uuid).unwrap();
         assert_eq!(rep.get_task(uuid).unwrap(), None);
+    }
+
+    #[test]
+    fn all_tasks() {
+        let mut rep = Replica::new_inmemory();
+
+        let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut ops = Operations::new();
+        rep.create_task(uuid1, &mut ops).unwrap();
+        rep.create_task(uuid2, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
+
+        let all_tasks = rep.all_tasks().unwrap();
+        assert_eq!(all_tasks.len(), 2);
+        assert_eq!(all_tasks.get(&uuid1).unwrap().get_uuid(), uuid1);
+        assert_eq!(all_tasks.get(&uuid2).unwrap().get_uuid(), uuid2);
+
+        let all_tasks = rep.all_task_data().unwrap();
+        assert_eq!(all_tasks.len(), 2);
+        assert_eq!(all_tasks.get(&uuid1).unwrap().get_uuid(), uuid1);
+        assert_eq!(all_tasks.get(&uuid2).unwrap().get_uuid(), uuid2);
     }
 
     #[test]
@@ -562,10 +623,10 @@ mod tests {
         rep.dependency_map(true).unwrap();
         assert!(rep.depmap.is_some());
 
-        let t = rep.new_task(Status::Pending, "a task".into())?;
-        let uuid1 = t.get_uuid();
-
         let mut ops = Operations::new();
+        let uuid1 = Uuid::new_v4();
+        let mut t = rep.create_task(uuid1, &mut ops).unwrap();
+        t.set_status(Status::Pending, &mut ops).unwrap();
 
         // uuid2 is created and deleted, but this does not affect the
         // working set.
@@ -677,17 +738,20 @@ mod tests {
     fn get_and_modify() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep
-            .new_task(Status::Pending, "another task".into())
-            .unwrap();
-        let uuid = t.get_uuid();
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        t.set_status(Status::Pending, &mut ops).unwrap();
+        t.set_description("another task".into(), &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
-        let t = rep.get_task(uuid).unwrap().unwrap();
+        let mut t = rep.get_task(uuid).unwrap().unwrap();
         assert_eq!(t.get_description(), String::from("another task"));
 
-        let mut t = t.into_mut(&mut rep);
-        t.set_status(Status::Deleted).unwrap();
-        t.set_description("gone".into()).unwrap();
+        let mut ops = Operations::new();
+        t.set_status(Status::Deleted, &mut ops).unwrap();
+        t.set_description("gone".into(), &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
         let t = rep.get_task(uuid).unwrap().unwrap();
         assert_eq!(t.get_status(), Status::Deleted);
@@ -703,10 +767,11 @@ mod tests {
     fn get_task_data() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep
-            .new_task(Status::Pending, "another task".into())
-            .unwrap();
-        let uuid = t.get_uuid();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        t.set_description("another task".into(), &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
         let t = rep.get_task_data(uuid).unwrap().unwrap();
         assert_eq!(t.get_uuid(), uuid);
@@ -719,16 +784,16 @@ mod tests {
     fn rebuild_working_set_includes_recurring() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep
-            .new_task(Status::Completed, "another task".into())
-            .unwrap();
-        let uuid = t.get_uuid();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        t.set_status(Status::Completed, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
-        let t = rep.get_task(uuid).unwrap().unwrap();
-        {
-            let mut t = t.into_mut(&mut rep);
-            t.set_status(Status::Recurring).unwrap();
-        }
+        let mut t = rep.get_task(uuid).unwrap().unwrap();
+        let mut ops = Operations::new();
+        t.set_status(Status::Recurring, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
         rep.rebuild_working_set(true).unwrap();
 
@@ -740,10 +805,11 @@ mod tests {
     fn new_pending_adds_to_working_set() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep
-            .new_task(Status::Pending, "to-be-pending".into())
-            .unwrap();
-        let uuid = t.get_uuid();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        t.set_status(Status::Pending, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
         let ws = rep.working_set().unwrap();
         assert_eq!(ws.len(), 1); // only one non-none value
@@ -758,10 +824,11 @@ mod tests {
     fn new_recurring_adds_to_working_set() {
         let mut rep = Replica::new_inmemory();
 
-        let t = rep
-            .new_task(Status::Recurring, "to-be-recurring".into())
-            .unwrap();
-        let uuid = t.get_uuid();
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        t.set_status(Status::Recurring, &mut ops).unwrap();
+        rep.commit_operations(ops).unwrap();
 
         let ws = rep.working_set().unwrap();
         assert_eq!(ws.len(), 1); // only one non-none value
@@ -782,24 +849,35 @@ mod tests {
     #[test]
     fn expire() {
         let mut rep = Replica::new_inmemory();
-        let mut t;
+        let mut ops = Operations::new();
 
-        rep.new_task(Status::Pending, "keeper 1".into()).unwrap();
-        rep.new_task(Status::Completed, "keeper 2".into()).unwrap();
+        // uuid1 is pending, so is not expired.
+        let uuid1 = Uuid::new_v4();
+        let mut t = rep.create_task(uuid1, &mut ops).unwrap();
+        t.set_description("keeper 1".into(), &mut ops).unwrap();
+        t.set_status(Status::Pending, &mut ops).unwrap();
 
-        t = rep.new_task(Status::Deleted, "keeper 3".into()).unwrap();
-        {
-            let mut t = t.into_mut(&mut rep);
-            // set entry, with modification set as a side-effect
-            t.set_entry(Some(Utc::now())).unwrap();
-        }
+        // uuid2 is completed, so is not expired.
+        let uuid2 = Uuid::new_v4();
+        let mut t = rep.create_task(uuid2, &mut ops).unwrap();
+        t.set_description("keeper 2".into(), &mut ops).unwrap();
+        t.set_status(Status::Completed, &mut ops).unwrap();
 
-        t = rep.new_task(Status::Deleted, "goner".into()).unwrap();
-        {
-            let mut t = t.into_mut(&mut rep);
-            t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap())
-                .unwrap();
-        }
+        // uuid3 is deleted but recently modified, so is not expired.
+        let uuid3 = Uuid::new_v4();
+        let mut t = rep.create_task(uuid3, &mut ops).unwrap();
+        t.set_description("keeper 3".into(), &mut ops).unwrap();
+        t.set_status(Status::Deleted, &mut ops).unwrap();
+        t.set_entry(Some(Utc::now()), &mut ops).unwrap();
+
+        // uuid4 was deleted long ago, so it is expired.
+        let uuid4 = Uuid::new_v4();
+        let mut t = rep.create_task(uuid4, &mut ops).unwrap();
+        t.set_description("goner".into(), &mut ops).unwrap();
+        t.set_status(Status::Deleted, &mut ops).unwrap();
+        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)
+            .unwrap();
+        rep.commit_operations(ops).unwrap();
 
         rep.expire_tasks().unwrap();
 
@@ -814,34 +892,32 @@ mod tests {
         let mut rep = Replica::new_inmemory();
 
         let mut tasks = vec![];
+        let mut ops = Operations::new();
         for _ in 0..4 {
-            tasks.push(rep.new_task(Status::Pending, "t".into()).unwrap());
+            let mut t = rep.create_task(Uuid::new_v4(), &mut ops).unwrap();
+            t.set_status(Status::Pending, &mut ops).unwrap();
+            tasks.push(t);
         }
-
         let uuids: Vec<_> = tasks.iter().map(|t| t.get_uuid()).collect();
 
         // t[3] depends on t[2], and t[1]
-        {
-            let mut t = tasks.pop().unwrap().into_mut(&mut rep);
-            t.add_dependency(uuids[2]).unwrap();
-            t.add_dependency(uuids[1]).unwrap();
-        }
+        let mut t = tasks.pop().unwrap();
+        t.add_dependency(uuids[2], &mut ops).unwrap();
+        t.add_dependency(uuids[1], &mut ops).unwrap();
 
         // t[2] depends on t[0]
-        {
-            let mut t = tasks.pop().unwrap().into_mut(&mut rep);
-            t.add_dependency(uuids[0]).unwrap();
-        }
+        let mut t = tasks.pop().unwrap();
+        t.add_dependency(uuids[0], &mut ops).unwrap();
 
         // t[1] depends on t[0]
-        {
-            let mut t = tasks.pop().unwrap().into_mut(&mut rep);
-            t.add_dependency(uuids[0]).unwrap();
-        }
+        let mut t = tasks.pop().unwrap();
+        t.add_dependency(uuids[0], &mut ops).unwrap();
 
-        // generate the dependency map, forcing an update based on the newly-added
-        // dependencies
-        let dm = rep.dependency_map(true).unwrap();
+        rep.commit_operations(ops).unwrap();
+
+        // generate the dependency map, forcing an update based on the newly-added dependencies.
+        // This need not be forced since the `commit_operations` invalidated the cached value.
+        let dm = rep.dependency_map(false).unwrap();
 
         assert_eq!(
             dm.dependencies(uuids[3]).collect::<HashSet<_>>(),
@@ -878,13 +954,14 @@ mod tests {
         );
 
         // mark t[0] as done, removing it from the working set
+        let mut ops = Operations::new();
         rep.get_task(uuids[0])
             .unwrap()
             .unwrap()
-            .into_mut(&mut rep)
-            .done()
+            .done(&mut ops)
             .unwrap();
-        let dm = rep.dependency_map(true).unwrap();
+        rep.commit_operations(ops).unwrap();
+        let dm = rep.dependency_map(false).unwrap();
 
         assert_eq!(
             dm.dependencies(uuids[3]).collect::<HashSet<_>>(),

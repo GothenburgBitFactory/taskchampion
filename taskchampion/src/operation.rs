@@ -71,6 +71,11 @@ impl Operations {
         self.0.push(op);
     }
 
+    /// Determine if this set of operations is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// For tests, it's useful to set the timestamps of all updates to the same value.
     #[cfg(test)]
     pub fn set_all_timestamps(&mut self, set_to: DateTime<Utc>) {

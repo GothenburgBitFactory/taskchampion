@@ -14,8 +14,7 @@ use uuid::Uuid;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TaskData {
     uuid: Uuid,
-    // Temporarily pub(crate) to allow access from Task.
-    pub(crate) taskmap: TaskMap,
+    taskmap: TaskMap,
 }
 
 impl TaskData {
@@ -36,6 +35,11 @@ impl TaskData {
     /// Get this task's UUID.
     pub fn get_uuid(&self) -> Uuid {
         self.uuid
+    }
+
+    /// Get the taskmap (used only for deprecated `Task::get_taskmap`).
+    pub(in crate::task) fn get_taskmap(&self) -> &TaskMap {
+        &self.taskmap
     }
 
     /// Get a value on this task.
@@ -62,6 +66,8 @@ impl TaskData {
     /// set of operations.
     ///
     /// Setting a value to `None` removes that value from the task.
+    ///
+    /// This method does not have any special handling of the `modified` property.
     pub fn update(
         &mut self,
         property: impl Into<String>,
@@ -93,10 +99,13 @@ impl TaskData {
     /// example, if a task is deleted on replica 1 and its description modified on replica 2, then
     /// after both replicas have fully synced, the resulting task will only have a `description`
     /// property.
-    pub fn delete(self, operations: &mut Operations) {
+    ///
+    /// After this call, the `TaskData` value still exists but has no properties and should be
+    /// dropped.
+    pub fn delete(&mut self, operations: &mut Operations) {
         operations.add(Operation::Delete {
             uuid: self.uuid,
-            old_task: self.taskmap,
+            old_task: std::mem::take(&mut self.taskmap),
         });
     }
 }
@@ -127,7 +136,7 @@ mod test {
     }
 
     #[test]
-    fn uuid() {
+    fn get_uuid() {
         let t = TaskData::new(TEST_UUID, TaskMap::new());
         assert_eq!(t.get_uuid(), TEST_UUID);
     }
@@ -239,7 +248,7 @@ mod test {
     #[test]
     fn delete() {
         let mut ops = Operations::new();
-        let t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
+        let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.delete(&mut ops);
         assert_eq!(
             ops,

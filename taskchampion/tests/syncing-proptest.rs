@@ -63,7 +63,7 @@ fn multi_replica_sync(action_sequence in actions()) {
                 }
             },
             Action::Delete => {
-                if let Some(t) = rep.get_task_data(uuid).unwrap() {
+                if let Some(mut t) = rep.get_task_data(uuid).unwrap() {
                     let mut ops = Operations::new();
                     t.delete(&mut ops);
                     rep.commit_operations(ops).unwrap();
