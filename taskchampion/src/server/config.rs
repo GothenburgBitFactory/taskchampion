@@ -58,8 +58,8 @@ pub enum ServerConfig {
         /// - storage.objects.delete
         ///
         /// See the following GCP resources for more information:
-        /// - https://cloud.google.com/docs/authentication#service-accounts
-        /// - https://cloud.google.com/iam/docs/keys-create-delete#creating
+        /// - <https://cloud.google.com/docs/authentication#service-accounts>
+        /// - <https://cloud.google.com/iam/docs/keys-create-delete#creating>
         credential_path: Option<String>,
         /// Private encryption secret used to encrypt all data sent to the server.  This can
         /// be any suitably un-guessable string of bytes.

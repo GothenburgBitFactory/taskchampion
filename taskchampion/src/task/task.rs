@@ -362,7 +362,7 @@ impl Task {
         Ok(())
     }
 
-    /// Start the task by creating "start": "<timestamp>", if the task is not already
+    /// Start the task by setting "start" to the current timestamp, if the task is not already
     /// active.
     pub fn start(&mut self, ops: &mut Operations) -> Result<()> {
         if self.is_active() {
