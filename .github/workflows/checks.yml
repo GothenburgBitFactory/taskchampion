@@ -31,12 +31,11 @@ jobs:
         with:
           toolchain: "1.70.0" # MSRV
           override: true
+          components: clippy
 
       - uses: actions-rs/cargo@v1.0.3
         with:
           command: check
-
-      - run: rustup component add clippy
 
       - uses: actions-rs/clippy-check@v1
         with:
@@ -44,9 +43,33 @@ jobs:
           args: --all-features --no-deps -- -D warnings
           name: "Clippy Results"
 
+  rustdoc:
+    runs-on: ubuntu-latest
+    name: "Rustdoc"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          minimal: true
+
+      - uses: actions-rs/cargo@v1.0.3
+        with:
+          command: rustdoc
+          args: -p taskchampion --all-features -- -Z unstable-options  --check -Dwarnings
+
   mdbook:
     runs-on: ubuntu-latest
-    name: "Documentation"
+    name: "mdBook Documentation"
 
     steps:
       - uses: actions/checkout@v4
