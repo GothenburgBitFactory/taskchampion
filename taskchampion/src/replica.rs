@@ -422,6 +422,7 @@ impl Replica {
         let mut ops = Operations::new();
         if !self.added_undo_point {
             ops.push(Operation::UndoPoint);
+            self.added_undo_point = true;
         }
         ops
     }
