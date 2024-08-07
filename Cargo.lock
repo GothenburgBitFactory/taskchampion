@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "taskchampion"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -2208,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "regex",
