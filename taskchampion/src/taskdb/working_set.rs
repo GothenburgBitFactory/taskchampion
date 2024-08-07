@@ -96,10 +96,10 @@ mod test {
         // add everything to the TaskDb
         let mut ops = Operations::new();
         for uuid in &uuids {
-            ops.add(Operation::Create { uuid: *uuid });
+            ops.push(Operation::Create { uuid: *uuid });
         }
         for i in &[0usize, 1, 4] {
-            ops.add(Operation::Update {
+            ops.push(Operation::Update {
                 uuid: uuids[*i],
                 property: String::from("status"),
                 value: Some("pending".into()),

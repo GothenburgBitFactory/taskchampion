@@ -25,7 +25,7 @@ impl TaskData {
 
     /// Create a new, empty task with the given UUID.
     pub fn create(uuid: Uuid, operations: &mut Operations) -> Self {
-        operations.add(Operation::Create { uuid });
+        operations.push(Operation::Create { uuid });
         Self {
             uuid,
             taskmap: TaskMap::new(),
@@ -81,7 +81,7 @@ impl TaskData {
         } else {
             self.taskmap.remove(&property);
         }
-        operations.add(Operation::Update {
+        operations.push(Operation::Update {
             uuid: self.uuid,
             property,
             old_value,
@@ -103,7 +103,7 @@ impl TaskData {
     /// After this call, the `TaskData` value still exists but has no properties and should be
     /// dropped.
     pub fn delete(&mut self, operations: &mut Operations) {
-        operations.add(Operation::Delete {
+        operations.push(Operation::Delete {
             uuid: self.uuid,
             old_task: std::mem::take(&mut self.taskmap),
         });
@@ -113,6 +113,7 @@ impl TaskData {
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::DateTime;
     use pretty_assertions::assert_eq;
 
     const TEST_UUID: Uuid = Uuid::from_u128(1234);
@@ -120,11 +121,20 @@ mod test {
     fn make_ops(ops: &[Operation]) -> Operations {
         let mut res = Operations::new();
         for op in ops {
-            res.add(op.clone());
+            res.push(op.clone());
         }
         res
     }
 
+    /// Set all operations' timestamps to the given timestamp, to ease use of
+    /// `assert_eq!`.
+    pub fn set_all_timestamps(ops: &mut Operations, set_to: DateTime<Utc>) {
+        for op in ops {
+            if let Operation::Update { timestamp, .. } = op {
+                *timestamp = set_to;
+            }
+        }
+    }
     #[test]
     fn create() {
         let mut ops = Operations::new();
@@ -191,7 +201,7 @@ mod test {
         let mut t = TaskData::new(TEST_UUID, TaskMap::new());
         t.update("prop1", Some("val1".into()), &mut ops);
         let now = Utc::now();
-        ops.set_all_timestamps(now);
+        set_all_timestamps(&mut ops, now);
         assert_eq!(
             ops,
             make_ops(&[Operation::Update {
@@ -211,7 +221,7 @@ mod test {
         let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.update("prop1", Some("new".into()), &mut ops);
         let now = Utc::now();
-        ops.set_all_timestamps(now);
+        set_all_timestamps(&mut ops, now);
         assert_eq!(
             ops,
             make_ops(&[Operation::Update {
@@ -231,7 +241,7 @@ mod test {
         let mut t = TaskData::new(TEST_UUID, [("prop1".to_string(), "val".to_string())].into());
         t.update("prop1", None, &mut ops);
         let now = Utc::now();
-        ops.set_all_timestamps(now);
+        set_all_timestamps(&mut ops, now);
         assert_eq!(
             ops,
             make_ops(&[Operation::Update {

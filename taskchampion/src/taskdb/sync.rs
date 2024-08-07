@@ -225,8 +225,8 @@ mod test {
         // make some changes in parallel to db1 and db2..
         let uuid1 = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid: uuid1 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid1 });
+        ops.push(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
@@ -235,8 +235,8 @@ mod test {
         });
 
         let uuid2 = Uuid::new_v4();
-        ops.add(Operation::Create { uuid: uuid2 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid2 });
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "title".into(),
             value: Some("my second task".into()),
@@ -253,7 +253,7 @@ mod test {
 
         // now make updates to the same task on both sides
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "priority".into(),
             value: Some("H".into()),
@@ -263,7 +263,7 @@ mod test {
         db1.commit_operations(ops, |_| false)?;
 
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid2,
             property: "project".into(),
             value: Some("personal".into()),
@@ -294,8 +294,8 @@ mod test {
         // create and update a task..
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task".into()),
@@ -312,12 +312,12 @@ mod test {
 
         // delete and re-create the task on db1
         let mut ops = Operations::new();
-        ops.add(Operation::Delete {
+        ops.push(Operation::Delete {
             uuid,
             old_task: TaskMap::new(),
         });
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my second task".into()),
@@ -328,7 +328,7 @@ mod test {
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid,
             property: "project".into(),
             value: Some("personal".into()),
@@ -354,8 +354,8 @@ mod test {
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task".into()),
@@ -379,7 +379,7 @@ mod test {
 
         // update the taskdb and sync again
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task, updated".into()),
@@ -412,7 +412,7 @@ mod test {
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid });
+        ops.push(Operation::Create { uuid });
         db1.commit_operations(ops, |_| false)?;
 
         test_server.set_snapshot_urgency(SnapshotUrgency::Low);
@@ -437,8 +437,8 @@ mod test {
         // add a task to db
         let uuid1 = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid: uuid1 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid1 });
+        ops.push(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
@@ -456,7 +456,7 @@ mod test {
         // add some large operations to db
         let mut ops = Operations::new();
         for _ in 0..3 {
-            ops.add(Operation::Update {
+            ops.push(Operation::Update {
                 uuid: uuid1,
                 property: "description".into(),
                 value: Some(data.iter().collect()),
@@ -485,8 +485,8 @@ mod test {
         // add a task to db
         let uuid1 = Uuid::new_v4();
         let mut ops = Operations::new();
-        ops.add(Operation::Create { uuid: uuid1 });
-        ops.add(Operation::Update {
+        ops.push(Operation::Create { uuid: uuid1 });
+        ops.push(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
@@ -501,7 +501,7 @@ mod test {
         // add an operation greater than the batch limit
         let data = vec!['a'; 1000001];
         let mut ops = Operations::new();
-        ops.add(Operation::Update {
+        ops.push(Operation::Update {
             uuid: uuid1,
             property: "description".into(),
             value: Some(data.iter().collect()),

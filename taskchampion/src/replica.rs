@@ -405,11 +405,11 @@ impl Replica {
     /// instance is held for a long time and used to apply more than one user-visible change.
     #[deprecated(
         since = "0.7.0",
-        note = "Use `Operations::new_with_undo_point` instead."
+        note = "Push an `Operation::UndoPoint` onto your `Operations` instead."
     )]
     pub fn add_undo_point(&mut self, force: bool) -> Result<()> {
         if force || !self.added_undo_point {
-            let ops = Operations::new_with_undo_point();
+            let ops = vec![Operation::UndoPoint];
             self.commit_operations(ops)?;
             self.added_undo_point = true;
         }
@@ -419,12 +419,12 @@ impl Replica {
     /// Make a new `Operations`, with an undo operation if one has not already been added by
     /// this `Replica` insance
     fn make_operations(&mut self) -> Operations {
-        if self.added_undo_point {
-            Operations::new()
-        } else {
+        let mut ops = Operations::new();
+        if !self.added_undo_point {
+            ops.push(Operation::UndoPoint);
             self.added_undo_point = true;
-            Operations::new_with_undo_point()
         }
+        ops
     }
 
     /// Get the number of operations local to this replica and not yet synchronized to the server.
@@ -646,8 +646,8 @@ mod tests {
         // uuid2 is created and deleted, but this does not affect the
         // working set.
         let uuid2 = Uuid::new_v4();
-        ops.add(Operation::Create { uuid: uuid2 });
-        ops.add(Operation::Delete {
+        ops.push(Operation::Create { uuid: uuid2 });
+        ops.push(Operation::Delete {
             uuid: uuid2,
             old_task: TaskMap::new(),
         });
@@ -664,15 +664,15 @@ mod tests {
 
         // uuid3 has status deleted, so is not added to the working set.
         let uuid3 = Uuid::new_v4();
-        ops.add(update_op(uuid3, "status", None, Some("deleted")));
+        ops.push(update_op(uuid3, "status", None, Some("deleted")));
 
         // uuid4 goes from pending to pending, so is not added to the working set.
         let uuid4 = Uuid::new_v4();
-        ops.add(update_op(uuid4, "status", Some("pending"), Some("pending")));
+        ops.push(update_op(uuid4, "status", Some("pending"), Some("pending")));
 
         // uuid5 goes from recurring to recurring, so is not added to the working set.
         let uuid5 = Uuid::new_v4();
-        ops.add(update_op(
+        ops.push(update_op(
             uuid5,
             "status",
             Some("recurring"),
@@ -681,7 +681,7 @@ mod tests {
 
         // uuid6 goes from recurring to pending, so is not added to the working set.
         let uuid6 = Uuid::new_v4();
-        ops.add(update_op(
+        ops.push(update_op(
             uuid6,
             "status",
             Some("recurring"),
@@ -690,7 +690,7 @@ mod tests {
 
         // uuid7 goes from pending to recurring, so is not added to the working set.
         let uuid7 = Uuid::new_v4();
-        ops.add(update_op(
+        ops.push(update_op(
             uuid7,
             "status",
             Some("pending"),
@@ -699,15 +699,15 @@ mod tests {
 
         // uuid8 goes from no-status to recurring, so is added to the working set.
         let uuid8 = Uuid::new_v4();
-        ops.add(update_op(uuid8, "status", None, Some("recurring")));
+        ops.push(update_op(uuid8, "status", None, Some("recurring")));
 
         // uuid9 goes from no-status to pending, so is added to the working set.
         let uuid9 = Uuid::new_v4();
-        ops.add(update_op(uuid9, "status", None, Some("pending")));
+        ops.push(update_op(uuid9, "status", None, Some("pending")));
 
         // uuid10 goes from deleted to pending, so is added to the working set.
         let uuid10 = Uuid::new_v4();
-        ops.add(update_op(
+        ops.push(update_op(
             uuid10,
             "status",
             Some("deleted"),
@@ -716,7 +716,7 @@ mod tests {
 
         // uuid11 goes from pending to deleted, so is not added to the working set.
         let uuid11 = Uuid::new_v4();
-        ops.add(update_op(
+        ops.push(update_op(
             uuid11,
             "status",
             Some("pending"),
@@ -725,7 +725,7 @@ mod tests {
 
         // uuid12 goes from pending to no-status, so is not added to the working set.
         let uuid12 = Uuid::new_v4();
-        ops.add(update_op(uuid12, "status", Some("pending"), None));
+        ops.push(update_op(uuid12, "status", Some("pending"), None));
 
         rep.commit_operations(ops)?;
 
