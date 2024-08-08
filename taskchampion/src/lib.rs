@@ -38,10 +38,12 @@ Users can define their own server impelementations.
 
 Support for some optional functionality is controlled by feature flags.
 
-Sync server client support:
-
  * `server-gcp` - sync to Google Cloud Platform
  * `server-sync` - sync to the taskchampion-sync-server
+ * `sync` - enables all of the sync features above
+ * `bundled` - activates bundling system libraries like sqlite
+
+ By default, `sync` and `bundled` are enabled.
 
 # See Also
 

@@ -12,8 +12,10 @@ edition = "2021"
 rust-version = "1.70.0"
 
 [features]
-default = ["server-sync", "server-gcp"]
+default = ["sync", "bundled"]
 
+# Support for all sync solutions
+sync = ["server-sync", "server-gcp"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
@@ -22,6 +24,8 @@ server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
+# static bundling of dependencies
+bundled = ["rusqlite/bundled"]
 
 [package.metadata.docs.rs]
 all-features = true
