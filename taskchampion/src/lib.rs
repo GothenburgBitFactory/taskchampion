@@ -52,7 +52,7 @@ for more information about the design and usage of the tool.
 
 # Minimum Supported Rust Version (MSRV)
 
-This crate supports Rust version 1.70.0 and higher.
+This crate supports Rust version 1.73.0 and higher.
 
  */
 mod depmap;
