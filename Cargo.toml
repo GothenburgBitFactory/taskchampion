@@ -3,6 +3,7 @@
 members = [
     "taskchampion",
     "xtask",
+    "py-lib"
 ]
 
 resolver = "2"
