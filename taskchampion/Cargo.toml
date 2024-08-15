@@ -1,6 +1,6 @@
 [package]
 name = "taskchampion"
-version = "0.5.0"
+version = "0.7.0"
 authors = ["Dustin J. Mitchell <dustin@mozilla.com>"]
 description = "Personal task-tracking"
 homepage = "https://gothenburgbitfactory.github.io/taskchampion/"
@@ -9,11 +9,13 @@ repository = "https://github.com/GothenburgBitFactory/taskchampion"
 readme = "../README.md"
 license = "MIT"
 edition = "2021"
-rust-version = "1.70.0"
+rust-version = "1.73.0"
 
 [features]
-default = ["server-sync", "server-gcp"]
+default = ["sync", "bundled"]
 
+# Support for all sync solutions
+sync = ["server-sync", "server-gcp"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
@@ -22,6 +24,8 @@ server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
+# static bundling of dependencies
+bundled = ["rusqlite/bundled"]
 
 [package.metadata.docs.rs]
 all-features = true

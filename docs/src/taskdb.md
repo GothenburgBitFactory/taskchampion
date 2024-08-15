@@ -28,5 +28,6 @@ Operations are checked for validity as they are applied.
 ## Deletion and Expiration
 
 Deletion of a task merely changes the task's status to "deleted", leaving it in the Task database.
-Actual removal of tasks from the task database takes place as part of _expiration_, triggered by the user as part of a garbage-collection process.
-Expiration removes tasks with a `modified` property more than 180 days in the past, by creating a `Delete(uuid)` operation.
+Actual removal of tasks from the task database takes place as part of _expiration_.
+TaskChampion does not automatically expire tasks, although applications using TaskChampion, such as Taskwarrior, may do so.
+The expiration process removes tasks with a `modified` property more than 180 days in the past, by creating a `Delete(uuid)` operation.

@@ -59,7 +59,7 @@ mod test {
 
         assert_eq!(
             dm.dependencies(t).collect::<HashSet<_>>(),
-            set![uuid1, uuid2]
+            HashSet::from([uuid1, uuid2])
         );
     }
 
@@ -76,6 +76,9 @@ mod test {
         dm.add_dependency(Uuid::new_v4(), uuid1);
         dm.add_dependency(uuid2, Uuid::new_v4());
 
-        assert_eq!(dm.dependents(t).collect::<HashSet<_>>(), set![uuid1, uuid2]);
+        assert_eq!(
+            dm.dependents(t).collect::<HashSet<_>>(),
+            HashSet::from([uuid1, uuid2])
+        );
     }
 }

@@ -49,14 +49,3 @@ You can generate the documentation for the `taskchampion` crate with `cargo doc 
 We expect contributors to follow the [GitHub Flow](https://guides.github.com/introduction/flow/).
 Aside from that, we have no particular requirements on pull requests.
 Make your patch, double-check that it's complete (tests? docs? documentation comments?), and make a new pull request.
-
-Any non-trivial change (particularly those that change the behaviour of the application, or change the API) should be noted in the projects changelog.
-In order to manage this, changelog entries are stored as text files in the `.changelog/` directory at the repository root.
-
-To add a new changelog entry, you can simply run `python3 ./script/changelog.py add "Fixed thingo to increase zorbloxification [Issue #2](http://example.com)`
-
-This creates a file named `./changelogs/yyyy-mm-dd-branchname.md` (timestamp, current git branch) which contains a markdown snippet.
-
-If you don't have a Python 3 intepreter installed, you can simply create this file manually. It should contain a list item like `- Fixed thingo [...]`
-
-Periodically (probably just before release), these changelog entries are concatenated combined together and added into the `CHANGELOG.md` file.

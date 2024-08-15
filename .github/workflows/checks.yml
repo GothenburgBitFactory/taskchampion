@@ -29,24 +29,47 @@ jobs:
 
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.70.0" # MSRV
+          toolchain: "1.73.0" # MSRV
           override: true
+          components: clippy
 
       - uses: actions-rs/cargo@v1.0.3
         with:
           command: check
 
-      - run: rustup component add clippy
-
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          args: --all-features --no-deps -- -D warnings
           name: "Clippy Results"
+
+  rustdoc:
+    runs-on: ubuntu-latest
+    name: "Rustdoc"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          minimal: true
+
+      - uses: actions-rs/cargo@v1.0.3
+        with:
+          command: rustdoc
+          args: -p taskchampion --all-features -- -Z unstable-options  --check -Dwarnings
 
   mdbook:
     runs-on: ubuntu-latest
-    name: "Documentation"
+    name: "mdBook Documentation"
 
     steps:
       - uses: actions/checkout@v4
@@ -78,38 +101,3 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  codegen:
-    runs-on: ubuntu-latest
-    name: "codegen"
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: "1.70.0" # MSRV
-          override: true
-
-      - uses: actions-rs/cargo@v1.0.3
-        with:
-          command: run
-          args: --package xtask -- codegen
-
-      - name: check for changes
-        run: |
-          if ! git diff; then
-            echo "Generated code not up-to-date;
-            run `cargo run --package xtask -- codegen` and commit the result";
-            exit 1;
-          fi

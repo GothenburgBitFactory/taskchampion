@@ -125,7 +125,7 @@ impl Server for SyncServer {
                     get_snapshot_urgency(&resp),
                 ))
             }
-            Err(ureq::Error::Status(status, resp)) if status == 409 => {
+            Err(ureq::Error::Status(409, resp)) => {
                 let parent_version_id = get_uuid_header(&resp, "X-Parent-Version-Id")?;
                 Ok((
                     AddVersionResult::ExpectedParentVersion(parent_version_id),
@@ -159,9 +159,7 @@ impl Server for SyncServer {
                     history_segment,
                 })
             }
-            Err(ureq::Error::Status(status, _)) if status == 404 => {
-                Ok(GetVersionResult::NoSuchVersion)
-            }
+            Err(ureq::Error::Status(404, _)) => Ok(GetVersionResult::NoSuchVersion),
             Err(err) => Err(err.into()),
         }
     }
@@ -197,7 +195,7 @@ impl Server for SyncServer {
                 let snapshot = self.cryptor.unseal(sealed)?.payload;
                 Ok(Some((version_id, snapshot)))
             }
-            Err(ureq::Error::Status(status, _)) if status == 404 => Ok(None),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(err) => Err(err.into()),
         }
     }

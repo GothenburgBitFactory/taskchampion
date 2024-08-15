@@ -16,32 +16,34 @@ A TaskChampion replica is a local copy of a user's task data.  As the name sugge
 replicas of the same data can exist (such as on a user's laptop and on their phone) and can
 synchronize with one another.
 
-Replicas are accessed using the [`Replica`](crate::Replica) type.
+Replicas are accessed using the [`Replica`] type.
 
 # Task Storage
 
 Replicas access the task database via a [storage object](crate::storage::Storage).
-Create a storage object with [`StorageConfig`](crate::storage::StorageConfig).
+Create a storage object with [`StorageConfig`].
 
-The [`storage`](crate::storage) module supports pluggable storage for a replica's data.
+The [`storage`] module supports pluggable storage for a replica's data.
 An implementation is provided, but users of this crate can provide their own implementation as well.
 
 # Server
 
 Replica synchronization takes place against a server.
-Create a server with [`ServerConfig`](crate::ServerConfig).
+Create a server with [`ServerConfig`].
 
-The [`server`](crate::server) module defines the interface a server must meet.
+The [`server`] module defines the interface a server must meet.
 Users can define their own server impelementations.
 
 # Feature Flags
 
 Support for some optional functionality is controlled by feature flags.
 
-Sync server client support:
-
  * `server-gcp` - sync to Google Cloud Platform
  * `server-sync` - sync to the taskchampion-sync-server
+ * `sync` - enables all of the sync features above
+ * `bundled` - activates bundling system libraries like sqlite
+
+ By default, `sync` and `bundled` are enabled.
 
 # See Also
 
@@ -50,15 +52,12 @@ for more information about the design and usage of the tool.
 
 # Minimum Supported Rust Version (MSRV)
 
-This crate supports Rust version 1.70.0 and higher.
+This crate supports Rust version 1.73.0 and higher.
 
  */
-
-// NOTE: it's important that this 'mod' comes first so that the macros can be used in other modules
-mod macros;
-
 mod depmap;
 mod errors;
+mod operation;
 mod replica;
 pub mod server;
 pub mod storage;
@@ -69,10 +68,11 @@ mod workingset;
 
 pub use depmap::DependencyMap;
 pub use errors::Error;
+pub use operation::{Operation, Operations};
 pub use replica::Replica;
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
-pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskMut};
+pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
 pub use workingset::WorkingSet;
 
 /// Re-exported type from the `uuid` crate, for ease of compatibility for consumers of this crate.

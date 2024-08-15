@@ -64,8 +64,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::server::SyncOp;
     use crate::taskdb::TaskDb;
+    use crate::{Operation, Operations};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -94,17 +94,20 @@ mod test {
         println!("uuids[4]: {:?} - pending, in working set", uuids[4]);
 
         // add everything to the TaskDb
+        let mut ops = Operations::new();
         for uuid in &uuids {
-            db.apply(SyncOp::Create { uuid: *uuid })?;
+            ops.push(Operation::Create { uuid: *uuid });
         }
         for i in &[0usize, 1, 4] {
-            db.apply(SyncOp::Update {
+            ops.push(Operation::Update {
                 uuid: uuids[*i],
                 property: String::from("status"),
                 value: Some("pending".into()),
+                old_value: None,
                 timestamp: Utc::now(),
-            })?;
+            });
         }
+        db.commit_operations(ops, |_| false)?;
 
         // set the existing working_set as we want it
         {
