@@ -5,7 +5,7 @@ Display layers should apply appropriate defaults where necessary.
 
 ## Validity
 
-Any_ key/value map is a valid task, including an empty task.
+_Any_ key/value map is a valid task, including an empty task.
 Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information.
 For example, a task with status "completed" but no "end" key present should be interpreted as completed at an unknown time.
 
