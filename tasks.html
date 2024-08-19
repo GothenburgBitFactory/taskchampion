@@ -147,7 +147,7 @@
 <p>Tasks are stored internally as a key/value map with string keys and values.
 Display layers should apply appropriate defaults where necessary.</p>
 <h2 id="validity"><a class="header" href="#validity">Validity</a></h2>
-<p>Any_ key/value map is a valid task, including an empty task.
+<p><em>Any</em> key/value map is a valid task, including an empty task.
 Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information.
 For example, a task with status &quot;completed&quot; but no &quot;end&quot; key present should be interpreted as completed at an unknown time.</p>
 <h2 id="atomicity"><a class="header" href="#atomicity">Atomicity</a></h2>
