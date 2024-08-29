@@ -1,4 +1,4 @@
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
@@ -325,16 +325,38 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()> {
+    fn remove_operation(&mut self, op: Operation) -> Result<()> {
+        let t = self.get_txn()?;
+        let last: Option<(u32, Operation)> = t
+            .query_row(
+                "SELECT id, data FROM operations ORDER BY id DESC LIMIT 1",
+                [],
+                |x| Ok((x.get(0)?, x.get(1)?)),
+            )
+            .optional()?;
+
+        // If there is a "last" operation, and it matches the given operation,
+        // remove it.
+        if let Some((last_id, last_op)) = last {
+            if last_op == op {
+                t.execute("DELETE FROM operations where id = ?", [last_id])
+                    .context("Removing operation")?;
+                return Ok(());
+            }
+        }
+
+        Err(Error::Database(
+            "Last operation does not match -- cannot remove".to_string(),
+        ))
+    }
+
+    fn sync_complete(&mut self) -> Result<()> {
         let t = self.get_txn()?;
         t.execute("DELETE FROM operations", [])
             .context("Clear all existing operations")?;
         t.execute("DELETE FROM sqlite_sequence WHERE name = 'operations'", [])
             .context("Clear all existing operations")?;
 
-        for o in ops {
-            self.add_operation(o)?;
-        }
         Ok(())
     }
 
@@ -871,19 +893,10 @@ mod test {
             assert_eq!(txn.num_operations()?, 2);
         }
 
-        // set them to a different bunch
+        // Clear them.
         {
             let mut txn = storage.txn()?;
-            txn.set_operations(vec![
-                Operation::Delete {
-                    uuid: uuid2,
-                    old_task: TaskMap::new(),
-                },
-                Operation::Delete {
-                    uuid: uuid1,
-                    old_task: TaskMap::new(),
-                },
-            ])?;
+            txn.sync_complete()?;
             txn.commit()?;
         }
 
@@ -905,14 +918,6 @@ mod test {
             assert_eq!(
                 ops,
                 vec![
-                    Operation::Delete {
-                        uuid: uuid2,
-                        old_task: TaskMap::new()
-                    },
-                    Operation::Delete {
-                        uuid: uuid1,
-                        old_task: TaskMap::new()
-                    },
                     Operation::Create { uuid: uuid3 },
                     Operation::Delete {
                         uuid: uuid3,
@@ -920,8 +925,51 @@ mod test {
                     },
                 ]
             );
-            assert_eq!(txn.num_operations()?, 4);
+            assert_eq!(txn.num_operations()?, 2);
         }
+
+        // Remove the wrong one
+        {
+            let mut txn = storage.txn()?;
+            assert!(txn
+                .remove_operation(Operation::Create { uuid: uuid3 })
+                .is_err())
+        }
+
+        // Remove the right one
+        {
+            let mut txn = storage.txn()?;
+            txn.remove_operation(Operation::Delete {
+                uuid: uuid3,
+                old_task: TaskMap::new(),
+            })?;
+            txn.commit()?;
+        }
+
+        // read the remaining op back
+        {
+            let mut txn = storage.txn()?;
+            let ops = txn.operations()?;
+            assert_eq!(ops, vec![Operation::Create { uuid: uuid3 },]);
+            assert_eq!(txn.num_operations()?, 1);
+        }
+
+        // Remove the last one
+        {
+            let mut txn = storage.txn()?;
+            txn.remove_operation(Operation::Create { uuid: uuid3 })?;
+            assert_eq!(txn.num_operations()?, 0);
+            txn.commit()?;
+        }
+
+        // Remove a nonexistent operation
+        {
+            let mut txn = storage.txn()?;
+            assert!(txn
+                .remove_operation(Operation::Create { uuid: uuid3 })
+                .is_err());
+        }
+
         Ok(())
     }
 

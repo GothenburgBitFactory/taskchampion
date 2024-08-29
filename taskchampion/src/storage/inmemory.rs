@@ -117,8 +117,20 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()> {
-        self.mut_data_ref().operations = ops;
+    fn remove_operation(&mut self, op: Operation) -> Result<()> {
+        let last_op = self.data_ref().operations.last();
+        if last_op != Some(&op) {
+            return Err(Error::Database(
+                "Last operation does not match -- cannot remove".to_string(),
+            ));
+        }
+
+        self.mut_data_ref().operations.pop();
+        Ok(())
+    }
+
+    fn sync_complete(&mut self) -> Result<()> {
+        self.mut_data_ref().operations = Vec::new();
         Ok(())
     }
 

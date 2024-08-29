@@ -90,16 +90,16 @@ pub fn commit_reversed_operations(txn: &mut dyn StorageTxn, undo_ops: Operations
 
     for op in undo_ops {
         debug!("Reversing operation {:?}", op);
-        let rev_ops = reverse_ops(op);
+        let rev_ops = reverse_ops(op.clone());
         for op in rev_ops {
             trace!("Applying reversed operation {:?}", op);
             apply::apply_op(txn, &op)?;
             applied = true;
         }
+        txn.remove_operation(op)?;
     }
 
     if undo_len != 0 {
-        txn.set_operations(local_ops)?;
         txn.commit()?;
     }
 

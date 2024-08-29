@@ -129,7 +129,7 @@ pub(super) fn sync(
         }
     }
 
-    txn.set_operations(vec![])?;
+    txn.sync_complete()?;
     txn.commit()?;
     Ok(())
 }
