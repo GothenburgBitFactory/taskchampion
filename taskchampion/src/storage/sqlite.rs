@@ -401,6 +401,16 @@ impl<'t> StorageTxn for Txn<'t> {
         )
         .context("Marking operations as synced")?;
 
+        // Delete all operations for non-existent (usually, deleted) tasks.
+        t.execute(
+            r#"DELETE from operations
+            WHERE uuid IN (
+                SELECT operations.uuid FROM operations LEFT JOIN tasks ON operations.uuid = tasks.uuid WHERE tasks.uuid IS NULL
+            )"#,
+            [],
+        )
+        .context("Deleting orphaned operations")?;
+
         Ok(())
     }
 

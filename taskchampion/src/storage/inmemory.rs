@@ -116,12 +116,7 @@ impl<'t> StorageTxn for Txn<'t> {
             .data_ref()
             .operations
             .iter()
-            .filter(|(_, op)| match op {
-                Operation::Create { uuid: u } => *u == uuid,
-                Operation::Delete { uuid: u, .. } => *u == uuid,
-                Operation::Update { uuid: u, .. } => *u == uuid,
-                Operation::UndoPoint => false,
-            })
+            .filter(|(_, op)| op.get_uuid() == Some(uuid))
             .map(|(_, op)| op.clone())
             .collect())
     }
@@ -168,10 +163,24 @@ impl<'t> StorageTxn for Txn<'t> {
     }
 
     fn sync_complete(&mut self) -> Result<()> {
-        // Mark all operations as synced.
-        for op in &mut self.mut_data_ref().operations {
-            op.0 = true;
-        }
+        let data = self.data_ref();
+
+        // Mark all operations as synced, but drop operations which no longer have a
+        // corresponding task.
+        let new_operations = data
+            .operations
+            .iter()
+            .filter(|(_, op)| {
+                if let Some(uuid) = op.get_uuid() {
+                    data.tasks.contains_key(&uuid)
+                } else {
+                    true
+                }
+            })
+            .map(|(_, op)| (true, op.clone()))
+            .collect();
+        self.mut_data_ref().operations = new_operations;
+
         Ok(())
     }
 

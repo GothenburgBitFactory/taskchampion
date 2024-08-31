@@ -100,6 +100,11 @@ macro_rules! storage_tests {
         }
 
         #[test]
+        fn sync_complete() -> Result<()> {
+            $crate::storage::test::sync_complete($storage)
+        }
+
+        #[test]
         fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage)
         }
@@ -443,9 +448,14 @@ pub(super) fn remove_operations(mut storage: impl Storage) -> Result<()> {
     let uuid3 = Uuid::new_v4();
     let uuid4 = Uuid::new_v4();
 
-    // create some operations
+    // Create some tasks and operations.
     {
         let mut txn = storage.txn()?;
+
+        txn.create_task(uuid1)?;
+        txn.create_task(uuid2)?;
+        txn.create_task(uuid3)?;
+
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
         txn.add_operation(Operation::Create { uuid: uuid2 })?;
         txn.add_operation(Operation::Create { uuid: uuid3 })?;
@@ -500,9 +510,14 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
     let uuid3 = Uuid::new_v4();
     let now = Utc::now();
 
-    // create some operations
+    // Create some tasks and operations.
     {
         let mut txn = storage.txn()?;
+
+        txn.create_task(uuid1)?;
+        txn.create_task(uuid2)?;
+        txn.create_task(uuid3)?;
+
         txn.add_operation(Operation::UndoPoint)?;
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
@@ -522,6 +537,7 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
             uuid: uuid3,
             old_task: TaskMap::new(),
         })?;
+
         txn.commit()?;
     }
 
@@ -579,6 +595,63 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid3)?;
         assert_eq!(ops.len(), 1);
+    }
+
+    Ok(())
+}
+
+pub(super) fn sync_complete(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4();
+    let uuid2 = Uuid::new_v4();
+
+    // Create some tasks and operations.
+    {
+        let mut txn = storage.txn()?;
+
+        txn.create_task(uuid1)?;
+        txn.create_task(uuid2)?;
+
+        txn.add_operation(Operation::Create { uuid: uuid1 })?;
+        txn.add_operation(Operation::Create { uuid: uuid2 })?;
+
+        txn.commit()?;
+    }
+
+    // Sync and verify the task operations still exist.
+    {
+        let mut txn = storage.txn()?;
+
+        txn.sync_complete()?;
+
+        let ops = txn.get_task_operations(uuid1)?;
+        assert_eq!(ops.len(), 1);
+        let ops = txn.get_task_operations(uuid2)?;
+        assert_eq!(ops.len(), 1);
+    }
+
+    // Delete uuid2.
+    {
+        let mut txn = storage.txn()?;
+
+        txn.delete_task(uuid2)?;
+        txn.add_operation(Operation::Delete {
+            uuid: uuid2,
+            old_task: TaskMap::new(),
+        })?;
+
+        txn.commit()?;
+    }
+
+    // Sync and verify that uuid1's operations still exist, but uuid2's do not.
+    {
+        let mut txn = storage.txn()?;
+
+        txn.sync_complete()?;
+
+        let ops = txn.get_task_operations(uuid1)?;
+        assert_eq!(ops.len(), 1);
+        let ops = txn.get_task_operations(uuid2)?;
+        assert_eq!(ops.len(), 0);
     }
 
     Ok(())
