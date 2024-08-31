@@ -35,7 +35,7 @@ pub(super) fn sync(
         trace!("beginning sync outer loop");
         let mut base_version_id = txn.base_version()?;
 
-        let mut local_ops = txn.operations()?;
+        let mut local_ops = txn.unsynced_operations()?;
         let sync_ops = local_ops.drain(..).filter_map(SyncOp::from_op);
         let mut sync_ops_peekable = sync_ops.peekable();
 

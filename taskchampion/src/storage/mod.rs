@@ -93,21 +93,21 @@ pub trait StorageTxn {
     /// Get the set of operations for the given task.
     fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>>;
 
-    /// Get the current set of outstanding operations (operations that have not been sync'd to the
+    /// Get the current set of outstanding operations (operations that have not been synced to the
     /// server yet)
-    fn operations(&mut self) -> Result<Vec<Operation>>;
+    fn unsynced_operations(&mut self) -> Result<Vec<Operation>>;
 
-    /// Get the current set of outstanding operations (operations that have not been sync'd to the
+    /// Get the current set of outstanding operations (operations that have not been synced to the
     /// server yet)
-    fn num_operations(&mut self) -> Result<usize>;
+    fn num_unsynced_operations(&mut self) -> Result<usize>;
 
     /// Add an operation to the end of the list of operations in the storage.  Note that this
     /// merely *stores* the operation; it is up to the TaskDb to apply it.
     fn add_operation(&mut self, op: Operation) -> Result<()>;
 
     /// Remove an operation from the end of the list of operations in the storage.  The operation
-    /// must exactly match the most recent operation. Note that like `add_operation` this only
-    /// affects the list of operations.
+    /// must exactly match the most recent operation, and must not be synced. Note that like
+    /// `add_operation` this only affects the list of operations.
     fn remove_operation(&mut self, op: Operation) -> Result<()>;
 
     /// A sync has been completed, so all operations should be marked as synced. The storage
@@ -137,7 +137,7 @@ pub trait StorageTxn {
         empty = empty && self.all_tasks()?.is_empty();
         empty = empty && self.get_working_set()? == vec![None];
         empty = empty && self.base_version()? == Uuid::nil();
-        empty = empty && self.operations()?.is_empty();
+        empty = empty && self.unsynced_operations()?.is_empty();
         Ok(empty)
     }
 

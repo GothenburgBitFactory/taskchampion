@@ -169,7 +169,7 @@ impl TaskDb {
     pub(crate) fn num_operations(&mut self) -> Result<usize> {
         let mut txn = self.storage.txn().unwrap();
         Ok(txn
-            .operations()?
+            .unsynced_operations()?
             .iter()
             .filter(|o| !o.is_undo_point())
             .count())
@@ -179,7 +179,7 @@ impl TaskDb {
     pub(crate) fn num_undo_points(&mut self) -> Result<usize> {
         let mut txn = self.storage.txn().unwrap();
         Ok(txn
-            .operations()?
+            .unsynced_operations()?
             .iter()
             .filter(|o| o.is_undo_point())
             .count())
@@ -209,7 +209,7 @@ impl TaskDb {
     #[cfg(test)]
     pub(crate) fn operations(&mut self) -> Vec<Operation> {
         let mut txn = self.storage.txn().unwrap();
-        txn.operations().unwrap().to_vec()
+        txn.unsynced_operations().unwrap().to_vec()
     }
 }
 

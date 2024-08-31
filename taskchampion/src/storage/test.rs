@@ -85,8 +85,13 @@ macro_rules! storage_tests {
         }
 
         #[test]
-        fn operations() -> Result<()> {
-            $crate::storage::test::operations($storage)
+        fn unsynced_operations() -> Result<()> {
+            $crate::storage::test::unsynced_operations($storage)
+        }
+
+        #[test]
+        fn remove_operations() -> Result<()> {
+            $crate::storage::test::remove_operations($storage)
         }
 
         #[test]
@@ -349,7 +354,7 @@ pub(super) fn base_version_setting(mut storage: impl Storage) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
+pub(super) fn unsynced_operations(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
     let uuid3 = Uuid::new_v4();
@@ -365,7 +370,7 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
     // read them back
     {
         let mut txn = storage.txn()?;
-        let ops = txn.operations()?;
+        let ops = txn.unsynced_operations()?;
         assert_eq!(
             ops,
             vec![
@@ -374,17 +379,17 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
             ]
         );
 
-        assert_eq!(txn.num_operations()?, 2);
+        assert_eq!(txn.num_unsynced_operations()?, 2);
     }
 
-    // Clear them.
+    // Sync them.
     {
         let mut txn = storage.txn()?;
         txn.sync_complete()?;
         txn.commit()?;
     }
 
-    // create some more operations (to test adding operations after clearing)
+    // create some more operations (to test adding operations after sync)
     {
         let mut txn = storage.txn()?;
         txn.add_operation(Operation::Create { uuid: uuid3 })?;
@@ -398,7 +403,7 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
     // read them back
     {
         let mut txn = storage.txn()?;
-        let ops = txn.operations()?;
+        let ops = txn.unsynced_operations()?;
         assert_eq!(
             ops,
             vec![
@@ -409,15 +414,7 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
                 },
             ]
         );
-        assert_eq!(txn.num_operations()?, 2);
-    }
-
-    // Remove the wrong one
-    {
-        let mut txn = storage.txn()?;
-        assert!(txn
-            .remove_operation(Operation::Create { uuid: uuid3 })
-            .is_err())
+        assert_eq!(txn.num_unsynced_operations()?, 2);
     }
 
     // Remove the right one
@@ -433,16 +430,33 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
     // read the remaining op back
     {
         let mut txn = storage.txn()?;
-        let ops = txn.operations()?;
+        let ops = txn.unsynced_operations()?;
         assert_eq!(ops, vec![Operation::Create { uuid: uuid3 },]);
-        assert_eq!(txn.num_operations()?, 1);
+        assert_eq!(txn.num_unsynced_operations()?, 1);
+    }
+    Ok(())
+}
+
+pub(super) fn remove_operations(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4();
+    let uuid2 = Uuid::new_v4();
+    let uuid3 = Uuid::new_v4();
+    let uuid4 = Uuid::new_v4();
+
+    // create some operations
+    {
+        let mut txn = storage.txn()?;
+        txn.add_operation(Operation::Create { uuid: uuid1 })?;
+        txn.add_operation(Operation::Create { uuid: uuid2 })?;
+        txn.add_operation(Operation::Create { uuid: uuid3 })?;
+        txn.commit()?;
     }
 
-    // Remove the last one
+    // Remove the uuid3 operation.
     {
         let mut txn = storage.txn()?;
         txn.remove_operation(Operation::Create { uuid: uuid3 })?;
-        assert_eq!(txn.num_operations()?, 0);
+        assert_eq!(txn.num_unsynced_operations()?, 2);
         txn.commit()?;
     }
 
@@ -450,7 +464,30 @@ pub(super) fn operations(mut storage: impl Storage) -> Result<()> {
     {
         let mut txn = storage.txn()?;
         assert!(txn
-            .remove_operation(Operation::Create { uuid: uuid3 })
+            .remove_operation(Operation::Create { uuid: uuid4 })
+            .is_err());
+    }
+
+    // Remove an operation that is not most recent.
+    {
+        let mut txn = storage.txn()?;
+        assert!(txn
+            .remove_operation(Operation::Create { uuid: uuid1 })
+            .is_err());
+    }
+
+    // Mark operations as synced.
+    {
+        let mut txn = storage.txn()?;
+        txn.sync_complete()?;
+        txn.commit()?;
+    }
+
+    // Try to remove the synced operation.
+    {
+        let mut txn = storage.txn()?;
+        assert!(txn
+            .remove_operation(Operation::Create { uuid: uuid2 })
             .is_err());
     }
 
@@ -480,6 +517,20 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
             old_value: None,
             value: Some("P".into()),
             timestamp: now,
+        })?;
+        txn.add_operation(Operation::Delete {
+            uuid: uuid3,
+            old_task: TaskMap::new(),
+        })?;
+        txn.commit()?;
+    }
+
+    // remove the last operation to verify it doesn't appear
+    {
+        let mut txn = storage.txn()?;
+        txn.remove_operation(Operation::Delete {
+            uuid: uuid3,
+            old_task: TaskMap::new(),
         })?;
         txn.commit()?;
     }
@@ -514,6 +565,20 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
                 timestamp: now,
             }]
         );
+    }
+
+    // Sync and verify the task operations still exist.
+    {
+        let mut txn = storage.txn()?;
+
+        txn.sync_complete()?;
+
+        let ops = txn.get_task_operations(uuid1)?;
+        assert_eq!(ops.len(), 2);
+        let ops = txn.get_task_operations(uuid2)?;
+        assert_eq!(ops.len(), 1);
+        let ops = txn.get_task_operations(uuid3)?;
+        assert_eq!(ops.len(), 1);
     }
 
     Ok(())

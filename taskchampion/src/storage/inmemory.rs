@@ -11,7 +11,7 @@ use uuid::Uuid;
 struct Data {
     tasks: HashMap<Uuid, TaskMap>,
     base_version: VersionId,
-    operations: Vec<Operation>,
+    operations: Vec<(bool, Operation)>,
     working_set: Vec<Option<Uuid>>,
 }
 
@@ -116,43 +116,62 @@ impl<'t> StorageTxn for Txn<'t> {
             .data_ref()
             .operations
             .iter()
-            .filter(|op| match op {
+            .filter(|(_, op)| match op {
                 Operation::Create { uuid: u } => *u == uuid,
                 Operation::Delete { uuid: u, .. } => *u == uuid,
                 Operation::Update { uuid: u, .. } => *u == uuid,
                 Operation::UndoPoint => false,
             })
-            .cloned()
+            .map(|(_, op)| op.clone())
             .collect())
     }
 
-    fn operations(&mut self) -> Result<Vec<Operation>> {
-        Ok(self.data_ref().operations.clone())
+    fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
+        Ok(self
+            .data_ref()
+            .operations
+            .iter()
+            .filter(|(synced, _)| !synced)
+            .map(|(_, op)| op.clone())
+            .collect())
     }
 
-    fn num_operations(&mut self) -> Result<usize> {
-        Ok(self.data_ref().operations.len())
+    fn num_unsynced_operations(&mut self) -> Result<usize> {
+        Ok(self
+            .data_ref()
+            .operations
+            .iter()
+            .filter(|(synced, _)| !synced)
+            .count())
     }
 
     fn add_operation(&mut self, op: Operation) -> Result<()> {
-        self.mut_data_ref().operations.push(op);
+        self.mut_data_ref().operations.push((false, op));
         Ok(())
     }
 
     fn remove_operation(&mut self, op: Operation) -> Result<()> {
-        let last_op = self.data_ref().operations.last();
-        if last_op != Some(&op) {
-            return Err(Error::Database(
-                "Last operation does not match -- cannot remove".to_string(),
-            ));
+        if let Some((synced, last_op)) = self.data_ref().operations.last() {
+            if *synced {
+                return Err(Error::Database(
+                    "Last operation has been synced -- cannot remove".to_string(),
+                ));
+            }
+            if last_op == &op {
+                self.mut_data_ref().operations.pop();
+                return Ok(());
+            }
         }
-
-        self.mut_data_ref().operations.pop();
-        Ok(())
+        Err(Error::Database(
+            "Last operation does not match -- cannot remove".to_string(),
+        ))
     }
 
     fn sync_complete(&mut self) -> Result<()> {
-        self.mut_data_ref().operations = Vec::new();
+        // Mark all operations as synced.
+        for op in &mut self.mut_data_ref().operations {
+            op.0 = true;
+        }
         Ok(())
     }
 

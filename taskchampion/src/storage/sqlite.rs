@@ -107,17 +107,11 @@ impl SqliteStorage {
         for q in create_tables {
             con.execute(q, []).context("Creating table")?;
         }
-        // At this point the DB schema is that of TaskChampion 0.8.0.
+
+        // -- At this point the DB schema is that of TaskChampion 0.8.0.
 
         // Check for and add the `operations.uuid` column.
-        let res: u32 = con
-            .query_row(
-                "SELECT COUNT(*) AS c FROM pragma_table_xinfo('operations') WHERE name='uuid'",
-                [],
-                |r| r.get(0),
-            )
-            .context("Checking for operations.uuid")?;
-        if res == 0 {
+        if !Self::has_column(&con, "operations", "uuid")? {
             con.execute(
                 r#"ALTER TABLE operations ADD COLUMN uuid GENERATED ALWAYS AS (
                 coalesce(json_extract(data, "$.Update.uuid"),
@@ -131,7 +125,32 @@ impl SqliteStorage {
                 .context("Creating operations_by_uuid")?;
         }
 
+        if !Self::has_column(&con, "operations", "synced")? {
+            con.execute(
+                "ALTER TABLE operations ADD COLUMN synced bool DEFAULT false",
+                [],
+            )
+            .context("Adding operations.synced")?;
+
+            con.execute(
+                "CREATE INDEX operations_by_synced ON operations (synced)",
+                [],
+            )
+            .context("Creating operations_by_synced")?;
+        }
+
         Ok(SqliteStorage { con })
+    }
+
+    fn has_column(con: &Connection, table: &str, column: &str) -> Result<bool> {
+        let res: u32 = con
+            .query_row(
+                "SELECT COUNT(*) AS c FROM pragma_table_xinfo(?) WHERE name=?",
+                [table, column],
+                |r| r.get(0),
+            )
+            .with_context(|| format!("Checking for {}.{}", table, column))?;
+        Ok(res > 0)
     }
 }
 
@@ -315,10 +334,10 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn operations(&mut self) -> Result<Vec<Operation>> {
+    fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
-        let mut q = t.prepare("SELECT data FROM operations ORDER BY id ASC")?;
+        let mut q = t.prepare("SELECT data FROM operations WHERE NOT synced ORDER BY id ASC")?;
         let rows = q.query_map([], |r| {
             let data: Operation = r.get("data")?;
             Ok(data)
@@ -331,9 +350,13 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn num_operations(&mut self) -> Result<usize> {
+    fn num_unsynced_operations(&mut self) -> Result<usize> {
         let t = self.get_txn()?;
-        let count: usize = t.query_row("SELECT count(*) FROM operations", [], |x| x.get(0))?;
+        let count: usize = t.query_row(
+            "SELECT count(*) FROM operations WHERE NOT synced",
+            [],
+            |x| x.get(0),
+        )?;
         Ok(count)
     }
 
@@ -349,7 +372,7 @@ impl<'t> StorageTxn for Txn<'t> {
         let t = self.get_txn()?;
         let last: Option<(u32, Operation)> = t
             .query_row(
-                "SELECT id, data FROM operations ORDER BY id DESC LIMIT 1",
+                "SELECT id, data FROM operations WHERE NOT synced ORDER BY id DESC LIMIT 1",
                 [],
                 |x| Ok((x.get(0)?, x.get(1)?)),
             )
@@ -372,10 +395,11 @@ impl<'t> StorageTxn for Txn<'t> {
 
     fn sync_complete(&mut self) -> Result<()> {
         let t = self.get_txn()?;
-        t.execute("DELETE FROM operations", [])
-            .context("Clear all existing operations")?;
-        t.execute("DELETE FROM sqlite_sequence WHERE name = 'operations'", [])
-            .context("Clear all existing operations")?;
+        t.execute(
+            "UPDATE operations SET synced = true WHERE synced = false",
+            [],
+        )
+        .context("Marking operations as synced")?;
 
         Ok(())
     }
@@ -617,7 +641,7 @@ mod test {
             let task_two = txn.get_task(two)?.unwrap();
             assert_eq!(task_two.get("description").unwrap(), "two");
 
-            let ops = txn.operations()?;
+            let ops = txn.unsynced_operations()?;
             assert_eq!(ops.len(), 14);
             assert_eq!(ops[0], Operation::UndoPoint);
 
@@ -638,7 +662,7 @@ mod test {
             let mut txn = storage.txn()?;
             let task_one = txn.get_task(one)?.unwrap();
             assert_eq!(task_one.get("description").unwrap(), "updated");
-            let ops = txn.operations()?;
+            let ops = txn.unsynced_operations()?;
             assert_eq!(ops.len(), 15);
         }
 
