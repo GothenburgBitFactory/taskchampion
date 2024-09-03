@@ -105,6 +105,11 @@ impl TaskDb {
         txn.get_task(uuid)
     }
 
+    pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
+        let mut txn = self.storage.txn()?;
+        txn.get_task_operations(uuid)
+    }
+
     /// Rebuild the working set using a function to identify tasks that should be in the set.  This
     /// renumbers the existing working-set tasks to eliminate gaps, and also adds any tasks that
     /// are not already in the working set but should be.  The rebuild occurs in a single
