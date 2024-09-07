@@ -99,8 +99,14 @@ pub trait StorageTxn {
     /// merely *stores* the operation; it is up to the TaskDb to apply it.
     fn add_operation(&mut self, op: Operation) -> Result<()>;
 
-    /// Replace the current list of operations with a new list.
-    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()>;
+    /// Remove an operation from the end of the list of operations in the storage.  The operation
+    /// must exactly match the most recent operation. Note that like `add_operation` this only
+    /// affects the list of operations.
+    fn remove_operation(&mut self, op: Operation) -> Result<()>;
+
+    /// A sync has been completed, so all operations should be marked as synced. The storage
+    /// may perform additional cleanup at this time.
+    fn sync_complete(&mut self) -> Result<()>;
 
     /// Get the entire working set, with each task UUID at its appropriate (1-based) index.
     /// Element 0 is always None.
