@@ -202,73 +202,10 @@ impl Storage for InMemoryStorage {
 #[cfg(test)]
 mod test {
     use super::*;
-    use pretty_assertions::assert_eq;
 
-    // (note: this module is heavily used in tests so most of its functionality is well-tested
-    // elsewhere and not tested here)
-
-    #[test]
-    fn get_working_set_empty() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None]);
-        }
-
-        Ok(())
+    fn storage() -> InMemoryStorage {
+        InMemoryStorage::new()
     }
 
-    #[test]
-    fn add_to_working_set() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
-        {
-            let mut txn = storage.txn()?;
-            txn.add_to_working_set(uuid1)?;
-            txn.add_to_working_set(uuid2)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn clear_working_set() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
-        {
-            let mut txn = storage.txn()?;
-            txn.add_to_working_set(uuid1)?;
-            txn.add_to_working_set(uuid2)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            txn.clear_working_set()?;
-            txn.add_to_working_set(uuid2)?;
-            txn.add_to_working_set(uuid1)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, Some(uuid2), Some(uuid1)]);
-        }
-
-        Ok(())
-    }
+    crate::storage::test::storage_tests!(storage());
 }
