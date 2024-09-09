@@ -105,6 +105,12 @@ impl TaskDb {
         txn.get_task(uuid)
     }
 
+    /// Get multiple tasks by uuid.
+    pub(crate) fn get_tasks(&mut self, uuids: Vec<Uuid>) -> Result<Vec<(Uuid, TaskMap)>> {
+        let mut txn = self.storage.txn()?;
+        txn.get_tasks(uuids)
+    }
+
     pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
         let mut txn = self.storage.txn()?;
         txn.get_task_operations(uuid)

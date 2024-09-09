@@ -55,6 +55,11 @@ macro_rules! storage_tests {
         }
 
         #[test]
+        fn get_tasks() -> $crate::errors::Result<()> {
+            $crate::storage::test::get_tasks($storage)
+        }
+
+        #[test]
         fn delete_task_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_missing($storage)
         }
@@ -263,6 +268,53 @@ pub(super) fn delete_task_exists(mut storage: impl Storage) -> Result<()> {
     {
         let mut txn = storage.txn()?;
         assert!(txn.delete_task(uuid)?);
+    }
+    Ok(())
+}
+
+pub(super) fn get_tasks(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4();
+    let uuid2 = Uuid::new_v4();
+    let uuid3 = Uuid::new_v4();
+
+    {
+        let mut txn = storage.txn()?;
+        assert!(txn.create_task(uuid1)?);
+        txn.set_task(
+            uuid1,
+            taskmap_with(vec![("num".to_string(), "1".to_string())]),
+        )?;
+        assert!(txn.create_task(uuid2)?);
+        txn.set_task(
+            uuid2,
+            taskmap_with(vec![("num".to_string(), "2".to_string())]),
+        )?;
+        assert!(txn.create_task(uuid3)?);
+        txn.set_task(
+            uuid3,
+            taskmap_with(vec![("num".to_string(), "3".to_string())]),
+        )?;
+        txn.commit()?;
+    }
+
+    {
+        let mut txn = storage.txn()?;
+        let mut tasks = txn.get_tasks(vec![uuid1, uuid3])?;
+
+        let mut exp = vec![
+            (
+                uuid1,
+                taskmap_with(vec![("num".to_string(), "1".to_string())]),
+            ),
+            (
+                uuid3,
+                taskmap_with(vec![("num".to_string(), "3".to_string())]),
+            ),
+        ];
+        exp.sort_by(|a, b| a.0.cmp(&b.0));
+        tasks.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(tasks, exp);
     }
     Ok(())
 }

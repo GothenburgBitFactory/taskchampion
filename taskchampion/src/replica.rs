@@ -106,6 +106,35 @@ impl Replica {
         self.taskdb.all_task_uuids()
     }
 
+    /// Get an array containing all pending tasks
+    pub fn pending_tasks(&mut self) -> Result<Vec<Task>> {
+        let depmap = self.dependency_map(false)?;
+        let res = self
+            .pending_task_data()?
+            .into_iter()
+            .map(|taskdata| Task::new(taskdata, depmap.clone()))
+            .collect();
+
+        Ok(res)
+    }
+
+    pub fn pending_task_data(&mut self) -> Result<Vec<TaskData>> {
+        let uuids = self
+            .working_set()?
+            .iter()
+            .map(|(_, uuid)| uuid)
+            .collect::<Vec<Uuid>>();
+
+        let res = self
+            .taskdb
+            .get_tasks(uuids)?
+            .into_iter()
+            .map(|(uuid, taskmap)| TaskData::new(uuid, taskmap))
+            .collect::<Vec<_>>();
+
+        Ok(res)
+    }
+
     /// Get the "working set" for this replica.  This is a snapshot of the current state,
     /// and it is up to the caller to decide how long to store this value.
     pub fn working_set(&mut self) -> Result<WorkingSet> {
@@ -636,6 +665,30 @@ mod tests {
         assert_eq!(all_tasks.len(), 2);
         assert_eq!(all_tasks.get(&uuid1).unwrap().get_uuid(), uuid1);
         assert_eq!(all_tasks.get(&uuid2).unwrap().get_uuid(), uuid2);
+    }
+
+    #[test]
+    fn pending_tasks() {
+        let mut rep = Replica::new_inmemory();
+
+        let (uuid1, uuid2, uuid3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let mut ops = Operations::new();
+
+        let mut t1 = rep.create_task(uuid1, &mut ops).unwrap();
+        t1.set_status(Status::Pending, &mut ops).unwrap();
+
+        let mut t2 = rep.create_task(uuid2, &mut ops).unwrap();
+        t2.set_status(Status::Pending, &mut ops).unwrap();
+
+        let mut t3 = rep.create_task(uuid3, &mut ops).unwrap();
+        t3.set_status(Status::Completed, &mut ops).unwrap();
+
+        rep.commit_operations(ops).unwrap();
+
+        let all_tasks = rep.pending_tasks().unwrap();
+        assert_eq!(all_tasks.len(), 2);
+        assert_eq!(all_tasks.get(0).unwrap().get_uuid(), uuid1);
+        assert_eq!(all_tasks.get(1).unwrap().get_uuid(), uuid2);
     }
 
     #[test]

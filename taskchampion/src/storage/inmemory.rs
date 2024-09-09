@@ -49,6 +49,20 @@ impl<'t> StorageTxn for Txn<'t> {
         }
     }
 
+    fn get_tasks(&mut self, uuids: Vec<Uuid>) -> Result<Vec<(Uuid, TaskMap)>> {
+        let res = uuids
+            .iter()
+            .filter_map(|uuid| {
+                self.data_ref()
+                    .tasks
+                    .get(uuid)
+                    .map(|taskmap| (*uuid, taskmap.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        Ok(res)
+    }
+
     fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         if let ent @ Entry::Vacant(_) = self.mut_data_ref().tasks.entry(uuid) {
             ent.or_insert_with(TaskMap::new);
