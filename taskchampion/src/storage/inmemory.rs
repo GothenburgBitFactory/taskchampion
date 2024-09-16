@@ -49,14 +49,18 @@ impl<'t> StorageTxn for Txn<'t> {
         }
     }
 
-    fn get_tasks(&mut self, uuids: Vec<Uuid>) -> Result<Vec<(Uuid, TaskMap)>> {
-        let res = uuids
+    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+        let res = self
+            .get_working_set()?
             .iter()
             .filter_map(|uuid| {
-                self.data_ref()
-                    .tasks
-                    .get(uuid)
-                    .map(|taskmap| (*uuid, taskmap.clone()))
+                uuid.map(|inner_uuid| {
+                    self.data_ref()
+                        .tasks
+                        .get(&inner_uuid)
+                        .map(|taskmap| (inner_uuid, taskmap.clone()))
+                })
+                .flatten()
             })
             .collect::<Vec<_>>();
 

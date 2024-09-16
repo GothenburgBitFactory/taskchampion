@@ -94,9 +94,6 @@ impl SqliteStorage {
         }
         let con = Connection::open_with_flags(db_file, flags)?;
 
-        // Load the rarray module so it's possible to run vectorized queries
-        rusqlite::vtab::array::load_module(&con)?;
-
         // Initialize database
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
@@ -188,17 +185,13 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(result.map(|t| t.0))
     }
 
-    fn get_tasks(&mut self, uuids: Vec<Uuid>) -> Result<Vec<(Uuid, TaskMap)>> {
+    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let t = self.get_txn()?;
 
-        let stored_uuids = uuids
-            .into_iter()
-            .map(|uuid| rusqlite::types::Value::from(uuid.to_string()))
-            .collect::<Vec<_>>();
-        let ptr = std::rc::Rc::new(stored_uuids);
-
-        let mut q = t.prepare("SELECT uuid, data FROM tasks WHERE uuid IN rarray(?1)")?;
-        let rows = q.query_map([&ptr], |r| {
+        let mut q = t.prepare(
+            "SELECT tasks.* FROM tasks LEFT JOIN working_set ON tasks.uuid = working_set.uuid",
+        )?;
+        let rows = q.query_map([], |r| {
             let uuid: StoredUuid = r.get("uuid")?;
             let data: StoredTaskMap = r.get("data")?;
             Ok((uuid.0, data.0))

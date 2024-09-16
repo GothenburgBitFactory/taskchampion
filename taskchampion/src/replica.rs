@@ -119,15 +119,9 @@ impl Replica {
     }
 
     pub fn pending_task_data(&mut self) -> Result<Vec<TaskData>> {
-        let uuids = self
-            .working_set()?
-            .iter()
-            .map(|(_, uuid)| uuid)
-            .collect::<Vec<Uuid>>();
-
         let res = self
             .taskdb
-            .get_tasks(uuids)?
+            .get_pending_tasks()?
             .into_iter()
             .map(|(uuid, taskmap)| TaskData::new(uuid, taskmap))
             .collect::<Vec<_>>();

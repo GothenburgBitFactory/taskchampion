@@ -22,7 +22,7 @@ proptest = "^1.5.0"
 regex = "^1.10.2"
 ring = "0.17"
 rstest = "0.17"
-rusqlite = { version = "0.29", features = ["array", "bundled"] }
+rusqlite = { version = "0.29"}
 serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.25"
