@@ -54,6 +54,10 @@ impl<'t> StorageTxn for Txn<'t> {
             .get_working_set()?
             .iter()
             .filter_map(|uuid| {
+                // Since uuid is wrapped in an Option and get(&inner_uuid)
+                // also returns an Option, the resulting type will be
+                // Option<Option<(Uuid, TaskMap)>>. To turn that into
+                // an Option<(Uuid, TaskMap)>, flatten is called
                 uuid.map(|inner_uuid| {
                     self.data_ref()
                         .tasks
