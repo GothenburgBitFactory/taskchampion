@@ -98,6 +98,11 @@ macro_rules! storage_tests {
         fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage)
         }
+
+        #[test]
+        fn is_empty() -> Result<()> {
+            $crate::storage::test::is_empty($storage)
+        }
     };
 }
 pub(crate) use storage_tests;
@@ -560,6 +565,46 @@ pub(super) fn set_working_set_item(mut storage: impl Storage) -> Result<()> {
         let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, None, Some(uuid1)]);
+    }
+
+    Ok(())
+}
+
+pub(super) fn is_empty(mut storage: impl Storage) -> Result<()> {
+    // If operations are present, the storage is not empty.
+    {
+        let mut txn = storage.txn()?;
+        txn.add_operation(Operation::Create {
+            uuid: Uuid::new_v4(),
+        })?;
+        assert!(!txn.is_empty()?);
+    }
+
+    // If a task is present, the storage is not empty.
+    {
+        let mut txn = storage.txn()?;
+        txn.create_task(Uuid::new_v4())?;
+        assert!(!txn.is_empty()?);
+    }
+
+    // If the working set has a task, the storage is not empty.
+    {
+        let mut txn = storage.txn()?;
+        txn.add_to_working_set(Uuid::new_v4())?;
+        assert!(!txn.is_empty()?);
+    }
+
+    // If the base version is set, the storage is not empty.
+    {
+        let mut txn = storage.txn()?;
+        txn.set_base_version(Uuid::new_v4())?;
+        assert!(!txn.is_empty()?);
+    }
+
+    // But if none of those are the case, the storage is empty.
+    {
+        let mut txn = storage.txn()?;
+        assert!(txn.is_empty()?);
     }
 
     Ok(())
