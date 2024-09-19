@@ -273,18 +273,17 @@ pub(super) fn delete_task_exists(mut storage: impl Storage) -> Result<()> {
 }
 
 pub(super) fn get_pending_tasks(mut storage: impl Storage) -> Result<()> {
-    let uuid1 = Uuid::new_v4();
-    let uuid2 = Uuid::new_v4();
+    let uuid1 = Uuid::new_v4(); // in working set
+    let uuid2 = Uuid::new_v4(); // in working set
+    let uuid3 = Uuid::new_v4(); // in working set but does not exist
+    let uuid4 = Uuid::new_v4(); // not in working set but exists= Uuid::new_v4();
 
     {
         let mut txn = storage.txn()?;
         txn.add_to_working_set(uuid1)?;
         txn.add_to_working_set(uuid2)?;
-        txn.commit()?;
-    }
+        txn.add_to_working_set(uuid3)?;
 
-    {
-        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid1)?);
         txn.set_task(
             uuid1,
@@ -294,6 +293,11 @@ pub(super) fn get_pending_tasks(mut storage: impl Storage) -> Result<()> {
         txn.set_task(
             uuid2,
             taskmap_with(vec![("num".to_string(), "2".to_string())]),
+        )?;
+        assert!(txn.create_task(uuid4)?);
+        txn.set_task(
+            uuid4,
+            taskmap_with(vec![("num".to_string(), "4".to_string())]),
         )?;
         txn.commit()?;
     }

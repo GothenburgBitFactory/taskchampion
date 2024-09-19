@@ -189,7 +189,7 @@ impl<'t> StorageTxn for Txn<'t> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare(
-            "SELECT tasks.* FROM tasks LEFT JOIN working_set ON tasks.uuid = working_set.uuid",
+            "SELECT tasks.* FROM tasks JOIN working_set ON tasks.uuid = working_set.uuid",
         )?;
         let rows = q.query_map([], |r| {
             let uuid: StoredUuid = r.get("uuid")?;
