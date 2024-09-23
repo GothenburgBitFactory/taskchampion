@@ -276,7 +276,7 @@ pub(super) fn get_pending_tasks(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4(); // in working set
     let uuid2 = Uuid::new_v4(); // in working set
     let uuid3 = Uuid::new_v4(); // in working set but does not exist
-    let uuid4 = Uuid::new_v4(); // not in working set but exists= Uuid::new_v4();
+    let uuid4 = Uuid::new_v4(); // not in working set but exists
 
     {
         let mut txn = storage.txn()?;
