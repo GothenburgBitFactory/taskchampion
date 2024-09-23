@@ -624,6 +624,11 @@ mod tests {
 
         // num_undo_points includes only the undo point
         assert_eq!(rep.num_undo_points().unwrap(), 1);
+
+        // A second undo point is counted.
+        let ops = vec![Operation::UndoPoint];
+        rep.commit_operations(ops).unwrap();
+        assert_eq!(rep.num_undo_points().unwrap(), 2);
     }
 
     #[test]
@@ -659,6 +664,13 @@ mod tests {
         assert_eq!(all_tasks.len(), 2);
         assert_eq!(all_tasks.get(&uuid1).unwrap().get_uuid(), uuid1);
         assert_eq!(all_tasks.get(&uuid2).unwrap().get_uuid(), uuid2);
+
+        let mut all_uuids = rep.all_task_uuids().unwrap();
+        all_uuids.sort();
+        let mut exp_uuids = vec![uuid1, uuid2];
+        exp_uuids.sort();
+        assert_eq!(all_uuids.len(), 2);
+        assert_eq!(all_uuids, exp_uuids);
     }
 
     #[test]
@@ -802,6 +814,37 @@ mod tests {
 
         // Cached dependency map was reset.
         assert!(rep.depmap.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn commit_reversed_operations() -> Result<()> {
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        let mut rep = Replica::new_inmemory();
+
+        let mut ops = Operations::new();
+        ops.push(Operation::UndoPoint);
+        rep.create_task(uuid1, &mut ops).unwrap();
+        ops.push(Operation::UndoPoint);
+        rep.create_task(uuid2, &mut ops).unwrap();
+        rep.commit_operations(dbg!(ops))?;
+        assert_eq!(rep.num_undo_points().unwrap(), 2);
+
+        // Trying to reverse-commit the wrong operations fails.
+        let ops = vec![Operation::Delete {
+            uuid: uuid3,
+            old_task: TaskMap::new(),
+        }];
+        assert!(!rep.commit_reversed_operations(ops)?);
+
+        // Commiting the correct operations succeeds
+        let ops = rep.get_undo_operations()?;
+        assert!(rep.commit_reversed_operations(ops)?);
+        assert_eq!(rep.num_undo_points().unwrap(), 1);
 
         Ok(())
     }
