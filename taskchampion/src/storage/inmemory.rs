@@ -49,6 +49,28 @@ impl<'t> StorageTxn for Txn<'t> {
         }
     }
 
+    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+        let res = self
+            .get_working_set()?
+            .iter()
+            .filter_map(|uuid| {
+                // Since uuid is wrapped in an Option and get(&inner_uuid)
+                // also returns an Option, the resulting type will be
+                // Option<Option<(Uuid, TaskMap)>>. To turn that into
+                // an Option<(Uuid, TaskMap)>, flatten is called
+                uuid.map(|inner_uuid| {
+                    self.data_ref()
+                        .tasks
+                        .get(&inner_uuid)
+                        .map(|taskmap| (inner_uuid, taskmap.clone()))
+                })
+                .flatten()
+            })
+            .collect::<Vec<_>>();
+
+        Ok(res)
+    }
+
     fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         if let ent @ Entry::Vacant(_) = self.mut_data_ref().tasks.entry(uuid) {
             ent.or_insert_with(TaskMap::new);

@@ -55,6 +55,11 @@ macro_rules! storage_tests {
         }
 
         #[test]
+        fn get_pending_tasks() -> $crate::errors::Result<()> {
+            $crate::storage::test::get_pending_tasks($storage)
+        }
+
+        #[test]
         fn delete_task_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_missing($storage)
         }
@@ -268,6 +273,58 @@ pub(super) fn delete_task_exists(mut storage: impl Storage) -> Result<()> {
     {
         let mut txn = storage.txn()?;
         assert!(txn.delete_task(uuid)?);
+    }
+    Ok(())
+}
+
+pub(super) fn get_pending_tasks(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4(); // in working set
+    let uuid2 = Uuid::new_v4(); // in working set
+    let uuid3 = Uuid::new_v4(); // in working set but does not exist
+    let uuid4 = Uuid::new_v4(); // not in working set but exists
+
+    {
+        let mut txn = storage.txn()?;
+        txn.add_to_working_set(uuid1)?;
+        txn.add_to_working_set(uuid2)?;
+        txn.add_to_working_set(uuid3)?;
+
+        assert!(txn.create_task(uuid1)?);
+        txn.set_task(
+            uuid1,
+            taskmap_with(vec![("num".to_string(), "1".to_string())]),
+        )?;
+        assert!(txn.create_task(uuid2)?);
+        txn.set_task(
+            uuid2,
+            taskmap_with(vec![("num".to_string(), "2".to_string())]),
+        )?;
+        assert!(txn.create_task(uuid4)?);
+        txn.set_task(
+            uuid4,
+            taskmap_with(vec![("num".to_string(), "4".to_string())]),
+        )?;
+        txn.commit()?;
+    }
+
+    {
+        let mut txn = storage.txn()?;
+        let mut tasks = txn.get_pending_tasks()?;
+
+        let mut exp = vec![
+            (
+                uuid1,
+                taskmap_with(vec![("num".to_string(), "1".to_string())]),
+            ),
+            (
+                uuid2,
+                taskmap_with(vec![("num".to_string(), "2".to_string())]),
+            ),
+        ];
+        exp.sort_by(|a, b| a.0.cmp(&b.0));
+        tasks.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(tasks, exp);
     }
     Ok(())
 }

@@ -185,6 +185,26 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(result.map(|t| t.0))
     }
 
+    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+        let t = self.get_txn()?;
+
+        let mut q = t.prepare(
+            "SELECT tasks.* FROM tasks JOIN working_set ON tasks.uuid = working_set.uuid",
+        )?;
+        let rows = q.query_map([], |r| {
+            let uuid: StoredUuid = r.get("uuid")?;
+            let data: StoredTaskMap = r.get("data")?;
+            Ok((uuid.0, data.0))
+        })?;
+
+        let mut res = Vec::new();
+        for row in rows {
+            res.push(row?)
+        }
+
+        Ok(res)
+    }
+
     fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         let t = self.get_txn()?;
         let count: usize = t.query_row(

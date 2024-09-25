@@ -64,6 +64,9 @@ pub trait StorageTxn {
     /// Get an (immutable) task, if it is in the storage
     fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>>;
 
+    /// Get a vector of all pending tasks from the working_set
+    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>>;
+
     /// Create an (empty) task, only if it does not already exist.  Returns true if
     /// the task was created (did not already exist).
     fn create_task(&mut self, uuid: Uuid) -> Result<bool>;

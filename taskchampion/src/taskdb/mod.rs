@@ -105,6 +105,12 @@ impl TaskDb {
         txn.get_task(uuid)
     }
 
+    /// Get all pending tasks from the working set
+    pub(crate) fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+        let mut txn = self.storage.txn()?;
+        txn.get_pending_tasks()
+    }
+
     pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
         let mut txn = self.storage.txn()?;
         txn.get_task_operations(uuid)
