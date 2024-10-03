@@ -230,7 +230,13 @@ impl Replica {
     /// Note: the returned set of operations is not guaranteed to be sufficient to reconstruct the
     /// task; that is, it may not begin with a `Create` operation. This can occur if the task was
     /// created using a TaskChampion version before 0.8.0 or if older operations have been deleted.
-    pub fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
+    ///
+    /// This function was introduced in
+    /// [#373](https://github.com/GothenburgBitFactory/taskchampion/issues/373) but removed from
+    /// the public API until it actually returns _all_ task operations, and not just local
+    /// operations since the last sync.
+    #[allow(dead_code)]
+    pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
         self.taskdb.get_task_operations(uuid)
     }
 
