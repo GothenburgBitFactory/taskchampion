@@ -101,3 +101,10 @@ jobs:
           command: fmt
           args: --all -- --check
 
+
+  semver-checks:
+    runs-on: ubuntu-latest
+    name: "Cargo Semver Checks"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
