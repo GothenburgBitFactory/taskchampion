@@ -49,3 +49,6 @@ You can generate the documentation for the `taskchampion` crate with `cargo doc 
 We expect contributors to follow the [GitHub Flow](https://guides.github.com/introduction/flow/).
 Aside from that, we have no particular requirements on pull requests.
 Make your patch, double-check that it's complete (tests? docs? documentation comments?), and make a new pull request.
+
+If your pull request makes a breaking change, then `Cargo Semver Checks` check may fail.
+If this change is intentional, update the version accordingly in `taskchampion/Cargo.toml` (maintaining the `-pre` suffix), and the check should succeed.
