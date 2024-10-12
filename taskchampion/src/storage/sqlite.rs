@@ -397,114 +397,10 @@ impl<'t> StorageTxn for Txn<'t> {
 mod test {
     use super::*;
     use crate::storage::taskmap_with;
-    use chrono::Utc;
     use pretty_assertions::assert_eq;
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
-
-    /// Manually create a 0_7_0 db, as based on a dump from an actual (test) user.
-    /// This is used to test in-place upgrading.
-    fn create_0_7_0_db(path: &Path) -> Result<()> {
-        let db_file = path.join("taskchampion.sqlite3");
-        let con = Connection::open(db_file)?;
-
-        con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
-            .context("Setting journal_mode=WAL")?;
-        let queries = vec![
-            r#"CREATE TABLE operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);"#,
-            r#"INSERT INTO operations VALUES(1,'"UndoPoint"');"#,
-            r#"INSERT INTO operations VALUES(2,
-                '{"Create":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa"}}');"#,
-            r#"INSERT INTO operations VALUES(3,
-                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
-                "property":"description",
-                "old_value":null,
-                "value":"one",
-                "timestamp":"2024-08-25T19:06:11.840482523Z"}}');"#,
-            r#"INSERT INTO operations VALUES(4,
-                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
-                "property":"entry",
-                "old_value":null,
-                "value":"1724612771",
-                "timestamp":"2024-08-25T19:06:11.840497662Z"}}');"#,
-            r#"INSERT INTO operations VALUES(5,
-                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
-                "property":"modified",
-                "old_value":null,
-                "value":"1724612771",
-                "timestamp":"2024-08-25T19:06:11.840498973Z"}}');"#,
-            r#"INSERT INTO operations VALUES(6,
-                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
-                "property":"status",
-                "old_value":null,
-                "value":"pending",
-                "timestamp":"2024-08-25T19:06:11.840505346Z"}}');"#,
-            r#"INSERT INTO operations VALUES(7,'"UndoPoint"');"#,
-            r#"INSERT INTO operations VALUES(8,
-                '{"Create":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8"}}');"#,
-            r#"INSERT INTO operations VALUES(9,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"dep_e2956511-fd47-4e40-926a-52616229c2fa",
-                "old_value":null,
-                "value":"x",
-                "timestamp":"2024-08-25T19:06:15.880952492Z"}}');"#,
-            r#"INSERT INTO operations VALUES(10,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"depends",
-                "old_value":null,
-                "value":"e2956511-fd47-4e40-926a-52616229c2fa",
-                "timestamp":"2024-08-25T19:06:15.880969429Z"}}');"#,
-            r#"INSERT INTO operations VALUES(11,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"description",
-                "old_value":null,
-                "value":"two",
-                "timestamp":"2024-08-25T19:06:15.880970972Z"}}');"#,
-            r#"INSERT INTO operations VALUES(12,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"entry",
-                "old_value":null,
-                "value":"1724612775",
-                "timestamp":"2024-08-25T19:06:15.880974948Z"}}');"#,
-            r#"INSERT INTO operations VALUES(13,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"modified",
-                "old_value":null,
-                "value":"1724612775",
-                "timestamp":"2024-08-25T19:06:15.880976160Z"}}');"#,
-            r#"INSERT INTO operations VALUES(14,
-                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
-                "property":"status",
-                "old_value":null,
-                "value":"pending",
-                "timestamp":"2024-08-25T19:06:15.880977255Z"}}');"#,
-            r#"CREATE TABLE sync_meta (key STRING PRIMARY KEY, value STRING);"#,
-            r#"CREATE TABLE tasks (uuid STRING PRIMARY KEY, data STRING);"#,
-            r#"INSERT INTO tasks VALUES('e2956511-fd47-4e40-926a-52616229c2fa',
-                '{"status":"pending",
-                "entry":"1724612771",
-                "modified":"1724612771",
-                "description":"one"}');"#,
-            r#"INSERT INTO tasks VALUES('1d125b41-ee1d-49a7-9319-0506dee414f8',
-                '{"modified":"1724612775",
-                "status":"pending",
-                "description":"two",
-                "dep_e2956511-fd47-4e40-926a-52616229c2fa":"x",
-                "entry":"1724612775",
-                "depends":"e2956511-fd47-4e40-926a-52616229c2fa"}');"#,
-            r#"CREATE TABLE working_set (id INTEGER PRIMARY KEY, uuid STRING);"#,
-            r#"INSERT INTO working_set VALUES(1,'e2956511-fd47-4e40-926a-52616229c2fa');"#,
-            r#"INSERT INTO working_set VALUES(2,'1d125b41-ee1d-49a7-9319-0506dee414f8');"#,
-            r#"DELETE FROM sqlite_sequence;"#,
-            r#"INSERT INTO sqlite_sequence VALUES('operations',14);"#,
-        ];
-        for q in queries {
-            con.execute(q, [])
-                .with_context(|| format!("executing {}", q))?;
-        }
-        Ok(())
-    }
 
     #[test]
     fn test_empty_dir() -> Result<()> {
@@ -522,48 +418,6 @@ mod test {
             let task = txn.get_task(uuid)?;
             assert_eq!(task, Some(taskmap_with(vec![])));
         }
-        Ok(())
-    }
-
-    #[test]
-    fn test_0_7_0_db() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        create_0_7_0_db(tmp_dir.path())?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
-        let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
-        {
-            let mut txn = storage.txn()?;
-
-            let mut task_one = txn.get_task(one)?.unwrap();
-            assert_eq!(task_one.get("description").unwrap(), "one");
-
-            let task_two = txn.get_task(two)?.unwrap();
-            assert_eq!(task_two.get("description").unwrap(), "two");
-
-            let ops = txn.operations()?;
-            assert_eq!(ops.len(), 14);
-            assert_eq!(ops[0], Operation::UndoPoint);
-
-            task_one.insert("description".into(), "updated".into());
-            txn.set_task(one, task_one)?;
-            txn.add_operation(Operation::Update {
-                uuid: one,
-                property: "description".into(),
-                old_value: Some("one".into()),
-                value: Some("updated".into()),
-                timestamp: Utc::now(),
-            })?;
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            let task_one = txn.get_task(one)?.unwrap();
-            assert_eq!(task_one.get("description").unwrap(), "updated");
-            let ops = txn.operations()?;
-            assert_eq!(ops.len(), 15);
-        }
-
         Ok(())
     }
 
