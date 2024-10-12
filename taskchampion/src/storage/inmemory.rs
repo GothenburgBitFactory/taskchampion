@@ -111,21 +111,6 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
-        Ok(self
-            .data_ref()
-            .operations
-            .iter()
-            .filter(|op| match op {
-                Operation::Create { uuid: u } => *u == uuid,
-                Operation::Delete { uuid: u, .. } => *u == uuid,
-                Operation::Update { uuid: u, .. } => *u == uuid,
-                Operation::UndoPoint => false,
-            })
-            .cloned()
-            .collect())
-    }
-
     fn operations(&mut self) -> Result<Vec<Operation>> {
         Ok(self.data_ref().operations.clone())
     }

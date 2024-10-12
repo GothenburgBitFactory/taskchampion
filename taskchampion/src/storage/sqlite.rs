@@ -299,22 +299,6 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
-        let t = self.get_txn()?;
-
-        let mut q = t.prepare("SELECT data FROM operations where uuid=? ORDER BY id ASC")?;
-        let rows = q.query_map([&StoredUuid(uuid)], |r| {
-            let data: Operation = r.get("data")?;
-            Ok(data)
-        })?;
-
-        let mut ret = vec![];
-        for r in rows {
-            ret.push(r?);
-        }
-        Ok(ret)
-    }
-
     fn operations(&mut self) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
@@ -942,71 +926,6 @@ mod test {
             );
             assert_eq!(txn.num_operations()?, 4);
         }
-        Ok(())
-    }
-
-    #[test]
-    fn test_task_operations() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-        let uuid3 = Uuid::new_v4();
-        let now = Utc::now();
-
-        // create some operations
-        {
-            let mut txn = storage.txn()?;
-            txn.add_operation(Operation::UndoPoint)?;
-            txn.add_operation(Operation::Create { uuid: uuid1 })?;
-            txn.add_operation(Operation::Create { uuid: uuid1 })?;
-            txn.add_operation(Operation::UndoPoint)?;
-            txn.add_operation(Operation::Delete {
-                uuid: uuid2,
-                old_task: TaskMap::new(),
-            })?;
-            txn.add_operation(Operation::Update {
-                uuid: uuid3,
-                property: "p".into(),
-                old_value: None,
-                value: Some("P".into()),
-                timestamp: now,
-            })?;
-            txn.commit()?;
-        }
-
-        // read them back
-        {
-            let mut txn = storage.txn()?;
-            let ops = txn.get_task_operations(uuid1)?;
-            assert_eq!(
-                ops,
-                vec![
-                    Operation::Create { uuid: uuid1 },
-                    Operation::Create { uuid: uuid1 },
-                ]
-            );
-            let ops = txn.get_task_operations(uuid2)?;
-            assert_eq!(
-                ops,
-                vec![Operation::Delete {
-                    uuid: uuid2,
-                    old_task: TaskMap::new()
-                }]
-            );
-            let ops = txn.get_task_operations(uuid3)?;
-            assert_eq!(
-                ops,
-                vec![Operation::Update {
-                    uuid: uuid3,
-                    property: "p".into(),
-                    old_value: None,
-                    value: Some("P".into()),
-                    timestamp: now,
-                }]
-            );
-        }
-
         Ok(())
     }
 

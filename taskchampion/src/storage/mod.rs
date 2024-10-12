@@ -87,9 +87,6 @@ pub trait StorageTxn {
     /// Set the current base_version for this storage.
     fn set_base_version(&mut self, version: VersionId) -> Result<()>;
 
-    /// Get the set of operations for the given task.
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>>;
-
     /// Get the current set of outstanding operations (operations that have not been sync'd to the
     /// server yet)
     fn operations(&mut self) -> Result<Vec<Operation>>;
