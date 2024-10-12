@@ -68,44 +68,40 @@ fn reverse_ops(op: Operation) -> Vec<SyncOp> {
 /// have not yet been synchronized, and will return `false` if this is not the case.
 pub fn commit_reversed_operations(txn: &mut dyn StorageTxn, undo_ops: Operations) -> Result<bool> {
     let mut applied = false;
-    let local_ops = txn.operations().unwrap();
+    let mut local_ops = txn.operations().unwrap();
     let mut undo_ops = undo_ops.to_vec();
 
-    if undo_ops.is_empty() {
-        return Ok(false);
-    }
-
+    // Drop undo_ops iff they're the latest operations.
     // TODO Support concurrent undo by adding the reverse of undo_ops rather than popping from operations.
-
-    // Verify that undo_ops are the most recent local ops.
-    let mut ok = false;
-    let local_undo_ops;
-    if undo_ops.len() <= local_ops.len() {
-        let new_len = local_ops.len() - undo_ops.len();
-        local_undo_ops = &local_ops[new_len..];
-        if local_undo_ops == undo_ops {
-            ok = true;
-        }
-    }
-    if !ok {
+    let old_len = local_ops.len();
+    let undo_len = undo_ops.len();
+    let new_len = old_len - undo_len;
+    let local_undo_ops = &local_ops[new_len..old_len];
+    if local_undo_ops != undo_ops {
         info!("Undo failed: concurrent changes to the database occurred.");
-        debug!("local_ops={:#?}\nundo_ops={:#?}", local_ops, undo_ops);
+        debug!(
+            "local_undo_ops={:#?}\nundo_ops={:#?}",
+            local_undo_ops, undo_ops
+        );
         return Ok(applied);
     }
-
     undo_ops.reverse();
+    local_ops.truncate(new_len);
+
     for op in undo_ops {
         debug!("Reversing operation {:?}", op);
-        let rev_ops = reverse_ops(op.clone());
+        let rev_ops = reverse_ops(op);
         for op in rev_ops {
             trace!("Applying reversed operation {:?}", op);
             apply::apply_op(txn, &op)?;
             applied = true;
         }
-        txn.remove_operation(op)?;
     }
 
-    txn.commit()?;
+    if undo_len != 0 {
+        txn.set_operations(local_ops)?;
+        txn.commit()?;
+    }
 
     Ok(applied)
 }
