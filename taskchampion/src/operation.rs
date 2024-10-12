@@ -43,16 +43,6 @@ impl Operation {
     pub fn is_undo_point(&self) -> bool {
         self == &Self::UndoPoint
     }
-
-    /// Get the UUID for this function, if it has one.
-    pub fn get_uuid(&self) -> Option<Uuid> {
-        match self {
-            Operation::Create { uuid: u } => Some(*u),
-            Operation::Delete { uuid: u, .. } => Some(*u),
-            Operation::Update { uuid: u, .. } => Some(*u),
-            Operation::UndoPoint => None,
-        }
-    }
 }
 
 /// Operations are a sequence of [`Operation`] values, which can be committed in a single

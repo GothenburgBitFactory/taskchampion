@@ -98,37 +98,14 @@ impl SqliteStorage {
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
 
-        let create_tables = vec![
+        let queries = vec![
             "CREATE TABLE IF NOT EXISTS operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);",
             "CREATE TABLE IF NOT EXISTS sync_meta (key STRING PRIMARY KEY, value STRING);",
             "CREATE TABLE IF NOT EXISTS tasks (uuid STRING PRIMARY KEY, data STRING);",
             "CREATE TABLE IF NOT EXISTS working_set (id INTEGER PRIMARY KEY, uuid STRING);",
         ];
-        for q in create_tables {
+        for q in queries {
             con.execute(q, []).context("Creating table")?;
-        }
-        // At this point the DB schema is that of TaskChampion 0.7.0.
-
-        // Check for and add the `operations.uuid` column.
-        let res: u32 = con
-            .query_row(
-                "SELECT COUNT(*) AS c FROM pragma_table_xinfo('operations') WHERE name='uuid'",
-                [],
-                |r| r.get(0),
-            )
-            .context("Checking for operations.uuid")?;
-        if res == 0 {
-            con.execute(
-                r#"ALTER TABLE operations ADD COLUMN uuid GENERATED ALWAYS AS (
-                coalesce(json_extract(data, "$.Update.uuid"),
-                         json_extract(data, "$.Create.uuid"),
-                         json_extract(data, "$.Delete.uuid"))) VIRTUAL"#,
-                [],
-            )
-            .context("Adding operations.uuid")?;
-
-            con.execute("CREATE INDEX operations_by_uuid ON operations (uuid)", [])
-                .context("Creating operations_by_uuid")?;
         }
 
         Ok(SqliteStorage { con })
@@ -533,21 +510,13 @@ mod test {
     fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
-        let mut storage = SqliteStorage::new(non_existant.clone(), true)?;
+        let mut storage = SqliteStorage::new(non_existant, true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
             assert!(txn.create_task(uuid)?);
             txn.commit()?;
         }
-        {
-            let mut txn = storage.txn()?;
-            let task = txn.get_task(uuid)?;
-            assert_eq!(task, Some(taskmap_with(vec![])));
-        }
-
-        // Re-open the DB.
-        let mut storage = SqliteStorage::new(non_existant, true)?;
         {
             let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
@@ -587,36 +556,12 @@ mod test {
             })?;
             txn.commit()?;
         }
-
-        // Read back the modification.
         {
             let mut txn = storage.txn()?;
             let task_one = txn.get_task(one)?.unwrap();
             assert_eq!(task_one.get("description").unwrap(), "updated");
             let ops = txn.operations()?;
             assert_eq!(ops.len(), 15);
-        }
-
-        // Check the UUID fields on the operations directly in the DB.
-        {
-            let t = storage
-                .con
-                .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let mut q = t.prepare("SELECT data, uuid FROM operations ORDER BY id ASC")?;
-            let mut num_ops = 0;
-            for row in q
-                .query_map([], |r| {
-                    let uuid: Option<StoredUuid> = r.get("uuid")?;
-                    let operation: Operation = r.get("data")?;
-                    Ok((uuid.map(|su| su.0), operation))
-                })
-                .context("Get all operations")?
-            {
-                let (uuid, operation) = row?;
-                assert_eq!(uuid, operation.get_uuid());
-                num_ops += 1;
-            }
-            assert_eq!(num_ops, 15);
         }
 
         Ok(())
