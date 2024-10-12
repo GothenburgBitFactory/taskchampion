@@ -14,9 +14,6 @@ use crate::operation::Operation;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[cfg(test)]
-mod test;
-
 mod config;
 mod inmemory;
 pub(crate) mod sqlite;
