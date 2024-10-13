@@ -26,6 +26,8 @@ encryption = ["dep:ring"]
 cloud = []
 # static bundling of dependencies
 bundled = ["rusqlite/bundled"]
+# use native CA roots, instead of bundled
+tls-native-roots = ["ureq/native-certs"]
 
 [package.metadata.docs.rs]
 all-features = true
