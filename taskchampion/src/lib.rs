@@ -42,6 +42,8 @@ Support for some optional functionality is controlled by feature flags.
  * `server-sync` - sync to the taskchampion-sync-server
  * `sync` - enables all of the sync features above
  * `bundled` - activates bundling system libraries like sqlite
+ * `tls-native-roots` - use native (system) TLS roots, instead of those bundled with rustls, by
+   (indirectly) enabling the `rustls` feature `rustls-tls-native-roots`.
 
  By default, `sync` and `bundled` are enabled.
 
