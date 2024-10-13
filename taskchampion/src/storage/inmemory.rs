@@ -111,21 +111,6 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
-        Ok(self
-            .data_ref()
-            .operations
-            .iter()
-            .filter(|op| match op {
-                Operation::Create { uuid: u } => *u == uuid,
-                Operation::Delete { uuid: u, .. } => *u == uuid,
-                Operation::Update { uuid: u, .. } => *u == uuid,
-                Operation::UndoPoint => false,
-            })
-            .cloned()
-            .collect())
-    }
-
     fn operations(&mut self) -> Result<Vec<Operation>> {
         Ok(self.data_ref().operations.clone())
     }
@@ -139,20 +124,8 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn remove_operation(&mut self, op: Operation) -> Result<()> {
-        let last_op = self.data_ref().operations.last();
-        if last_op != Some(&op) {
-            return Err(Error::Database(
-                "Last operation does not match -- cannot remove".to_string(),
-            ));
-        }
-
-        self.mut_data_ref().operations.pop();
-        Ok(())
-    }
-
-    fn sync_complete(&mut self) -> Result<()> {
-        self.mut_data_ref().operations = Vec::new();
+    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()> {
+        self.mut_data_ref().operations = ops;
         Ok(())
     }
 
@@ -224,10 +197,73 @@ impl Storage for InMemoryStorage {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
 
-    fn storage() -> InMemoryStorage {
-        InMemoryStorage::new()
+    // (note: this module is heavily used in tests so most of its functionality is well-tested
+    // elsewhere and not tested here)
+
+    #[test]
+    fn get_working_set_empty() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+
+        {
+            let mut txn = storage.txn()?;
+            let ws = txn.get_working_set()?;
+            assert_eq!(ws, vec![None]);
+        }
+
+        Ok(())
     }
 
-    crate::storage::test::storage_tests!(storage());
+    #[test]
+    fn add_to_working_set() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+
+        {
+            let mut txn = storage.txn()?;
+            txn.add_to_working_set(uuid1)?;
+            txn.add_to_working_set(uuid2)?;
+            txn.commit()?;
+        }
+
+        {
+            let mut txn = storage.txn()?;
+            let ws = txn.get_working_set()?;
+            assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn clear_working_set() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+
+        {
+            let mut txn = storage.txn()?;
+            txn.add_to_working_set(uuid1)?;
+            txn.add_to_working_set(uuid2)?;
+            txn.commit()?;
+        }
+
+        {
+            let mut txn = storage.txn()?;
+            txn.clear_working_set()?;
+            txn.add_to_working_set(uuid2)?;
+            txn.add_to_working_set(uuid1)?;
+            txn.commit()?;
+        }
+
+        {
+            let mut txn = storage.txn()?;
+            let ws = txn.get_working_set()?;
+            assert_eq!(ws, vec![None, Some(uuid2), Some(uuid1)]);
+        }
+
+        Ok(())
+    }
 }

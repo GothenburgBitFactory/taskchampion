@@ -14,9 +14,6 @@ use crate::operation::Operation;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[cfg(test)]
-mod test;
-
 mod config;
 mod inmemory;
 pub(crate) mod sqlite;
@@ -90,9 +87,6 @@ pub trait StorageTxn {
     /// Set the current base_version for this storage.
     fn set_base_version(&mut self, version: VersionId) -> Result<()>;
 
-    /// Get the set of operations for the given task.
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>>;
-
     /// Get the current set of outstanding operations (operations that have not been sync'd to the
     /// server yet)
     fn operations(&mut self) -> Result<Vec<Operation>>;
@@ -105,14 +99,8 @@ pub trait StorageTxn {
     /// merely *stores* the operation; it is up to the TaskDb to apply it.
     fn add_operation(&mut self, op: Operation) -> Result<()>;
 
-    /// Remove an operation from the end of the list of operations in the storage.  The operation
-    /// must exactly match the most recent operation. Note that like `add_operation` this only
-    /// affects the list of operations.
-    fn remove_operation(&mut self, op: Operation) -> Result<()>;
-
-    /// A sync has been completed, so all operations should be marked as synced. The storage
-    /// may perform additional cleanup at this time.
-    fn sync_complete(&mut self) -> Result<()>;
+    /// Replace the current list of operations with a new list.
+    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()>;
 
     /// Get the entire working set, with each task UUID at its appropriate (1-based) index.
     /// Element 0 is always None.
