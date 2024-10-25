@@ -141,6 +141,33 @@ impl SyncOp {
             Operation::UndoPoint => None,
         }
     }
+
+    /// Convert a SyncOp to an [`Operation`], lossily.
+    ///
+    /// The `Operation` type keeps old values to support undoing operations, but this information
+    /// is not preserved in `SyncOp`. This function makes those values (`old_task` for `Delete` and
+    /// `old_value` for `Update`) to empty.
+    pub(crate) fn into_op(self) -> Operation {
+        match self {
+            Create { uuid } => Operation::Create { uuid },
+            Delete { uuid } => Operation::Delete {
+                uuid,
+                old_task: crate::storage::TaskMap::new(),
+            },
+            Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+            } => Operation::Update {
+                uuid,
+                property,
+                value,
+                timestamp,
+                old_value: None,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,33 +180,6 @@ mod test {
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
-
-    // Tests of the SyncOp transform verify that the transform is correct by examining its effect
-    // on a TaskDb. But TaskDb requires `Operation` values, so tests use a bit of glue code to
-    // bridge the gap.
-    impl SyncOp {
-        pub(crate) fn into_op(self) -> Operation {
-            match self {
-                Create { uuid } => Operation::Create { uuid },
-                Delete { uuid } => Operation::Delete {
-                    uuid,
-                    old_task: crate::storage::TaskMap::new(),
-                },
-                Update {
-                    uuid,
-                    property,
-                    value,
-                    timestamp,
-                } => Operation::Update {
-                    uuid,
-                    property,
-                    value,
-                    timestamp,
-                    old_value: None,
-                },
-            }
-        }
-    }
 
     #[test]
     fn test_json_create() -> Result<()> {

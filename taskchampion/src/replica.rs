@@ -227,16 +227,15 @@ impl Replica {
 
     /// Get the operations that led to the given task.
     ///
-    /// Note: the returned set of operations is not guaranteed to be sufficient to reconstruct the
-    /// task; that is, it may not begin with a `Create` operation. This can occur if the task was
-    /// created using a TaskChampion version before 0.8.0 or if older operations have been deleted.
+    /// This set of operations is suitable for providing an overview of the task history, but does
+    /// not satisfy any invariants around operations and task state. That is, it is not guaranteed
+    /// that the returned operations, if applied in order, would generate the current task state.
     ///
-    /// This function was introduced in
-    /// [#373](https://github.com/GothenburgBitFactory/taskchampion/issues/373) but removed from
-    /// the public API until it actually returns _all_ task operations, and not just local
-    /// operations since the last sync.
-    #[allow(dead_code)]
-    pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
+    /// It is also not guaranteed to be the same on every replica. Differences can occur when
+    /// conflicting operations were performed on different replicas. The "losing" operations in
+    /// those conflicts may not appear on all replicas. In practice, conflicts are rare and the
+    /// results of this function will be the same on all replicas for most tasks.
+    pub fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
         self.taskdb.get_task_operations(uuid)
     }
 
