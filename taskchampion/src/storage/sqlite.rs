@@ -107,7 +107,7 @@ impl SqliteStorage {
         for q in create_tables {
             con.execute(q, []).context("Creating table")?;
         }
-        // At this point the DB schema is that of TaskChampion 0.7.0.
+        // At this point the DB schema is that of TaskChampion 0.8.0.
 
         // Check for and add the `operations.uuid` column.
         let res: u32 = con
@@ -471,9 +471,9 @@ mod test {
 
     crate::storage::test::storage_tests!(storage()?);
 
-    /// Manually create a 0_7_0 db, as based on a dump from an actual (test) user.
+    /// Manually create a 0_8_0 db, as based on a dump from an actual (test) user.
     /// This is used to test in-place upgrading.
-    fn create_0_7_0_db(path: &Path) -> Result<()> {
+    fn create_0_8_0_db(path: &Path) -> Result<()> {
         let db_file = path.join("taskchampion.sqlite3");
         let con = Connection::open(db_file)?;
 
@@ -602,9 +602,9 @@ mod test {
     }
 
     #[test]
-    fn test_0_7_0_db() -> Result<()> {
+    fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
-        create_0_7_0_db(tmp_dir.path())?;
+        create_0_8_0_db(tmp_dir.path())?;
         let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
         let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
         let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
