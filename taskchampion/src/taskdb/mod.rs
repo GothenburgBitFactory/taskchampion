@@ -111,6 +111,11 @@ impl TaskDb {
         txn.get_pending_tasks()
     }
 
+    pub(crate) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
+        let mut txn = self.storage.txn()?;
+        txn.get_task_operations(uuid)
+    }
+
     /// Rebuild the working set using a function to identify tasks that should be in the set.  This
     /// renumbers the existing working-set tasks to eliminate gaps, and also adds any tasks that
     /// are not already in the working set but should be.  The rebuild occurs in a single
@@ -164,7 +169,7 @@ impl TaskDb {
     pub(crate) fn num_operations(&mut self) -> Result<usize> {
         let mut txn = self.storage.txn().unwrap();
         Ok(txn
-            .operations()?
+            .unsynced_operations()?
             .iter()
             .filter(|o| !o.is_undo_point())
             .count())
@@ -174,7 +179,7 @@ impl TaskDb {
     pub(crate) fn num_undo_points(&mut self) -> Result<usize> {
         let mut txn = self.storage.txn().unwrap();
         Ok(txn
-            .operations()?
+            .unsynced_operations()?
             .iter()
             .filter(|o| o.is_undo_point())
             .count())
@@ -204,7 +209,7 @@ impl TaskDb {
     #[cfg(test)]
     pub(crate) fn operations(&mut self) -> Vec<Operation> {
         let mut txn = self.storage.txn().unwrap();
-        txn.operations().unwrap().to_vec()
+        txn.unsynced_operations().unwrap().to_vec()
     }
 }
 

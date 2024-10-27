@@ -172,7 +172,7 @@ mod test {
             assert_eq!(txn.get_task(task2.0)?, Some(task2.1));
             assert_eq!(txn.all_tasks()?.len(), 2);
             assert_eq!(txn.base_version()?, version);
-            assert_eq!(txn.operations()?.len(), 0);
+            assert_eq!(txn.unsynced_operations()?.len(), 0);
             assert_eq!(txn.get_working_set()?.len(), 1);
         }
 

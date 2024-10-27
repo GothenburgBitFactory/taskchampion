@@ -217,12 +217,26 @@ impl Replica {
             .map(move |tm| Task::new(TaskData::new(uuid, tm), depmap)))
     }
 
-    /// get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
+    /// Get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
     pub fn get_task_data(&mut self, uuid: Uuid) -> Result<Option<TaskData>> {
         Ok(self
             .taskdb
             .get_task(uuid)?
             .map(move |tm| TaskData::new(uuid, tm)))
+    }
+
+    /// Get the operations that led to the given task.
+    ///
+    /// This set of operations is suitable for providing an overview of the task history, but does
+    /// not satisfy any invariants around operations and task state. That is, it is not guaranteed
+    /// that the returned operations, if applied in order, would generate the current task state.
+    ///
+    /// It is also not guaranteed to be the same on every replica. Differences can occur when
+    /// conflicting operations were performed on different replicas. The "losing" operations in
+    /// those conflicts may not appear on all replicas. In practice, conflicts are rare and the
+    /// results of this function will be the same on all replicas for most tasks.
+    pub fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
+        self.taskdb.get_task_operations(uuid)
     }
 
     /// Create a new task, setting `modified`, `description`, `status`, and `entry`.
@@ -465,10 +479,42 @@ impl Replica {
 mod tests {
     use super::*;
     use crate::task::Status;
-    use chrono::TimeZone;
+    use chrono::{DateTime, TimeZone};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
     use uuid::Uuid;
+
+    const JUST_NOW: Option<DateTime<Utc>> = DateTime::from_timestamp(1800000000, 0);
+
+    /// Rewrite automatically-created dates to "just-now" or `JUST_NOW` for ease of testing.
+    fn clean_op(op: Operation) -> Operation {
+        if let Operation::Update {
+            uuid,
+            property,
+            mut old_value,
+            mut value,
+            ..
+        } = op
+        {
+            if property == "modified" || property == "end" || property == "entry" {
+                if value.is_some() {
+                    value = Some("just-now".into());
+                }
+                if old_value.is_some() {
+                    old_value = Some("just-now".into());
+                }
+            }
+            Operation::Update {
+                uuid,
+                property,
+                old_value,
+                value,
+                timestamp: JUST_NOW.unwrap(),
+            }
+        } else {
+            op
+        }
+    }
 
     #[test]
     fn new_task() {
@@ -510,37 +556,6 @@ mod tests {
 
         // and check for the corresponding operations, cleaning out the timestamps
         // and modified properties as these are based on the current time
-        let now = Utc::now();
-        let clean_op = |op: Operation| {
-            if let Operation::Update {
-                uuid,
-                property,
-                mut old_value,
-                mut value,
-                ..
-            } = op
-            {
-                // rewrite automatically-created dates to "just-now" for ease
-                // of testing
-                if property == "modified" || property == "end" || property == "entry" {
-                    if value.is_some() {
-                        value = Some("just-now".into());
-                    }
-                    if old_value.is_some() {
-                        old_value = Some("just-now".into());
-                    }
-                }
-                Operation::Update {
-                    uuid,
-                    property,
-                    old_value,
-                    value,
-                    timestamp: now,
-                }
-            } else {
-                op
-            }
-        };
         assert_eq!(
             rep.taskdb
                 .operations()
@@ -555,56 +570,56 @@ mod tests {
                     property: "modified".into(),
                     old_value: None,
                     value: Some("just-now".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "description".into(),
                     old_value: None,
                     value: Some("a task".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "status".into(),
                     old_value: None,
                     value: Some("pending".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "entry".into(),
                     old_value: None,
                     value: Some("just-now".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "modified".into(),
                     old_value: Some("just-now".into()),
                     value: Some("just-now".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "description".into(),
                     old_value: Some("a task".into()),
                     value: Some("past tense".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "end".into(),
                     old_value: None,
                     value: Some("just-now".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
                 Operation::Update {
                     uuid: t.get_uuid(),
                     property: "status".into(),
                     old_value: Some("pending".into()),
                     value: Some("completed".into()),
-                    timestamp: now,
+                    timestamp: JUST_NOW.unwrap(),
                 },
             ]
         );
@@ -614,6 +629,11 @@ mod tests {
 
         // num_undo_points includes only the undo point
         assert_eq!(rep.num_undo_points().unwrap(), 1);
+
+        // A second undo point is counted.
+        let ops = vec![Operation::UndoPoint];
+        rep.commit_operations(ops).unwrap();
+        assert_eq!(rep.num_undo_points().unwrap(), 2);
     }
 
     #[test]
@@ -649,6 +669,13 @@ mod tests {
         assert_eq!(all_tasks.len(), 2);
         assert_eq!(all_tasks.get(&uuid1).unwrap().get_uuid(), uuid1);
         assert_eq!(all_tasks.get(&uuid2).unwrap().get_uuid(), uuid2);
+
+        let mut all_uuids = rep.all_task_uuids().unwrap();
+        all_uuids.sort();
+        let mut exp_uuids = vec![uuid1, uuid2];
+        exp_uuids.sort();
+        assert_eq!(all_uuids.len(), 2);
+        assert_eq!(all_uuids, exp_uuids);
     }
 
     #[test]
@@ -797,6 +824,37 @@ mod tests {
     }
 
     #[test]
+    fn commit_reversed_operations() -> Result<()> {
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        let mut rep = Replica::new_inmemory();
+
+        let mut ops = Operations::new();
+        ops.push(Operation::UndoPoint);
+        rep.create_task(uuid1, &mut ops).unwrap();
+        ops.push(Operation::UndoPoint);
+        rep.create_task(uuid2, &mut ops).unwrap();
+        rep.commit_operations(ops)?;
+        assert_eq!(rep.num_undo_points().unwrap(), 2);
+
+        // Trying to reverse-commit the wrong operations fails.
+        let ops = vec![Operation::Delete {
+            uuid: uuid3,
+            old_task: TaskMap::new(),
+        }];
+        assert!(!rep.commit_reversed_operations(ops)?);
+
+        // Commiting the correct operations succeeds
+        let ops = rep.get_undo_operations()?;
+        assert!(rep.commit_reversed_operations(ops)?);
+        assert_eq!(rep.num_undo_points().unwrap(), 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn get_and_modify() {
         let mut rep = Replica::new_inmemory();
 
@@ -826,20 +884,49 @@ mod tests {
     }
 
     #[test]
-    fn get_task_data() {
+    fn get_task_data_and_operations() {
         let mut rep = Replica::new_inmemory();
 
-        let uuid = Uuid::new_v4();
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
         let mut ops = Operations::new();
-        let mut t = rep.create_task(uuid, &mut ops).unwrap();
+        let mut t = rep.create_task(uuid1, &mut ops).unwrap();
         t.set_description("another task".into(), &mut ops).unwrap();
+        let mut t2 = rep.create_task(uuid2, &mut ops).unwrap();
+        t2.set_description("a distraction!".into(), &mut ops)
+            .unwrap();
         rep.commit_operations(ops).unwrap();
 
-        let t = rep.get_task_data(uuid).unwrap().unwrap();
-        assert_eq!(t.get_uuid(), uuid);
+        let t = rep.get_task_data(uuid1).unwrap().unwrap();
+        assert_eq!(t.get_uuid(), uuid1);
         assert_eq!(t.get("description"), Some("another task"));
+        assert_eq!(
+            rep.get_task_operations(uuid1)
+                .unwrap()
+                .into_iter()
+                .map(clean_op)
+                .collect::<Vec<_>>(),
+            vec![
+                Operation::Create { uuid: uuid1 },
+                Operation::Update {
+                    uuid: uuid1,
+                    property: "modified".into(),
+                    old_value: None,
+                    value: Some("just-now".into()),
+                    timestamp: JUST_NOW.unwrap(),
+                },
+                Operation::Update {
+                    uuid: uuid1,
+                    property: "description".into(),
+                    old_value: None,
+                    value: Some("another task".into()),
+                    timestamp: JUST_NOW.unwrap(),
+                },
+            ]
+        );
 
         assert!(rep.get_task_data(Uuid::new_v4()).unwrap().is_none());
+        assert_eq!(rep.get_task_operations(Uuid::new_v4()).unwrap(), vec![]);
     }
 
     #[test]

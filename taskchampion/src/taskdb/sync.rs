@@ -27,6 +27,11 @@ pub(super) fn sync(
         }
     }
 
+    // For historical purposes, we keep transformed server operations in storage as synced
+    // operations. These will be added at the end of the sync process, when the outer loop is
+    // complete.
+    let mut transformed_server_ops = Vec::new();
+
     // retry synchronizing until the server accepts our version (this allows for races between
     // replicas trying to sync to the same server).  If the server insists on the same base
     // version twice, then we have diverged.
@@ -35,7 +40,7 @@ pub(super) fn sync(
         trace!("beginning sync outer loop");
         let mut base_version_id = txn.base_version()?;
 
-        let mut local_ops = txn.operations()?;
+        let mut local_ops = txn.unsynced_operations()?;
         let sync_ops = local_ops.drain(..).filter_map(SyncOp::from_op);
         let mut sync_ops_peekable = sync_ops.peekable();
 
@@ -70,7 +75,12 @@ pub(super) fn sync(
 
                     // apply this version and update base_version in storage
                     info!("applying version {:?} from server", version_id);
-                    apply_version(txn, &mut sync_ops_batch, version)?;
+                    apply_version(
+                        txn,
+                        &mut sync_ops_batch,
+                        &mut transformed_server_ops,
+                        version,
+                    )?;
                     txn.set_base_version(version_id)?;
                     base_version_id = version_id;
                 } else {
@@ -129,7 +139,14 @@ pub(super) fn sync(
         }
     }
 
-    txn.set_operations(vec![])?;
+    // Add the transformed server ops to the DB. Critically, these are immediately marked as synced
+    // (via `txn.sync_complete`) and thus not subject to any of the invariants around operations
+    // and task state.
+    for o in transformed_server_ops {
+        txn.add_operation(o.into_op())?;
+    }
+
+    txn.sync_complete()?;
     txn.commit()?;
     Ok(())
 }
@@ -137,6 +154,7 @@ pub(super) fn sync(
 fn apply_version(
     txn: &mut dyn StorageTxn,
     local_ops: &mut Vec<SyncOp>,
+    transformed_server_ops: &mut Vec<SyncOp>,
     mut version: Version,
 ) -> Result<()> {
     // The situation here is that the server has already applied all server operations, and we
@@ -191,6 +209,7 @@ fn apply_version(
             if let Err(e) = apply::apply_op(txn, &o) {
                 warn!("Invalid operation when syncing: {} (ignored)", e);
             }
+            transformed_server_ops.push(o);
         }
         *local_ops = new_local_ops;
     }
@@ -212,6 +231,12 @@ mod test {
         TaskDb::new(Box::new(InMemoryStorage::new()))
     }
 
+    fn expect_operations(mut got: Vec<Operation>, mut exp: Vec<Operation>) {
+        got.sort();
+        exp.sort();
+        assert_eq!(got, exp);
+    }
+
     #[test]
     fn test_sync() -> Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
@@ -225,13 +250,14 @@ mod test {
         // make some changes in parallel to db1 and db2..
         let uuid1 = Uuid::new_v4();
         let mut ops = Operations::new();
+        let now1 = Utc::now();
         ops.push(Operation::Create { uuid: uuid1 });
         ops.push(Operation::Update {
             uuid: uuid1,
             property: "title".into(),
             value: Some("my first task".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now1,
         });
 
         let uuid2 = Uuid::new_v4();
@@ -241,7 +267,7 @@ mod test {
             property: "title".into(),
             value: Some("my second task".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now1,
         });
         db1.commit_operations(ops, |_| false)?;
 
@@ -253,22 +279,24 @@ mod test {
 
         // now make updates to the same task on both sides
         let mut ops = Operations::new();
+        let now2 = now1 + chrono::Duration::seconds(1);
         ops.push(Operation::Update {
             uuid: uuid2,
             property: "priority".into(),
             value: Some("H".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now2,
         });
         db1.commit_operations(ops, |_| false)?;
 
         let mut ops = Operations::new();
+        let now3 = now2 + chrono::Duration::seconds(1);
         ops.push(Operation::Update {
             uuid: uuid2,
             property: "project".into(),
             value: Some("personal".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now3,
         });
         db1.commit_operations(ops, |_| false)?;
 
@@ -277,6 +305,50 @@ mod test {
         sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
         assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
+
+        for (dbnum, db) in [(1, &mut db1), (2, &mut db2)] {
+            eprintln!("checking db{dbnum}");
+            expect_operations(
+                db.get_task_operations(uuid1)?,
+                vec![
+                    Operation::Create { uuid: uuid1 },
+                    Operation::Update {
+                        uuid: uuid1,
+                        property: "title".into(),
+                        value: Some("my first task".into()),
+                        old_value: None,
+                        timestamp: now1,
+                    },
+                ],
+            );
+            expect_operations(
+                db.get_task_operations(uuid2)?,
+                vec![
+                    Operation::Create { uuid: uuid2 },
+                    Operation::Update {
+                        uuid: uuid2,
+                        property: "title".into(),
+                        value: Some("my second task".into()),
+                        old_value: None,
+                        timestamp: now1,
+                    },
+                    Operation::Update {
+                        uuid: uuid2,
+                        property: "priority".into(),
+                        value: Some("H".into()),
+                        old_value: None,
+                        timestamp: now2,
+                    },
+                    Operation::Update {
+                        uuid: uuid2,
+                        property: "project".into(),
+                        value: Some("personal".into()),
+                        old_value: None,
+                        timestamp: now3,
+                    },
+                ],
+            );
+        }
 
         Ok(())
     }
@@ -294,13 +366,14 @@ mod test {
         // create and update a task..
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
+        let now1 = Utc::now();
         ops.push(Operation::Create { uuid });
         ops.push(Operation::Update {
             uuid,
             property: "title".into(),
             value: Some("my first task".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now1,
         });
         db1.commit_operations(ops, |_| false)?;
 
@@ -312,6 +385,7 @@ mod test {
 
         // delete and re-create the task on db1
         let mut ops = Operations::new();
+        let now2 = now1 + chrono::Duration::seconds(1);
         ops.push(Operation::Delete {
             uuid,
             old_task: TaskMap::new(),
@@ -322,18 +396,19 @@ mod test {
             property: "title".into(),
             value: Some("my second task".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now2,
         });
         db1.commit_operations(ops, |_| false)?;
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
+        let now3 = now2 + chrono::Duration::seconds(1);
         ops.push(Operation::Update {
             uuid,
             property: "project".into(),
             value: Some("personal".into()),
             old_value: None,
-            timestamp: Utc::now(),
+            timestamp: now3,
         });
         db2.commit_operations(ops, |_| false)?;
 
@@ -342,6 +417,178 @@ mod test {
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
         assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
 
+        // This is a case where the task operations appear different on the replicas,
+        // because the update to "project" on db2 loses to the delete.
+        expect_operations(
+            db1.get_task_operations(uuid)?,
+            vec![
+                Operation::Create { uuid },
+                Operation::Create { uuid },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my first task".into()),
+                    old_value: None,
+                    timestamp: now1,
+                },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my second task".into()),
+                    old_value: None,
+                    timestamp: now2,
+                },
+                Operation::Delete {
+                    uuid,
+                    old_task: TaskMap::new(),
+                },
+            ],
+        );
+        expect_operations(
+            db2.get_task_operations(uuid)?,
+            vec![
+                Operation::Create { uuid },
+                Operation::Create { uuid },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my first task".into()),
+                    old_value: None,
+                    timestamp: now1,
+                },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my second task".into()),
+                    old_value: None,
+                    timestamp: now2,
+                },
+                // This operation is not visible on db1 because the task is already deleted there
+                // when this update is synced in.
+                Operation::Update {
+                    uuid,
+                    property: "project".into(),
+                    value: Some("personal".into()),
+                    old_value: None,
+                    timestamp: now3,
+                },
+                Operation::Delete {
+                    uuid,
+                    old_task: TaskMap::new(),
+                },
+            ],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_conflicting_updates() -> Result<()> {
+        let mut server: Box<dyn Server> = TestServer::new().server();
+
+        let mut db1 = newdb();
+        sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
+
+        let mut db2 = newdb();
+        sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
+
+        // create and update a task..
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let now1 = Utc::now();
+        ops.push(Operation::Create { uuid });
+        ops.push(Operation::Update {
+            uuid,
+            property: "title".into(),
+            value: Some("my first task".into()),
+            old_value: None,
+            timestamp: now1,
+        });
+        db1.commit_operations(ops, |_| false)?;
+
+        // and synchronize those around
+        sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
+        sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
+        sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
+        assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
+
+        // add different updates on db1 and db2
+        let mut ops = Operations::new();
+        let now2 = now1 + chrono::Duration::seconds(1);
+        ops.push(Operation::Update {
+            uuid,
+            property: "title".into(),
+            value: Some("from db1".into()),
+            old_value: None,
+            timestamp: now2,
+        });
+        db1.commit_operations(ops, |_| false)?;
+
+        // and on db2, update a property of the task
+        let mut ops = Operations::new();
+        let now3 = now2 + chrono::Duration::seconds(1);
+        ops.push(Operation::Update {
+            uuid,
+            property: "title".into(),
+            value: Some("from db2".into()),
+            old_value: None,
+            timestamp: now3,
+        });
+        db2.commit_operations(ops, |_| false)?;
+
+        sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
+        sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
+        sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
+        assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
+
+        expect_operations(
+            db1.get_task_operations(uuid)?,
+            vec![
+                Operation::Create { uuid },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my first task".into()),
+                    old_value: None,
+                    timestamp: now1,
+                },
+                // This operation is not visible on db2 because the "from db2" update has a later
+                // timestamp and thus wins over this one.
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("from db1".into()),
+                    old_value: None,
+                    timestamp: now2,
+                },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("from db2".into()),
+                    old_value: None,
+                    timestamp: now3,
+                },
+            ],
+        );
+        expect_operations(
+            db2.get_task_operations(uuid)?,
+            vec![
+                Operation::Create { uuid },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("my first task".into()),
+                    old_value: None,
+                    timestamp: now1,
+                },
+                Operation::Update {
+                    uuid,
+                    property: "title".into(),
+                    value: Some("from db2".into()),
+                    old_value: None,
+                    timestamp: now3,
+                },
+            ],
+        );
         Ok(())
     }
 

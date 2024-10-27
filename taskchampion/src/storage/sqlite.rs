@@ -1,4 +1,4 @@
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
@@ -98,17 +98,59 @@ impl SqliteStorage {
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
 
-        let queries = vec![
+        let create_tables = vec![
             "CREATE TABLE IF NOT EXISTS operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);",
             "CREATE TABLE IF NOT EXISTS sync_meta (key STRING PRIMARY KEY, value STRING);",
             "CREATE TABLE IF NOT EXISTS tasks (uuid STRING PRIMARY KEY, data STRING);",
             "CREATE TABLE IF NOT EXISTS working_set (id INTEGER PRIMARY KEY, uuid STRING);",
         ];
-        for q in queries {
+        for q in create_tables {
             con.execute(q, []).context("Creating table")?;
         }
 
+        // -- At this point the DB schema is that of TaskChampion 0.8.0.
+
+        // Check for and add the `operations.uuid` column.
+        if !Self::has_column(&con, "operations", "uuid")? {
+            con.execute(
+                r#"ALTER TABLE operations ADD COLUMN uuid GENERATED ALWAYS AS (
+                coalesce(json_extract(data, "$.Update.uuid"),
+                         json_extract(data, "$.Create.uuid"),
+                         json_extract(data, "$.Delete.uuid"))) VIRTUAL"#,
+                [],
+            )
+            .context("Adding operations.uuid")?;
+
+            con.execute("CREATE INDEX operations_by_uuid ON operations (uuid)", [])
+                .context("Creating operations_by_uuid")?;
+        }
+
+        if !Self::has_column(&con, "operations", "synced")? {
+            con.execute(
+                "ALTER TABLE operations ADD COLUMN synced bool DEFAULT false",
+                [],
+            )
+            .context("Adding operations.synced")?;
+
+            con.execute(
+                "CREATE INDEX operations_by_synced ON operations (synced)",
+                [],
+            )
+            .context("Creating operations_by_synced")?;
+        }
+
         Ok(SqliteStorage { con })
+    }
+
+    fn has_column(con: &Connection, table: &str, column: &str) -> Result<bool> {
+        let res: u32 = con
+            .query_row(
+                "SELECT COUNT(*) AS c FROM pragma_table_xinfo(?) WHERE name=?",
+                [table, column],
+                |r| r.get(0),
+            )
+            .with_context(|| format!("Checking for {}.{}", table, column))?;
+        Ok(res > 0)
     }
 }
 
@@ -276,10 +318,26 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn operations(&mut self) -> Result<Vec<Operation>> {
+    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
-        let mut q = t.prepare("SELECT data FROM operations ORDER BY id ASC")?;
+        let mut q = t.prepare("SELECT data FROM operations where uuid=? ORDER BY id ASC")?;
+        let rows = q.query_map([&StoredUuid(uuid)], |r| {
+            let data: Operation = r.get("data")?;
+            Ok(data)
+        })?;
+
+        let mut ret = vec![];
+        for r in rows {
+            ret.push(r?);
+        }
+        Ok(ret)
+    }
+
+    fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
+        let t = self.get_txn()?;
+
+        let mut q = t.prepare("SELECT data FROM operations WHERE NOT synced ORDER BY id ASC")?;
         let rows = q.query_map([], |r| {
             let data: Operation = r.get("data")?;
             Ok(data)
@@ -292,9 +350,13 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(ret)
     }
 
-    fn num_operations(&mut self) -> Result<usize> {
+    fn num_unsynced_operations(&mut self) -> Result<usize> {
         let t = self.get_txn()?;
-        let count: usize = t.query_row("SELECT count(*) FROM operations", [], |x| x.get(0))?;
+        let count: usize = t.query_row(
+            "SELECT count(*) FROM operations WHERE NOT synced",
+            [],
+            |x| x.get(0),
+        )?;
         Ok(count)
     }
 
@@ -306,16 +368,49 @@ impl<'t> StorageTxn for Txn<'t> {
         Ok(())
     }
 
-    fn set_operations(&mut self, ops: Vec<Operation>) -> Result<()> {
+    fn remove_operation(&mut self, op: Operation) -> Result<()> {
         let t = self.get_txn()?;
-        t.execute("DELETE FROM operations", [])
-            .context("Clear all existing operations")?;
-        t.execute("DELETE FROM sqlite_sequence WHERE name = 'operations'", [])
-            .context("Clear all existing operations")?;
+        let last: Option<(u32, Operation)> = t
+            .query_row(
+                "SELECT id, data FROM operations WHERE NOT synced ORDER BY id DESC LIMIT 1",
+                [],
+                |x| Ok((x.get(0)?, x.get(1)?)),
+            )
+            .optional()?;
 
-        for o in ops {
-            self.add_operation(o)?;
+        // If there is a "last" operation, and it matches the given operation,
+        // remove it.
+        if let Some((last_id, last_op)) = last {
+            if last_op == op {
+                t.execute("DELETE FROM operations where id = ?", [last_id])
+                    .context("Removing operation")?;
+                return Ok(());
+            }
         }
+
+        Err(Error::Database(
+            "Last operation does not match -- cannot remove".to_string(),
+        ))
+    }
+
+    fn sync_complete(&mut self) -> Result<()> {
+        let t = self.get_txn()?;
+        t.execute(
+            "UPDATE operations SET synced = true WHERE synced = false",
+            [],
+        )
+        .context("Marking operations as synced")?;
+
+        // Delete all operations for non-existent (usually, deleted) tasks.
+        t.execute(
+            r#"DELETE from operations
+            WHERE uuid IN (
+                SELECT operations.uuid FROM operations LEFT JOIN tasks ON operations.uuid = tasks.uuid WHERE tasks.uuid IS NULL
+            )"#,
+            [],
+        )
+        .context("Deleting orphaned operations")?;
+
         Ok(())
     }
 
@@ -397,22 +492,141 @@ impl<'t> StorageTxn for Txn<'t> {
 mod test {
     use super::*;
     use crate::storage::taskmap_with;
+    use chrono::Utc;
     use pretty_assertions::assert_eq;
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
 
+    fn storage() -> Result<SqliteStorage> {
+        let tmp_dir = TempDir::new()?;
+        SqliteStorage::new(tmp_dir.path(), true)
+    }
+
+    crate::storage::test::storage_tests!(storage()?);
+
+    /// Manually create a 0_8_0 db, as based on a dump from an actual (test) user.
+    /// This is used to test in-place upgrading.
+    fn create_0_8_0_db(path: &Path) -> Result<()> {
+        let db_file = path.join("taskchampion.sqlite3");
+        let con = Connection::open(db_file)?;
+
+        con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
+            .context("Setting journal_mode=WAL")?;
+        let queries = vec![
+            r#"CREATE TABLE operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);"#,
+            r#"INSERT INTO operations VALUES(1,'"UndoPoint"');"#,
+            r#"INSERT INTO operations VALUES(2,
+                '{"Create":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa"}}');"#,
+            r#"INSERT INTO operations VALUES(3,
+                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
+                "property":"description",
+                "old_value":null,
+                "value":"one",
+                "timestamp":"2024-08-25T19:06:11.840482523Z"}}');"#,
+            r#"INSERT INTO operations VALUES(4,
+                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
+                "property":"entry",
+                "old_value":null,
+                "value":"1724612771",
+                "timestamp":"2024-08-25T19:06:11.840497662Z"}}');"#,
+            r#"INSERT INTO operations VALUES(5,
+                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
+                "property":"modified",
+                "old_value":null,
+                "value":"1724612771",
+                "timestamp":"2024-08-25T19:06:11.840498973Z"}}');"#,
+            r#"INSERT INTO operations VALUES(6,
+                '{"Update":{"uuid":"e2956511-fd47-4e40-926a-52616229c2fa",
+                "property":"status",
+                "old_value":null,
+                "value":"pending",
+                "timestamp":"2024-08-25T19:06:11.840505346Z"}}');"#,
+            r#"INSERT INTO operations VALUES(7,'"UndoPoint"');"#,
+            r#"INSERT INTO operations VALUES(8,
+                '{"Create":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8"}}');"#,
+            r#"INSERT INTO operations VALUES(9,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"dep_e2956511-fd47-4e40-926a-52616229c2fa",
+                "old_value":null,
+                "value":"x",
+                "timestamp":"2024-08-25T19:06:15.880952492Z"}}');"#,
+            r#"INSERT INTO operations VALUES(10,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"depends",
+                "old_value":null,
+                "value":"e2956511-fd47-4e40-926a-52616229c2fa",
+                "timestamp":"2024-08-25T19:06:15.880969429Z"}}');"#,
+            r#"INSERT INTO operations VALUES(11,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"description",
+                "old_value":null,
+                "value":"two",
+                "timestamp":"2024-08-25T19:06:15.880970972Z"}}');"#,
+            r#"INSERT INTO operations VALUES(12,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"entry",
+                "old_value":null,
+                "value":"1724612775",
+                "timestamp":"2024-08-25T19:06:15.880974948Z"}}');"#,
+            r#"INSERT INTO operations VALUES(13,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"modified",
+                "old_value":null,
+                "value":"1724612775",
+                "timestamp":"2024-08-25T19:06:15.880976160Z"}}');"#,
+            r#"INSERT INTO operations VALUES(14,
+                '{"Update":{"uuid":"1d125b41-ee1d-49a7-9319-0506dee414f8",
+                "property":"status",
+                "old_value":null,
+                "value":"pending",
+                "timestamp":"2024-08-25T19:06:15.880977255Z"}}');"#,
+            r#"CREATE TABLE sync_meta (key STRING PRIMARY KEY, value STRING);"#,
+            r#"CREATE TABLE tasks (uuid STRING PRIMARY KEY, data STRING);"#,
+            r#"INSERT INTO tasks VALUES('e2956511-fd47-4e40-926a-52616229c2fa',
+                '{"status":"pending",
+                "entry":"1724612771",
+                "modified":"1724612771",
+                "description":"one"}');"#,
+            r#"INSERT INTO tasks VALUES('1d125b41-ee1d-49a7-9319-0506dee414f8',
+                '{"modified":"1724612775",
+                "status":"pending",
+                "description":"two",
+                "dep_e2956511-fd47-4e40-926a-52616229c2fa":"x",
+                "entry":"1724612775",
+                "depends":"e2956511-fd47-4e40-926a-52616229c2fa"}');"#,
+            r#"CREATE TABLE working_set (id INTEGER PRIMARY KEY, uuid STRING);"#,
+            r#"INSERT INTO working_set VALUES(1,'e2956511-fd47-4e40-926a-52616229c2fa');"#,
+            r#"INSERT INTO working_set VALUES(2,'1d125b41-ee1d-49a7-9319-0506dee414f8');"#,
+            r#"DELETE FROM sqlite_sequence;"#,
+            r#"INSERT INTO sqlite_sequence VALUES('operations',14);"#,
+        ];
+        for q in queries {
+            con.execute(q, [])
+                .with_context(|| format!("executing {}", q))?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
+        let mut storage = SqliteStorage::new(non_existant.clone(), true)?;
+        let uuid = Uuid::new_v4();
+        {
+            let mut txn = storage.txn()?;
+            assert!(txn.create_task(uuid)?);
+            txn.commit()?;
+        }
+        {
+            let mut txn = storage.txn()?;
+            let task = txn.get_task(uuid)?;
+            assert_eq!(task, Some(taskmap_with(vec![])));
+        }
+
+        // Re-open the DB.
         let mut storage = SqliteStorage::new(non_existant, true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid)?);
-            txn.commit()?;
-        }
         {
             let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
@@ -422,424 +636,66 @@ mod test {
     }
 
     #[test]
-    fn drop_transaction() -> Result<()> {
+    fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
+        create_0_8_0_db(tmp_dir.path())?;
         let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
+        let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
+        let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
         {
             let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid1)?);
-            txn.commit()?;
-        }
 
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid2)?);
-            std::mem::drop(txn); // Unnecessary explicit drop of transaction
-        }
+            let mut task_one = txn.get_task(one)?.unwrap();
+            assert_eq!(task_one.get("description").unwrap(), "one");
 
-        {
-            let mut txn = storage.txn()?;
-            let uuids = txn.all_task_uuids()?;
+            let task_two = txn.get_task(two)?.unwrap();
+            assert_eq!(task_two.get("description").unwrap(), "two");
 
-            assert_eq!(uuids, [uuid1]);
-        }
+            let ops = txn.unsynced_operations()?;
+            assert_eq!(ops.len(), 14);
+            assert_eq!(ops[0], Operation::UndoPoint);
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_create() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid)?);
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            let task = txn.get_task(uuid)?;
-            assert_eq!(task, Some(taskmap_with(vec![])));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_create_exists() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid)?);
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            assert!(!txn.create_task(uuid)?);
-            txn.commit()?;
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_missing() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            let task = txn.get_task(uuid)?;
-            assert_eq!(task, None);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_set_task() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            txn.set_task(uuid, taskmap_with(vec![("k".to_string(), "v".to_string())]))?;
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            let task = txn.get_task(uuid)?;
-            assert_eq!(
-                task,
-                Some(taskmap_with(vec![("k".to_string(), "v".to_string())]))
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_delete_task_missing() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(!txn.delete_task(uuid)?);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_delete_task_exists() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid)?);
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.delete_task(uuid)?);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_all_tasks_empty() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        {
-            let mut txn = storage.txn()?;
-            let tasks = txn.all_tasks()?;
-            assert_eq!(tasks, vec![]);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_all_tasks_and_uuids() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            assert!(txn.create_task(uuid1)?);
-            txn.set_task(
-                uuid1,
-                taskmap_with(vec![("num".to_string(), "1".to_string())]),
-            )?;
-            assert!(txn.create_task(uuid2)?);
-            txn.set_task(
-                uuid2,
-                taskmap_with(vec![("num".to_string(), "2".to_string())]),
-            )?;
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            let mut tasks = txn.all_tasks()?;
-
-            // order is nondeterministic, so sort by uuid
-            tasks.sort_by(|a, b| a.0.cmp(&b.0));
-
-            let mut exp = vec![
-                (
-                    uuid1,
-                    taskmap_with(vec![("num".to_string(), "1".to_string())]),
-                ),
-                (
-                    uuid2,
-                    taskmap_with(vec![("num".to_string(), "2".to_string())]),
-                ),
-            ];
-            exp.sort_by(|a, b| a.0.cmp(&b.0));
-
-            assert_eq!(tasks, exp);
-        }
-        {
-            let mut txn = storage.txn()?;
-            let mut uuids = txn.all_task_uuids()?;
-            uuids.sort();
-
-            let mut exp = vec![uuid1, uuid2];
-            exp.sort();
-
-            assert_eq!(uuids, exp);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_base_version_default() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        {
-            let mut txn = storage.txn()?;
-            assert_eq!(txn.base_version()?, DEFAULT_BASE_VERSION);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_base_version_setting() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let u = Uuid::new_v4();
-        {
-            let mut txn = storage.txn()?;
-            txn.set_base_version(u)?;
-            txn.commit()?;
-        }
-        {
-            let mut txn = storage.txn()?;
-            assert_eq!(txn.base_version()?, u);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_operations() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-        let uuid3 = Uuid::new_v4();
-
-        // create some operations
-        {
-            let mut txn = storage.txn()?;
-            txn.add_operation(Operation::Create { uuid: uuid1 })?;
-            txn.add_operation(Operation::Create { uuid: uuid2 })?;
-            txn.commit()?;
-        }
-
-        // read them back
-        {
-            let mut txn = storage.txn()?;
-            let ops = txn.operations()?;
-            assert_eq!(
-                ops,
-                vec![
-                    Operation::Create { uuid: uuid1 },
-                    Operation::Create { uuid: uuid2 },
-                ]
-            );
-
-            assert_eq!(txn.num_operations()?, 2);
-        }
-
-        // set them to a different bunch
-        {
-            let mut txn = storage.txn()?;
-            txn.set_operations(vec![
-                Operation::Delete {
-                    uuid: uuid2,
-                    old_task: TaskMap::new(),
-                },
-                Operation::Delete {
-                    uuid: uuid1,
-                    old_task: TaskMap::new(),
-                },
-            ])?;
-            txn.commit()?;
-        }
-
-        // create some more operations (to test adding operations after clearing)
-        {
-            let mut txn = storage.txn()?;
-            txn.add_operation(Operation::Create { uuid: uuid3 })?;
-            txn.add_operation(Operation::Delete {
-                uuid: uuid3,
-                old_task: TaskMap::new(),
+            task_one.insert("description".into(), "updated".into());
+            txn.set_task(one, task_one)?;
+            txn.add_operation(Operation::Update {
+                uuid: one,
+                property: "description".into(),
+                old_value: Some("one".into()),
+                value: Some("updated".into()),
+                timestamp: Utc::now(),
             })?;
             txn.commit()?;
         }
 
-        // read them back
+        // Read back the modification.
         {
             let mut txn = storage.txn()?;
-            let ops = txn.operations()?;
-            assert_eq!(
-                ops,
-                vec![
-                    Operation::Delete {
-                        uuid: uuid2,
-                        old_task: TaskMap::new()
-                    },
-                    Operation::Delete {
-                        uuid: uuid1,
-                        old_task: TaskMap::new()
-                    },
-                    Operation::Create { uuid: uuid3 },
-                    Operation::Delete {
-                        uuid: uuid3,
-                        old_task: TaskMap::new()
-                    },
-                ]
-            );
-            assert_eq!(txn.num_operations()?, 4);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn get_working_set_empty() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None]);
+            let task_one = txn.get_task(one)?.unwrap();
+            assert_eq!(task_one.get("description").unwrap(), "updated");
+            let ops = txn.unsynced_operations()?;
+            assert_eq!(ops.len(), 15);
         }
 
-        Ok(())
-    }
-
-    #[test]
-    fn add_to_working_set() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
+        // Check the UUID fields on the operations directly in the DB.
         {
-            let mut txn = storage.txn()?;
-            txn.add_to_working_set(uuid1)?;
-            txn.add_to_working_set(uuid2)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn clear_working_set() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
-        {
-            let mut txn = storage.txn()?;
-            txn.add_to_working_set(uuid1)?;
-            txn.add_to_working_set(uuid2)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            txn.clear_working_set()?;
-            txn.add_to_working_set(uuid2)?;
-            txn.add_to_working_set(uuid1)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, Some(uuid2), Some(uuid1)]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn set_working_set_item() -> Result<()> {
-        let tmp_dir = TempDir::new()?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
-        {
-            let mut txn = storage.txn()?;
-            txn.add_to_working_set(uuid1)?;
-            txn.add_to_working_set(uuid2)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
-        }
-
-        // Clear one item
-        {
-            let mut txn = storage.txn()?;
-            txn.set_working_set_item(1, None)?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, None, Some(uuid2)]);
-        }
-
-        // Override item
-        {
-            let mut txn = storage.txn()?;
-            txn.set_working_set_item(2, Some(uuid1))?;
-            txn.commit()?;
-        }
-
-        {
-            let mut txn = storage.txn()?;
-            let ws = txn.get_working_set()?;
-            assert_eq!(ws, vec![None, None, Some(uuid1)]);
+            let t = storage
+                .con
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut q = t.prepare("SELECT data, uuid FROM operations ORDER BY id ASC")?;
+            let mut num_ops = 0;
+            for row in q
+                .query_map([], |r| {
+                    let uuid: Option<StoredUuid> = r.get("uuid")?;
+                    let operation: Operation = r.get("data")?;
+                    Ok((uuid.map(|su| su.0), operation))
+                })
+                .context("Get all operations")?
+            {
+                let (uuid, operation) = row?;
+                assert_eq!(uuid, operation.get_uuid());
+                num_ops += 1;
+            }
+            assert_eq!(num_ops, 15);
         }
 
         Ok(())
@@ -848,6 +704,10 @@ mod test {
     #[test]
     fn test_concurrent_access() -> Result<()> {
         let tmp_dir = TempDir::new()?;
+
+        // Initialize the DB once, as schema modifications are not isolated by transactions.
+        SqliteStorage::new(tmp_dir.path(), true).unwrap();
+
         thread::scope(|scope| {
             // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
             scope.spawn(|| {
