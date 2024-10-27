@@ -837,7 +837,7 @@ mod tests {
         rep.create_task(uuid1, &mut ops).unwrap();
         ops.push(Operation::UndoPoint);
         rep.create_task(uuid2, &mut ops).unwrap();
-        rep.commit_operations(dbg!(ops))?;
+        rep.commit_operations(ops)?;
         assert_eq!(rep.num_undo_points().unwrap(), 2);
 
         // Trying to reverse-commit the wrong operations fails.
