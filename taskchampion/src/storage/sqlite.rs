@@ -704,6 +704,10 @@ mod test {
     #[test]
     fn test_concurrent_access() -> Result<()> {
         let tmp_dir = TempDir::new()?;
+
+        // Initialize the DB once, as schema modifications are not isolated by transactions.
+        SqliteStorage::new(tmp_dir.path(), true).unwrap();
+
         thread::scope(|scope| {
             // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
             scope.spawn(|| {
