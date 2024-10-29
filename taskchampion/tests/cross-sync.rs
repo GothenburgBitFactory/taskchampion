@@ -62,8 +62,30 @@ fn cross_sync() -> anyhow::Result<()> {
     let t1 = rep1.get_task(uuid1)?.expect("expected task 1 on rep1");
     assert_eq!(t1.get_status(), Status::Completed);
 
-    let t22 = rep2.get_task(uuid2)?.expect("expected task 2 on rep2");
+    let mut t22 = rep2.get_task(uuid2)?.expect("expected task 2 on rep2");
     assert_eq!(t22.get_status(), Status::Completed);
+
+    rep1.rebuild_working_set(true)?;
+    rep2.rebuild_working_set(true)?;
+
+    // Make task 2 pending again, and observe that it is in the working set in both replicas after
+    // sync.
+    let mut ops = Operations::new();
+    t22.set_status(Status::Pending, &mut ops)?;
+    rep2.commit_operations(ops)?;
+
+    let ws = rep2.working_set()?;
+    assert_eq!(ws.by_index(1), Some(uuid2));
+
+    // Pending status is not sync'd to rep1 yet.
+    let ws = rep1.working_set()?;
+    assert_eq!(ws.by_index(1), None);
+
+    rep2.sync(&mut server, false)?;
+    rep1.sync(&mut server, false)?;
+
+    let ws = rep1.working_set()?;
+    assert_eq!(ws.by_index(1), Some(uuid2));
 
     Ok(())
 }
