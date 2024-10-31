@@ -168,6 +168,7 @@ Neither has a response body.</p>
 <p>On success, the response is a 200 OK.
 The version's history segment is returned in the response body, with content-type <code>application/vnd.taskchampion.history-segment</code>.
 The version ID appears in the <code>X-Version-Id</code> header.
+The requested parent version ID appears in the <code>X-Parent-Version-Id</code> header.
 The response body may be encoded, in accordance with any <code>Accept-Encoding</code> header in the request.</p>
 <p>On failure, a client should treat a 404 NOT FOUND as indicating that it is up-to-date.
 Clients should treat a 410 GONE as a synchronization error.
