@@ -92,8 +92,14 @@ If found, it returns the version's
  * parent version ID (matching that in the request), and
  * encrypted version data.
 
-If not found, it returns an indication that no such version exists.
+If found, it returns a _not-found_ indication.
 Note that this circumstance is not an error, and occurs during every successful sync process.
+
+Implementations may return a different error code if the version is "gone" (not found _and would not be accepted by AddVersion_) in order to provide better error messages to the user.
+This may occur if a client has not been synced for a long time and its base version has expired, or if the server storage has been corrupted.
+
+Note that `GetChildVersion` should return the _not-found_ when no versions exist.
+This allows a client to switch to a new server and continue uploading the same sequence of versions.
 
 ### AddSnapshot
 

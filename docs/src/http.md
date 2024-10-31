@@ -35,6 +35,7 @@ Neither has a response body.
 On success, the response is a 200 OK.
 The version's history segment is returned in the response body, with content-type `application/vnd.taskchampion.history-segment`.
 The version ID appears in the `X-Version-Id` header.
+The requested parent version ID appears in the `X-Parent-Version-Id` header.
 The response body may be encoded, in accordance with any `Accept-Encoding` header in the request.
 
 On failure, a client should treat a 404 NOT FOUND as indicating that it is up-to-date.
