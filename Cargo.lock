@@ -1650,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "taskchampion"
-version = "0.9.0-pre"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "byteorder",
