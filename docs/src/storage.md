@@ -14,7 +14,7 @@ The storage contains the following information:
 ## Tasks
 
 The tasks are stored as an un-ordered collection, keyed by task UUID.
-Each task in the database has represented by a key-value map.
+Each task in the database is represented by a key-value map.
 See [Tasks](./tasks.md) for details on the content of that map.
 
 ## Operations
@@ -64,7 +64,7 @@ Each operation also contains enough information to reverse its application:
  * Undoing `UndoPoint` does nothing.
 
 The `UndoPoint` operation serves as a marker of points in the operation sequence to which the user might wish to undo.
-For example, creation of a new task with several properities involves several operations, but is a single step from the user's perspective.
+For example, creation of a new task with several properties involves several operations, but is a single step from the user's perspective.
 An "undo" command reverses operations, removing them from the operations sequence, until it reaches an `UndoPoint` operation.
 
 ### Synchronizing Operations
