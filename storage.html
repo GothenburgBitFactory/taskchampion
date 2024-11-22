@@ -156,7 +156,7 @@ The storage contains the following information:</p>
 </ul>
 <h2 id="tasks"><a class="header" href="#tasks">Tasks</a></h2>
 <p>The tasks are stored as an un-ordered collection, keyed by task UUID.
-Each task in the database has represented by a key-value map.
+Each task in the database is represented by a key-value map.
 See <a href="./tasks.html">Tasks</a> for details on the content of that map.</p>
 <h2 id="operations"><a class="header" href="#operations">Operations</a></h2>
 <p>Every change to the task database is captured as an operation.
@@ -197,7 +197,7 @@ The timestamp on updates serves as additional metadata and is used to resolve co
 <li>Undoing <code>UndoPoint</code> does nothing.</li>
 </ul>
 <p>The <code>UndoPoint</code> operation serves as a marker of points in the operation sequence to which the user might wish to undo.
-For example, creation of a new task with several properities involves several operations, but is a single step from the user's perspective.
+For example, creation of a new task with several properties involves several operations, but is a single step from the user's perspective.
 An &quot;undo&quot; command reverses operations, removing them from the operations sequence, until it reaches an <code>UndoPoint</code> operation.</p>
 <h3 id="synchronizing-operations"><a class="header" href="#synchronizing-operations">Synchronizing Operations</a></h3>
 <p>After operations are synchronized to the server, they can no longer be undone.
