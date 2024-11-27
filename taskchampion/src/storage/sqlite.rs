@@ -7,6 +7,8 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBeha
 use std::path::Path;
 use uuid::Uuid;
 
+mod schema;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SqliteError {
     #[error("SQLite transaction already committted")]
@@ -92,65 +94,15 @@ impl SqliteStorage {
         if !create_if_missing {
             flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
         }
-        let con = Connection::open_with_flags(db_file, flags)?;
+        let mut con = Connection::open_with_flags(db_file, flags)?;
 
         // Initialize database
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
 
-        let create_tables = vec![
-            "CREATE TABLE IF NOT EXISTS operations (id INTEGER PRIMARY KEY AUTOINCREMENT, data STRING);",
-            "CREATE TABLE IF NOT EXISTS sync_meta (key STRING PRIMARY KEY, value STRING);",
-            "CREATE TABLE IF NOT EXISTS tasks (uuid STRING PRIMARY KEY, data STRING);",
-            "CREATE TABLE IF NOT EXISTS working_set (id INTEGER PRIMARY KEY, uuid STRING);",
-        ];
-        for q in create_tables {
-            con.execute(q, []).context("Creating table")?;
-        }
+        schema::upgrade_db(&mut con)?;
 
-        // -- At this point the DB schema is that of TaskChampion 0.8.0.
-
-        // Check for and add the `operations.uuid` column.
-        if !Self::has_column(&con, "operations", "uuid")? {
-            con.execute(
-                r#"ALTER TABLE operations ADD COLUMN uuid GENERATED ALWAYS AS (
-                coalesce(json_extract(data, "$.Update.uuid"),
-                         json_extract(data, "$.Create.uuid"),
-                         json_extract(data, "$.Delete.uuid"))) VIRTUAL"#,
-                [],
-            )
-            .context("Adding operations.uuid")?;
-
-            con.execute("CREATE INDEX operations_by_uuid ON operations (uuid)", [])
-                .context("Creating operations_by_uuid")?;
-        }
-
-        if !Self::has_column(&con, "operations", "synced")? {
-            con.execute(
-                "ALTER TABLE operations ADD COLUMN synced bool DEFAULT false",
-                [],
-            )
-            .context("Adding operations.synced")?;
-
-            con.execute(
-                "CREATE INDEX operations_by_synced ON operations (synced)",
-                [],
-            )
-            .context("Creating operations_by_synced")?;
-        }
-
-        Ok(SqliteStorage { con })
-    }
-
-    fn has_column(con: &Connection, table: &str, column: &str) -> Result<bool> {
-        let res: u32 = con
-            .query_row(
-                "SELECT COUNT(*) AS c FROM pragma_table_xinfo(?) WHERE name=?",
-                [table, column],
-                |r| r.get(0),
-            )
-            .with_context(|| format!("Checking for {}.{}", table, column))?;
-        Ok(res > 0)
+        Ok(Self { con })
     }
 }
 
@@ -635,11 +587,18 @@ mod test {
         Ok(())
     }
 
+    /// Test upgrading from a TaskChampion-0.8.0 database, ensuring that some basic task data
+    /// remains intact from that version. This provides a basic coverage test of all schema
+    /// upgrade functions.
     #[test]
     fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         create_0_8_0_db(tmp_dir.path())?;
         let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
+        assert_eq!(
+            schema::get_db_version(&mut storage.con)?,
+            schema::LATEST_VERSION,
+        );
         let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
         let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
         {
