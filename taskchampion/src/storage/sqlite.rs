@@ -81,13 +81,16 @@ pub struct SqliteStorage {
 
 impl SqliteStorage {
     pub fn new<P: AsRef<Path>>(directory: P, create_if_missing: bool) -> Result<SqliteStorage> {
+        let directory = directory.as_ref();
         if create_if_missing {
             // Ensure parent folder exists
-            std::fs::create_dir_all(&directory)?;
+            std::fs::create_dir_all(directory).map_err(|e| {
+                Error::Database(format!("Cannot create directory {directory:?}: {e}"))
+            })?;
         }
 
         // Open (or create) database
-        let db_file = directory.as_ref().join("taskchampion.sqlite3");
+        let db_file = directory.join("taskchampion.sqlite3");
         let mut flags = OpenFlags::default();
         // default contains SQLITE_OPEN_CREATE, so remove it if we are not to
         // create a DB when missing.
