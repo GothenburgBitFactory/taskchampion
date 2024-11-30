@@ -14,3 +14,6 @@ pub(in crate::server) use server::CloudServer;
 
 #[cfg(feature = "server-gcp")]
 pub(in crate::server) mod gcp;
+
+#[cfg(feature = "server-aws")]
+pub(in crate::server) mod aws;

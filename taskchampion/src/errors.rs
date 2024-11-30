@@ -42,6 +42,10 @@ other_error!(crate::storage::sqlite::SqliteError);
 other_error!(google_cloud_storage::http::Error);
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::client::google_cloud_auth::error::Error);
+#[cfg(feature = "server-aws")]
+other_error!(aws_sdk_s3::Error);
+#[cfg(feature = "server-aws")]
+other_error!(aws_sdk_s3::primitives::ByteStreamError);
 
 /// Convert ureq errors more carefully
 #[cfg(feature = "server-sync")]
