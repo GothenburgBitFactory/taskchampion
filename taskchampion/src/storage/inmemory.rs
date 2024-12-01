@@ -20,7 +20,7 @@ struct Txn<'t> {
     new_data: Option<Data>,
 }
 
-impl<'t> Txn<'t> {
+impl Txn<'_> {
     fn mut_data_ref(&mut self) -> &mut Data {
         if self.new_data.is_none() {
             self.new_data = Some(self.storage.data.clone());
@@ -41,7 +41,7 @@ impl<'t> Txn<'t> {
     }
 }
 
-impl<'t> StorageTxn for Txn<'t> {
+impl StorageTxn for Txn<'_> {
     fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         match self.data_ref().tasks.get(&uuid) {
             None => Ok(None),

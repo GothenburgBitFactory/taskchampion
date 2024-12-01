@@ -176,7 +176,7 @@ struct ObjectIterator<'a> {
     next_index: usize,
 }
 
-impl<'a> ObjectIterator<'a> {
+impl ObjectIterator<'_> {
     fn fetch_batch(&mut self) -> Result<()> {
         let mut page_token = None;
         if let Some(ref resp) = self.last_response {
@@ -197,7 +197,7 @@ impl<'a> ObjectIterator<'a> {
     }
 }
 
-impl<'a> Iterator for ObjectIterator<'a> {
+impl Iterator for ObjectIterator<'_> {
     type Item = Result<ObjectInfo>;
     fn next(&mut self) -> Option<Self::Item> {
         // If the iterator is just starting, fetch the first response.

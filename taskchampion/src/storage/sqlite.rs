@@ -144,7 +144,7 @@ impl Storage for SqliteStorage {
     }
 }
 
-impl<'t> StorageTxn for Txn<'t> {
+impl StorageTxn for Txn<'_> {
     fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         let t = self.get_txn()?;
         let result: Option<StoredTaskMap> = t
