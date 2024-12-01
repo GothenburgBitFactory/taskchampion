@@ -698,7 +698,7 @@ mod tests {
 
         let pending_tasks = rep.pending_tasks().unwrap();
         assert_eq!(pending_tasks.len(), 2);
-        assert_eq!(pending_tasks.get(0).unwrap().get_uuid(), uuid1);
+        assert_eq!(pending_tasks.first().unwrap().get_uuid(), uuid1);
         assert_eq!(pending_tasks.get(1).unwrap().get_uuid(), uuid2);
     }
 
