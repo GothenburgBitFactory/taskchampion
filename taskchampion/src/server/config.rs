@@ -1,5 +1,7 @@
 use super::types::Server;
 use crate::errors::Result;
+#[cfg(feature = "server-aws")]
+use crate::server::cloud::aws::{AwsCredentials, AwsService};
 #[cfg(feature = "server-gcp")]
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
@@ -12,6 +14,10 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 /// The configuration for a replica's access to a sync server.
+///
+/// This enum is non-exhaustive, as users should only be constructing required
+/// variants, not matching on it.
+#[non_exhaustive]
 pub enum ServerConfig {
     /// A local task database, for situations with a single replica.
     Local {
@@ -65,6 +71,22 @@ pub enum ServerConfig {
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
     },
+    /// An Amazon Web Services storage bucket.
+    #[cfg(feature = "server-aws")]
+    Aws {
+        /// Region in which the bucket is located.
+        region: String,
+        /// Bucket in which to store the task data.
+        ///
+        /// This bucket must not be used for any other purpose. No special bucket configuration is
+        /// required.
+        bucket: String,
+        /// Credential configuration for access to the bucket.
+        credentials: AwsCredentials,
+        /// Private encryption secret used to encrypt all data sent to the server.  This can
+        /// be any suitably un-guessable string of bytes.
+        encryption_secret: Vec<u8>,
+    },
 }
 
 impl ServerConfig {
@@ -85,6 +107,16 @@ impl ServerConfig {
                 encryption_secret,
             } => Box::new(CloudServer::new(
                 GcpService::new(bucket, credential_path)?,
+                encryption_secret,
+            )?),
+            #[cfg(feature = "server-aws")]
+            ServerConfig::Aws {
+                region,
+                bucket,
+                credentials,
+                encryption_secret,
+            } => Box::new(CloudServer::new(
+                AwsService::new(region, bucket, credentials)?,
                 encryption_secret,
             )?),
         })

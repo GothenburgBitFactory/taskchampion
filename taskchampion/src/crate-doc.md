@@ -35,6 +35,7 @@ Users can define their own server impelementations.
 
 Support for some optional functionality is controlled by feature flags.
 
+ * `server-aws` - sync to Amazon Web Services
  * `server-gcp` - sync to Google Cloud Platform
  * `server-sync` - sync to the taskchampion-sync-server
  * `sync` - enables all of the sync features above

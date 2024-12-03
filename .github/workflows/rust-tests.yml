@@ -16,6 +16,8 @@ jobs:
         features:
           - ""
           - "server-sync"
+          - "server-gcp"
+          - "server-aws"
           - "tls-native-roots"
 
     name: "taskchampion ${{ matrix.features == '' && 'with no features' || format('with features {0}', matrix.features) }}"
@@ -53,7 +55,7 @@ jobs:
     strategy:
       matrix:
         rust:
-          - "1.73.0" # MSRV
+          - "1.78.0" # MSRV
           - "stable"
         os:
           - ubuntu-latest

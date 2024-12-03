@@ -11,6 +11,9 @@ resolver = "2"
 # Cargo.toml's in the members with `foo.workspace = true`.
 [workspace.dependencies]
 anyhow = "1.0"
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
 byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
 ffizz-header = "0.5"
