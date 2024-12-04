@@ -17,3 +17,6 @@ pub(in crate::server) mod gcp;
 
 #[cfg(feature = "server-aws")]
 pub(in crate::server) mod aws;
+
+#[cfg(all(test, feature = "cloud"))]
+mod test;

@@ -1,7 +1,5 @@
 //! Tests for storage backends. This tests consistency across multiple method calls, to ensure that
 //! all implementations are consistent.
-//!
-//! Each method should be called from a test of the same name.
 
 use super::{Storage, TaskMap};
 use crate::errors::Result;
