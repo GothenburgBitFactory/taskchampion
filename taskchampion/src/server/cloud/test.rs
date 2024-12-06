@@ -18,9 +18,9 @@ use pretty_assertions::assert_eq;
 /// Define a collection of cloud service tests that apply to all service implementations.
 macro_rules! service_tests {
     ($service:expr) => {
-        fn make_pfx() -> impl Fn(&str) -> Vec<u8> {
+        fn make_pfx() -> impl Fn(&str) -> String {
             let prefix = uuid::Uuid::new_v4();
-            move |n: &_| format!("{}-{}", prefix.as_simple(), n).into_bytes()
+            move |n: &_| format!("{}-{}", prefix.as_simple(), n)
         }
 
         #[test]
@@ -112,7 +112,7 @@ macro_rules! service_tests {
 
 pub(crate) use service_tests;
 
-pub(super) fn put_and_get(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Result<()> {
+pub(super) fn put_and_get(mut svc: impl Service, pfx: impl Fn(&str) -> String) -> Result<()> {
     svc.put(&pfx("testy"), b"foo")?;
     let got = svc.get(&pfx("testy"))?;
     assert_eq!(got, Some(b"foo".to_vec()));
@@ -122,13 +122,13 @@ pub(super) fn put_and_get(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) 
     Ok(())
 }
 
-pub(super) fn get_missing(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Result<()> {
+pub(super) fn get_missing(mut svc: impl Service, pfx: impl Fn(&str) -> String) -> Result<()> {
     let got = svc.get(&pfx("testy"))?;
     assert_eq!(got, None);
     Ok(())
 }
 
-pub(super) fn del(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Result<()> {
+pub(super) fn del(mut svc: impl Service, pfx: impl Fn(&str) -> String) -> Result<()> {
     svc.put(&pfx("testy"), b"data")?;
     svc.del(&pfx("testy"))?;
     let got = svc.get(&pfx("testy"))?;
@@ -136,13 +136,13 @@ pub(super) fn del(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Resul
     Ok(())
 }
 
-pub(super) fn del_missing(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Result<()> {
+pub(super) fn del_missing(mut svc: impl Service, pfx: impl Fn(&str) -> String) -> Result<()> {
     // Deleting an object that does not exist is not an error.
     assert!(svc.del(&pfx("testy")).is_ok());
     Ok(())
 }
 
-pub(super) fn list(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Result<()> {
+pub(super) fn list(mut svc: impl Service, pfx: impl Fn(&str) -> String) -> Result<()> {
     let mut names: Vec<_> = (0..20).map(|i| pfx(&format!("pp-{i:02}"))).collect();
     names.sort();
     // Create 20 objects that will be listed.
@@ -155,16 +155,7 @@ pub(super) fn list(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Resu
     let got_objects: Vec<_> = svc.list(&pfx("pp-")).collect::<Result<_>>()?;
     let mut got_names: Vec<_> = got_objects.into_iter().map(|oi| oi.name).collect();
     got_names.sort();
-    assert_eq!(
-        got_names
-            .iter()
-            .map(|b| String::from_utf8(b.to_vec()).unwrap())
-            .collect::<Vec<_>>(),
-        names
-            .iter()
-            .map(|b| String::from_utf8(b.to_vec()).unwrap())
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(got_names, names);
 
     // Clean up.
     for n in got_names {
@@ -176,7 +167,7 @@ pub(super) fn list(mut svc: impl Service, pfx: impl Fn(&str) -> Vec<u8>) -> Resu
 
 pub(super) fn compare_and_swap_create(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     assert!(svc.compare_and_swap(&pfx("testy"), None, b"bar".to_vec())?);
     let got = svc.get(&pfx("testy"))?;
@@ -189,7 +180,7 @@ pub(super) fn compare_and_swap_create(
 
 pub(super) fn compare_and_swap_matches(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing file, with two different values over time.
     svc.put(&pfx("testy"), b"foo1")?;
@@ -206,7 +197,7 @@ pub(super) fn compare_and_swap_matches(
 
 pub(super) fn compare_and_swap_expected_no_file(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     svc.put(&pfx("testy"), b"foo1")?;
     assert!(!svc.compare_and_swap(&pfx("testy"), None, b"bar".to_vec())?);
@@ -220,7 +211,7 @@ pub(super) fn compare_and_swap_expected_no_file(
 
 pub(super) fn compare_and_swap_old_value(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing file, with two different values over time.
     svc.put(&pfx("testy"), b"foo1")?;
@@ -237,7 +228,7 @@ pub(super) fn compare_and_swap_old_value(
 
 pub(super) fn compare_and_swap_changes(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing object, but since it is named "racing-put" its value will change
     // just before the `put_object` call. This tests the "compare" part of `compare_and_swap`.
@@ -250,7 +241,7 @@ pub(super) fn compare_and_swap_changes(
 
 pub(super) fn compare_and_swap_disappears(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing object, but since it is named "racing-delete" it will disappear just
     // before the `put_object` call. This tests the case where the exists when
@@ -268,7 +259,7 @@ pub(super) fn compare_and_swap_disappears(
 
 pub(super) fn compare_and_swap_appears(
     mut svc: impl Service,
-    pfx: impl Fn(&str) -> Vec<u8>,
+    pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing object, but since it is named "racing-put" the object will appear just
     // before the `put_object` call. This tests the case where the object does not exist when
