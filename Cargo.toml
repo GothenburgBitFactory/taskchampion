@@ -1,38 +1,67 @@
+[package]
+name = "taskchampion"
+version = "1.0.0-pre"
+authors = ["Dustin J. Mitchell <dustin@mozilla.com>"]
+description = "Personal task-tracking"
+homepage = "https://gothenburgbitfactory.github.io/taskchampion/"
+documentation = "https://docs.rs/crate/taskchampion"
+repository = "https://github.com/GothenburgBitFactory/taskchampion"
+readme = "src/crate-doc.md"
+license = "MIT"
+edition = "2021"
+rust-version = "1.78.0"
+
 [workspace]
-
-members = [
-    "taskchampion",
-    "xtask",
-]
-
+members = [ "xtask" ]
 resolver = "2"
 
-# All Rust dependencies are defined here, and then referenced by the
-# Cargo.toml's in the members with `foo.workspace = true`.
-[workspace.dependencies]
+[features]
+default = ["sync", "bundled"]
+
+# Support for all sync solutions
+sync = ["server-sync", "server-gcp", "server-aws"]
+# Support for sync to a server
+server-sync = ["encryption", "dep:ureq", "dep:url"]
+# Support for sync to GCP
+server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
+# Support for sync to AWS
+server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:tokio"]
+# (private) Support for sync protocol encryption
+encryption = ["dep:ring"]
+# (private) Generic support for cloud sync
+cloud = []
+# static bundling of dependencies
+bundled = ["rusqlite/bundled"]
+# use native CA roots, instead of bundled
+tls-native-roots = ["ureq/native-certs"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
 anyhow = "1.0"
-aws-sdk-s3 = "1"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"], optional = true }
 byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
-ffizz-header = "0.5"
 flate2 = "1"
-google-cloud-storage = { version = "0.15.0", default-features = false, features = ["rustls-tls", "auth"] }
+google-cloud-storage = { version = "0.15.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
 log = "^0.4.17"
-pretty_assertions = "1"
-proptest = "^1.5.0"
-regex = "^1.11.0"
-ring = "0.17"
-rstest = "0.17"
+ring = { version = "0.17", optional = true }
 rusqlite = { version = "0.29"}
 serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.25"
 strum_macros = "0.25"
-tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 thiserror = "1.0"
-ureq = { version = "^2.12.0", features = ["tls"] }
+ureq = { version = "^2.12.0", features = ["tls"], optional = true }
 uuid = { version = "^1.11.0", features = ["serde", "v4"] }
-url = { version = "2" }
+url = { version = "2", optional = true }
+
+[dev-dependencies]
+proptest = "^1.5.0"
+tempfile = "3"
+rstest = "0.17"
+pretty_assertions = "1"
