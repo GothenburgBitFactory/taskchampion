@@ -1,4 +1,4 @@
-use super::service::{ObjectInfo, Service};
+use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
 use aws_config::{
     meta::region::RegionProviderChain, profile::ProfileFileCredentialsProvider, BehaviorVersion,
@@ -107,11 +107,6 @@ impl AwsService {
     }
 }
 
-/// Convert an object name from bytes to a string.
-fn name_to_string(name: &[u8]) -> String {
-    String::from_utf8(name.to_vec()).expect("non-UTF8 object name")
-}
-
 /// Convert an error that can be converted to `s3::Error` (but not [`crate::Error`]) into
 /// `s3::Error`. One such error is SdkError, which has type parameters that are difficult to
 /// constrain in order to write `From<SdkError<..>> for crate::Error`.
@@ -140,9 +135,9 @@ async fn get_body(get_res: GetObjectOutput) -> Result<Vec<u8>> {
 }
 
 impl Service for AwsService {
-    fn put(&mut self, name: &[u8], value: &[u8]) -> Result<()> {
+    fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
         self.block_on(async {
-            let name = name_to_string(name);
+            validate_object_name(name);
             self.client
                 .put_object()
                 .bucket(self.bucket.clone())
@@ -155,9 +150,9 @@ impl Service for AwsService {
         })
     }
 
-    fn get(&mut self, name: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
         self.block_on(async {
-            let name = name_to_string(name);
+            validate_object_name(name);
             let Some(get_res) = if_key_exists(
                 self.client
                     .get_object()
@@ -174,9 +169,9 @@ impl Service for AwsService {
         })
     }
 
-    fn del(&mut self, name: &[u8]) -> Result<()> {
+    fn del(&mut self, name: &str) -> Result<()> {
         self.block_on(async {
-            let name = name_to_string(name);
+            validate_object_name(name);
             self.client
                 .delete_object()
                 .bucket(self.bucket.clone())
@@ -188,11 +183,11 @@ impl Service for AwsService {
         })
     }
 
-    fn list<'a>(&'a mut self, prefix: &[u8]) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
-        let prefix = name_to_string(prefix);
+    fn list<'a>(&'a mut self, prefix: &str) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+        validate_object_name(prefix);
         Box::new(ObjectIterator {
             service: self,
-            prefix,
+            prefix: prefix.to_string(),
             last_response: None,
             next_index: 0,
         })
@@ -200,17 +195,17 @@ impl Service for AwsService {
 
     fn compare_and_swap(
         &mut self,
-        name: &[u8],
+        name: &str,
         existing_value: Option<Vec<u8>>,
         new_value: Vec<u8>,
     ) -> Result<bool> {
         self.block_on(async {
-            let name = name_to_string(name);
+            validate_object_name(name);
             let get_res = if_key_exists(
                 self.client
                     .get_object()
                     .bucket(self.bucket.clone())
-                    .key(name.clone())
+                    .key(name)
                     .send()
                     .await
                     .map_err(aws_err),
@@ -244,7 +239,7 @@ impl Service for AwsService {
                 self.client
                     .delete_object()
                     .bucket(self.bucket.clone())
-                    .key(name.clone())
+                    .key(name)
                     .send()
                     .await
                     .map_err(aws_err)?;
@@ -258,7 +253,7 @@ impl Service for AwsService {
                 self.client
                     .put_object()
                     .bucket(self.bucket.clone())
-                    .key(name.clone())
+                    .key(name)
                     .body(b"CHANGED".to_vec().into())
                     .send()
                     .await
@@ -356,7 +351,7 @@ impl Iterator for ObjectIterator<'_> {
                     let creation: u64 = creation.try_into().unwrap_or(0);
                     let name = obj.key.as_ref().expect("object has no key").clone();
                     return Some(Ok(ObjectInfo {
-                        name: name.as_bytes().to_vec(),
+                        name: name.clone(),
                         creation,
                     }));
                 } else if result.next_continuation_token.is_some() {

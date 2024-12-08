@@ -1,4 +1,4 @@
-use super::service::{ObjectInfo, Service};
+use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
 use google_cloud_storage::client::google_cloud_auth::credentials::CredentialsFile;
 use google_cloud_storage::client::{Client, ClientConfig};
@@ -45,9 +45,10 @@ impl GcpService {
 }
 
 impl Service for GcpService {
-    fn put(&mut self, name: &[u8], value: &[u8]) -> Result<()> {
-        let name = String::from_utf8(name.to_vec()).expect("non-UTF8 object name");
-        let upload_type = objects::upload::UploadType::Simple(objects::upload::Media::new(name));
+    fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
+        validate_object_name(name);
+        let upload_type =
+            objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
         self.rt.block_on(self.client.upload_object(
             &objects::upload::UploadObjectRequest {
                 bucket: self.bucket.clone(),
@@ -59,12 +60,12 @@ impl Service for GcpService {
         Ok(())
     }
 
-    fn get(&mut self, name: &[u8]) -> Result<Option<Vec<u8>>> {
-        let name = String::from_utf8(name.to_vec()).expect("non-UTF8 object name");
+    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+        validate_object_name(name);
         let download_res = self.rt.block_on(self.client.download_object(
             &objects::get::GetObjectRequest {
                 bucket: self.bucket.clone(),
-                object: name,
+                object: name.to_string(),
                 ..Default::default()
             },
             &objects::download::Range::default(),
@@ -76,12 +77,12 @@ impl Service for GcpService {
         }
     }
 
-    fn del(&mut self, name: &[u8]) -> Result<()> {
-        let name = String::from_utf8(name.to_vec()).expect("non-UTF8 object name");
+    fn del(&mut self, name: &str) -> Result<()> {
+        validate_object_name(name);
         let del_res = self.rt.block_on(self.client.delete_object(
             &objects::delete::DeleteObjectRequest {
                 bucket: self.bucket.clone(),
-                object: name,
+                object: name.to_string(),
                 ..Default::default()
             },
         ));
@@ -91,11 +92,11 @@ impl Service for GcpService {
         Ok(())
     }
 
-    fn list<'a>(&'a mut self, prefix: &[u8]) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
-        let prefix = String::from_utf8(prefix.to_vec()).expect("non-UTF8 object prefix");
+    fn list<'a>(&'a mut self, prefix: &str) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+        validate_object_name(prefix);
         Box::new(ObjectIterator {
             service: self,
-            prefix,
+            prefix: prefix.to_string(),
             last_response: None,
             next_index: 0,
         })
@@ -103,16 +104,16 @@ impl Service for GcpService {
 
     fn compare_and_swap(
         &mut self,
-        name: &[u8],
+        name: &str,
         existing_value: Option<Vec<u8>>,
         new_value: Vec<u8>,
     ) -> Result<bool> {
-        let name = String::from_utf8(name.to_vec()).expect("non-UTF8 object name");
+        validate_object_name(name);
         let get_res = self
             .rt
             .block_on(self.client.get_object(&objects::get::GetObjectRequest {
                 bucket: self.bucket.clone(),
-                object: name.clone(),
+                object: name.to_string(),
                 ..Default::default()
             }));
         // Determine the object's generation. See https://cloud.google.com/storage/docs/metadata#generation-number
@@ -132,7 +133,7 @@ impl Service for GcpService {
             let data = self.rt.block_on(self.client.download_object(
                 &objects::get::GetObjectRequest {
                     bucket: self.bucket.clone(),
-                    object: name.clone(),
+                    object: name.to_string(),
                     // Fetch the same generation.
                     generation: Some(generation),
                     ..Default::default()
@@ -152,7 +153,7 @@ impl Service for GcpService {
             let del_res = self.rt.block_on(self.client.delete_object(
                 &objects::delete::DeleteObjectRequest {
                     bucket: self.bucket.clone(),
-                    object: name.clone(),
+                    object: name.to_string(),
                     ..Default::default()
                 },
             ));
@@ -167,7 +168,7 @@ impl Service for GcpService {
         if name.ends_with("-racing-put") {
             println!("changing object {name}");
             let upload_type =
-                objects::upload::UploadType::Simple(objects::upload::Media::new(name.clone()));
+                objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
             self.rt.block_on(self.client.upload_object(
                 &objects::upload::UploadObjectRequest {
                     bucket: self.bucket.clone(),
@@ -179,7 +180,8 @@ impl Service for GcpService {
         }
 
         // Finally, put the new value with a condition that the generation hasn't changed.
-        let upload_type = objects::upload::UploadType::Simple(objects::upload::Media::new(name));
+        let upload_type =
+            objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
         let upload_res = self.rt.block_on(self.client.upload_object(
             &objects::upload::UploadObjectRequest {
                 bucket: self.bucket.clone(),
@@ -251,7 +253,7 @@ impl Iterator for ObjectIterator<'_> {
                     let creation = obj.time_created.map(|t| t.unix_timestamp()).unwrap_or(0);
                     let creation: u64 = creation.try_into().unwrap_or(0);
                     return Some(Ok(ObjectInfo {
-                        name: obj.name.as_bytes().to_vec(),
+                        name: obj.name.clone(),
                         creation,
                     }));
                 } else if result.next_page_token.is_some() {
