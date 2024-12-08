@@ -375,10 +375,8 @@ impl Iterator for ObjectIterator<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
-    /// Make a service, as well as a function to put a unique prefix on an object name, so that
-    /// tests do not interfere with one another.
+    /// Make a service.
     ///
     /// The service is only created if the following environment variables are set:
     ///  * `AWS_TEST_REGION` - region containing the test bucket
@@ -393,7 +391,7 @@ mod tests {
     /// When the environment variables are not set, this returns false and the test does not run.
     /// Note that the Rust test runner will still show "ok" for the test, as there is no way to
     /// indicate anything else.
-    fn make_service() -> Option<(AwsService, impl Fn(&str) -> Vec<u8>)> {
+    fn make_service() -> Option<AwsService> {
         let Ok(region) = std::env::var("AWS_TEST_REGION") else {
             return None;
         };
@@ -410,8 +408,7 @@ mod tests {
             return None;
         };
 
-        let prefix = Uuid::new_v4();
-        Some((
+        Some(
             AwsService::new(
                 region,
                 bucket,
@@ -421,211 +418,8 @@ mod tests {
                 },
             )
             .unwrap(),
-            move |n: &_| format!("{}-{}", prefix.as_simple(), n).into_bytes(),
-        ))
+        )
     }
 
-    #[test]
-    fn put_and_get() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-        svc.put(&pfx("testy"), b"foo").unwrap();
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, Some(b"foo".to_vec()));
-
-        // Clean up.
-        svc.del(&pfx("testy")).unwrap();
-    }
-
-    #[test]
-    fn get_missing() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn del() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-        svc.put(&pfx("testy"), b"data").unwrap();
-        svc.del(&pfx("testy")).unwrap();
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn del_missing() {
-        // Deleting an object that does not exist is not an error.
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        assert!(svc.del(&pfx("testy")).is_ok());
-    }
-
-    #[test]
-    fn list() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-        let mut names: Vec<_> = (0..20).map(|i| pfx(&format!("pp-{i:02}"))).collect();
-        names.sort();
-        // Create 20 objects that will be listed.
-        for n in &names {
-            svc.put(n, b"data").unwrap();
-        }
-        // And another object that should not be included in the list.
-        svc.put(&pfx("xxx"), b"data").unwrap();
-
-        let got_objects: Vec<_> = svc.list(&pfx("pp-")).collect::<Result<_>>().unwrap();
-        let mut got_names: Vec<_> = got_objects.into_iter().map(|oi| oi.name).collect();
-        got_names.sort();
-        assert_eq!(
-            got_names
-                .iter()
-                .map(|b| String::from_utf8(b.to_vec()).unwrap())
-                .collect::<Vec<_>>(),
-            names
-                .iter()
-                .map(|b| String::from_utf8(b.to_vec()).unwrap())
-                .collect::<Vec<_>>()
-        );
-
-        // Clean up.
-        for n in got_names {
-            svc.del(&n).unwrap();
-        }
-        svc.del(&pfx("xxx")).unwrap();
-    }
-
-    #[test]
-    fn compare_and_swap_create() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        assert!(svc
-            .compare_and_swap(&pfx("testy"), None, b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, Some(b"bar".to_vec()));
-
-        // Clean up.
-        svc.del(&pfx("testy")).unwrap();
-    }
-
-    #[test]
-    fn compare_and_swap_matches() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        // Create the existing file, with two different values over time.
-        svc.put(&pfx("testy"), b"foo1").unwrap();
-        svc.put(&pfx("testy"), b"foo2").unwrap();
-        // A compare_and_swap for the latest value succeeds.
-        assert!(svc
-            .compare_and_swap(&pfx("testy"), Some(b"foo2".to_vec()), b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, Some(b"bar".to_vec()));
-
-        // Clean up.
-        svc.del(&pfx("testy")).unwrap();
-    }
-
-    #[test]
-    fn compare_and_swap_expected_no_file() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        svc.put(&pfx("testy"), b"foo1").unwrap();
-        assert!(!svc
-            .compare_and_swap(&pfx("testy"), None, b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, Some(b"foo1".to_vec()));
-
-        // Clean up.
-        svc.del(&pfx("testy")).unwrap();
-    }
-
-    #[test]
-    fn compare_and_swap_old_value() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        // Create the existing file, with two different values over time.
-        svc.put(&pfx("testy"), b"foo1").unwrap();
-        svc.put(&pfx("testy"), b"foo2").unwrap();
-        // A compare_and_swap for the old value fails.
-        assert!(!svc
-            .compare_and_swap(&pfx("testy"), Some(b"foo1".to_vec()), b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("testy")).unwrap();
-        assert_eq!(got, Some(b"foo2".to_vec()));
-
-        // Clean up.
-        svc.del(&pfx("testy")).unwrap();
-    }
-
-    #[test]
-    fn compare_and_swap_changes() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        // Create the existing object, but since it is named "racing-put" its value will change
-        // just before the `put_object` call. This tests the "compare" part of `compare_and_swap`.
-        svc.put(&pfx("racing-put"), b"foo1").unwrap();
-        assert!(!svc
-            .compare_and_swap(&pfx("racing-put"), Some(b"foo1".to_vec()), b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("racing-put")).unwrap();
-        assert_eq!(got, Some(b"CHANGED".to_vec()));
-    }
-
-    #[test]
-    fn compare_and_swap_disappears() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        // Create the existing object, but since it is named "racing-delete" it will disappear just
-        // before the `put_object` call. This tests the case where the exists when
-        // `compare_and_swap` calls `get_object` but is deleted when it calls `put_object`.
-        svc.put(&pfx("racing-delete"), b"foo1").unwrap();
-        assert!(!svc
-            .compare_and_swap(
-                &pfx("racing-delete"),
-                Some(b"foo1".to_vec()),
-                b"bar".to_vec()
-            )
-            .unwrap());
-        let got = svc.get(&pfx("racing-delete")).unwrap();
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn compare_and_swap_appears() {
-        let Some((mut svc, pfx)) = make_service() else {
-            return;
-        };
-
-        // Create the existing object, but since it is named "racing-put" the object will appear just
-        // before the `put_object` call. This tests the case where the object does not exist when
-        // `compare_and_swap` calls `get_object`, but does exist when it calls `put_object`.
-        assert!(!svc
-            .compare_and_swap(&pfx("racing-put"), None, b"bar".to_vec())
-            .unwrap());
-        let got = svc.get(&pfx("racing-put")).unwrap();
-        assert_eq!(got, Some(b"CHANGED".to_vec()));
-    }
+    crate::server::cloud::test::service_tests!(make_service());
 }
