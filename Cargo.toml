@@ -63,5 +63,5 @@ url = { version = "2", optional = true }
 [dev-dependencies]
 proptest = "^1.5.0"
 tempfile = "3"
-rstest = "0.17"
+rstest = "0.23"
 pretty_assertions = "1"
