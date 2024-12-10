@@ -11,8 +11,8 @@ See the [documentation](https://gothenburgbitfactory.org/taskchampion/) for more
 
 There are two crates here:
 
- * [taskchampion](./taskchampion) - the core of the tool
- * [xtask](./xtask) (private) - implementation of the `cargo xtask msrv` command
+ * `taskchampion` (root of the repository) - the core of the tool
+ * [`xtask`](./xtask) (private) - implementation of the `cargo xtask msrv` command
 
 ## Rust API
 
