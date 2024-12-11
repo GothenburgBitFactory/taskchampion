@@ -1,7 +1,9 @@
 use super::types::Server;
 use crate::errors::Result;
 #[cfg(feature = "server-aws")]
-use crate::server::cloud::aws::{AwsCredentials, AwsService};
+pub use crate::server::cloud::aws::AwsCredentials;
+#[cfg(feature = "server-aws")]
+use crate::server::cloud::aws::AwsService;
 #[cfg(feature = "server-gcp")]
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
