@@ -26,7 +26,7 @@ mod sync;
 #[cfg(feature = "cloud")]
 mod cloud;
 
-pub use config::ServerConfig;
+pub use config::*;
 pub use types::*;
 
 pub(crate) use op::SyncOp;
