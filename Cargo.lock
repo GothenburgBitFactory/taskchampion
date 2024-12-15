@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "taskchampion"
-version = "1.0.2"
+version = "1.0.3-pre"
 dependencies = [
  "anyhow",
  "aws-config",
