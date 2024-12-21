@@ -12,7 +12,6 @@ use chrono::{DateTime, Duration, Utc};
 use log::trace;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 
 /// A replica represents an instance of a user's task data, providing an easy interface
@@ -420,7 +419,6 @@ impl Replica {
     ///
     /// Tasks are eligible for expiration when they have status Deleted and have not been modified
     /// for 180 days (about six months). Note that completed tasks are not eligible.
-
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         let mut ops = Operations::new();
