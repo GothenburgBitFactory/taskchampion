@@ -8,10 +8,11 @@ use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
 use crate::{Error, TaskData};
 use anyhow::Context;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use log::trace;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 
 /// A replica represents an instance of a user's task data, providing an easy interface
@@ -423,17 +424,16 @@ impl Replica {
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         let mut ops = Operations::new();
-        self.all_tasks()?
+        self.all_task_data()?
             .drain()
-            .filter(|(_, t)| t.get_status() == Status::Deleted)
             .filter(|(_, t)| {
-                if let Some(m) = t.get_modified() {
-                    m < six_mos_ago
-                } else {
-                    false
-                }
+                t.get("modified").map_or(false, |m| {
+                    m.parse().map_or(false, |time_sec| {
+                        DateTime::from_timestamp(time_sec, 0).map_or(false, |dt| dt < six_mos_ago)
+                    })
+                })
             })
-            .for_each(|(_, t)| t.into_task_data().delete(&mut ops));
+            .for_each(|(_, mut t)| t.delete(&mut ops));
         self.commit_operations(ops)
     }
     /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs
