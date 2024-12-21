@@ -419,6 +419,7 @@ impl Replica {
     ///
     /// Tasks are eligible for expiration when they have status Deleted and have not been modified
     /// for 180 days (about six months). Note that completed tasks are not eligible.
+
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         let mut ops = Operations::new();
@@ -435,7 +436,6 @@ impl Replica {
             .for_each(|(_, t)| t.into_task_data().delete(&mut ops));
         self.commit_operations(ops)
     }
-
     /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
