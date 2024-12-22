@@ -1,6 +1,6 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::{AccessMode, Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
@@ -9,10 +9,12 @@ use uuid::Uuid;
 
 mod schema;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SqliteError {
     #[error("SQLite transaction already committted")]
     TransactionAlreadyCommitted,
+    #[error("Task storage was opened in read-only mode")]
+    ReadOnlyStorage,
 }
 
 /// Newtype to allow implementing `FromSql` for foreign `uuid::Uuid`
@@ -77,10 +79,15 @@ impl ToSql for Operation {
 /// SqliteStorage is an on-disk storage backed by SQLite3.
 pub struct SqliteStorage {
     con: Connection,
+    access_mode: AccessMode,
 }
 
 impl SqliteStorage {
-    pub fn new<P: AsRef<Path>>(directory: P, create_if_missing: bool) -> Result<SqliteStorage> {
+    pub fn new<P: AsRef<Path>>(
+        directory: P,
+        access_mode: AccessMode,
+        create_if_missing: bool,
+    ) -> Result<SqliteStorage> {
         let directory = directory.as_ref();
         if create_if_missing {
             // Ensure parent folder exists
@@ -92,28 +99,55 @@ impl SqliteStorage {
         // Open (or create) database
         let db_file = directory.join("taskchampion.sqlite3");
         let mut flags = OpenFlags::default();
+
+        // Determine the mode in which to open the DB itself, using read-write mode
+        // for a non-existent DB to allow opening an empty DB in read-only mode.
+        let mut open_access_mode = access_mode;
+        if create_if_missing && access_mode == AccessMode::ReadOnly && !db_file.exists() {
+            open_access_mode = AccessMode::ReadWrite;
+        }
+
         // default contains SQLITE_OPEN_CREATE, so remove it if we are not to
         // create a DB when missing.
         if !create_if_missing {
             flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
         }
+
+        if open_access_mode == AccessMode::ReadOnly {
+            flags.remove(OpenFlags::SQLITE_OPEN_READ_WRITE);
+            flags.insert(OpenFlags::SQLITE_OPEN_READ_ONLY);
+            // SQLite does not allow create when opening read-only
+            flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
+        }
+
         let mut con = Connection::open_with_flags(db_file, flags)?;
 
         // Initialize database
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
 
-        schema::upgrade_db(&mut con)?;
+        if open_access_mode == AccessMode::ReadWrite {
+            schema::upgrade_db(&mut con)?;
+        }
 
-        Ok(Self { con })
+        Ok(Self { access_mode, con })
     }
 }
 
 struct Txn<'t> {
     txn: Option<rusqlite::Transaction<'t>>,
+    access_mode: AccessMode,
 }
 
 impl<'t> Txn<'t> {
+    fn check_write_access(&self) -> std::result::Result<(), SqliteError> {
+        if self.access_mode != AccessMode::ReadWrite {
+            Err(SqliteError::ReadOnlyStorage)
+        } else {
+            Ok(())
+        }
+    }
+
     fn get_txn(&self) -> std::result::Result<&rusqlite::Transaction<'t>, SqliteError> {
         self.txn
             .as_ref()
@@ -140,7 +174,10 @@ impl Storage for SqliteStorage {
         let txn = self
             .con
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Ok(Box::new(Txn { txn: Some(txn) }))
+        Ok(Box::new(Txn {
+            txn: Some(txn),
+            access_mode: self.access_mode,
+        }))
     }
 }
 
@@ -180,6 +217,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         let count: usize = t.query_row(
             "SELECT count(uuid) FROM tasks WHERE uuid = ?",
@@ -200,6 +238,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
             "INSERT OR REPLACE INTO tasks (uuid, data) VALUES (?, ?)",
@@ -210,6 +249,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         let changed = t
             .execute("DELETE FROM tasks WHERE uuid = ?", [&StoredUuid(uuid)])
@@ -264,6 +304,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn set_base_version(&mut self, version: VersionId) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
             "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)",
@@ -316,6 +357,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn add_operation(&mut self, op: Operation) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
 
         t.execute("INSERT INTO operations (data) VALUES (?)", params![&op])
@@ -324,6 +366,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn remove_operation(&mut self, op: Operation) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         let last: Option<(u32, Operation)> = t
             .query_row(
@@ -349,6 +392,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn sync_complete(&mut self) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
             "UPDATE operations SET synced = true WHERE synced = false",
@@ -398,6 +442,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
 
         let next_working_id = self.get_next_working_set_number()?;
@@ -412,6 +457,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         match uuid {
             // Add or override item
@@ -427,6 +473,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn clear_working_set(&mut self) -> Result<()> {
+        self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute("DELETE FROM working_set", [])
             .context("Clear working set query")?;
@@ -434,6 +481,7 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn commit(&mut self) -> Result<()> {
+        self.check_write_access()?;
         let t = self
             .txn
             .take()
@@ -449,13 +497,14 @@ mod test {
     use crate::storage::taskmap_with;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
     use std::thread;
     use std::time::Duration;
     use tempfile::TempDir;
 
     fn storage() -> Result<SqliteStorage> {
         let tmp_dir = TempDir::new()?;
-        SqliteStorage::new(tmp_dir.path(), true)
+        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)
     }
 
     crate::storage::test::storage_tests!(storage()?);
@@ -567,7 +616,7 @@ mod test {
     fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
-        let mut storage = SqliteStorage::new(non_existant.clone(), true)?;
+        let mut storage = SqliteStorage::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -581,7 +630,7 @@ mod test {
         }
 
         // Re-open the DB.
-        let mut storage = SqliteStorage::new(non_existant, true)?;
+        let mut storage = SqliteStorage::new(non_existant, AccessMode::ReadWrite, true)?;
         {
             let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
@@ -597,7 +646,7 @@ mod test {
     fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         create_0_8_0_db(tmp_dir.path())?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), true)?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
         assert_eq!(
             schema::get_db_version(&mut storage.con)?,
             schema::LATEST_VERSION,
@@ -668,12 +717,13 @@ mod test {
         let tmp_dir = TempDir::new()?;
 
         // Initialize the DB once, as schema modifications are not isolated by transactions.
-        SqliteStorage::new(tmp_dir.path(), true).unwrap();
+        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
 
         thread::scope(|scope| {
             // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
             scope.spawn(|| {
-                let mut storage = SqliteStorage::new(tmp_dir.path(), true).unwrap();
+                let mut storage =
+                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
                 let mut txn = storage.txn().unwrap();
                 txn.set_base_version(u).unwrap();
@@ -685,13 +735,62 @@ mod test {
             // failure.
             scope.spawn(|| {
                 thread::sleep(Duration::from_millis(50));
-                let mut storage = SqliteStorage::new(tmp_dir.path(), true).unwrap();
+                let mut storage =
+                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
                 let mut txn = storage.txn().unwrap();
                 txn.set_base_version(u).unwrap();
                 txn.commit().unwrap();
             });
         });
+        Ok(())
+    }
+
+    /// Verify that mutating methods fail in the read-only access mode, but read methods succeed,
+    /// both with and without the database having been created before being opened.
+    #[rstest]
+    #[case::create_non_existent(false, true)]
+    #[case::create_exists(true, true)]
+    #[case::exists_dont_create(true, false)]
+    fn test_read_only(#[case] exists: bool, #[case] create: bool) -> Result<()> {
+        let tmp_dir = TempDir::new()?;
+        // If the DB should already exist, create it.
+        if exists {
+            SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        }
+        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadOnly, create)?;
+
+        fn is_read_only_err<T: std::fmt::Debug>(res: Result<T>) -> bool {
+            &res.unwrap_err().to_string() == "Task storage was opened in read-only mode"
+        }
+
+        let mut txn = storage.txn()?;
+        let taskmap = TaskMap::new();
+        let op = Operation::UndoPoint;
+
+        // Mutating things fail.
+        assert!(is_read_only_err(txn.create_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_task(Uuid::new_v4(), taskmap)));
+        assert!(is_read_only_err(txn.delete_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.add_operation(op.clone())));
+        assert!(is_read_only_err(txn.remove_operation(op)));
+        assert!(is_read_only_err(txn.sync_complete()));
+        assert!(is_read_only_err(txn.add_to_working_set(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_working_set_item(1, None)));
+        assert!(is_read_only_err(txn.clear_working_set()));
+        assert!(is_read_only_err(txn.commit()));
+
+        // Read-only things succeed.
+        assert_eq!(txn.get_task(Uuid::new_v4())?, None);
+        assert_eq!(txn.get_pending_tasks()?.len(), 0);
+        assert_eq!(txn.all_tasks()?.len(), 0);
+        assert_eq!(txn.base_version()?, Uuid::nil());
+        assert_eq!(txn.get_task_operations(Uuid::new_v4())?.len(), 0);
+        assert_eq!(txn.unsynced_operations()?.len(), 0);
+        assert_eq!(txn.num_unsynced_operations()?, 0);
+        assert_eq!(txn.get_working_set()?.len(), 1);
+
         Ok(())
     }
 }
