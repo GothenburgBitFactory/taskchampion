@@ -21,7 +21,7 @@ mod config;
 mod inmemory;
 pub(crate) mod sqlite;
 
-pub use config::StorageConfig;
+pub use config::{AccessMode, StorageConfig};
 pub use inmemory::InMemoryStorage;
 pub use sqlite::SqliteStorage;
 
