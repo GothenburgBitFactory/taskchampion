@@ -1,4 +1,4 @@
-use super::{InMemoryStorage, SqliteStorage, Storage};
+use super::{inmemory::InMemoryStorage, sqlite::SqliteStorage, Storage};
 use crate::errors::Result;
 use std::path::PathBuf;
 

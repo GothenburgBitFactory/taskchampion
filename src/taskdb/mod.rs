@@ -28,10 +28,8 @@ impl TaskDb {
 
     #[cfg(test)]
     pub(crate) fn new_inmemory() -> TaskDb {
-        #[cfg(test)]
-        use crate::storage::InMemoryStorage;
-
-        TaskDb::new(Box::new(InMemoryStorage::new()))
+        use crate::StorageConfig;
+        TaskDb::new(StorageConfig::InMemory.into_storage().unwrap())
     }
 
     /// Apply `operations` to the database in a single transaction.

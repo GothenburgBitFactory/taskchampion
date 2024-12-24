@@ -223,12 +223,12 @@ impl StorageTxn for Txn<'_> {
 /// InMemoryStorage is a simple in-memory task storage implementation.  It is not useful for
 /// production data, but is useful for testing purposes.
 #[derive(PartialEq, Debug, Clone)]
-pub struct InMemoryStorage {
+pub(super) struct InMemoryStorage {
     data: Data,
 }
 
 impl InMemoryStorage {
-    pub fn new() -> InMemoryStorage {
+    pub(super) fn new() -> InMemoryStorage {
         InMemoryStorage {
             data: Data {
                 tasks: HashMap::new(),

@@ -18,7 +18,7 @@ struct Version {
     history_segment: HistorySegment,
 }
 
-pub struct LocalServer {
+pub(crate) struct LocalServer {
     con: rusqlite::Connection,
 }
 
@@ -29,7 +29,7 @@ impl LocalServer {
     }
 
     /// A server which has no notion of clients, signatures, encryption, etc.
-    pub fn new<P: AsRef<Path>>(directory: P) -> Result<LocalServer> {
+    pub(crate) fn new<P: AsRef<Path>>(directory: P) -> Result<LocalServer> {
         let db_file = directory
             .as_ref()
             .join("taskchampion-local-sync-server.sqlite3");

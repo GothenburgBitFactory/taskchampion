@@ -51,7 +51,9 @@ impl Replica {
 
     #[cfg(test)]
     pub fn new_inmemory() -> Replica {
-        Replica::new(Box::new(crate::storage::InMemoryStorage::new()))
+        use crate::StorageConfig;
+
+        Replica::new(StorageConfig::InMemory.into_storage().unwrap())
     }
 
     /// Update an existing task.  If the value is Some, the property is added or updated.  If the

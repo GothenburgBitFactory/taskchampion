@@ -6,7 +6,7 @@ use uuid::Uuid;
 /// A SyncOp defines a single change to the task database, that can be synchronized
 /// via a server.
 #[derive(PartialEq, Eq, Clone, Debug, Serialize, Deserialize)]
-pub enum SyncOp {
+pub(crate) enum SyncOp {
     /// Create a new task.
     ///
     /// On application, if the task already exists, the operation does nothing.
@@ -54,7 +54,10 @@ impl SyncOp {
     // allows two different systems which have already applied op1 and op2, respectively, and thus
     // reached different states, to return to the same state by applying op2' and op1',
     // respectively.
-    pub fn transform(operation1: SyncOp, operation2: SyncOp) -> (Option<SyncOp>, Option<SyncOp>) {
+    pub(crate) fn transform(
+        operation1: SyncOp,
+        operation2: SyncOp,
+    ) -> (Option<SyncOp>, Option<SyncOp>) {
         match (&operation1, &operation2) {
             // Two creations or deletions of the same uuid reach the same state, so there's no need
             // for any further operations to bring the state together.
@@ -174,9 +177,9 @@ impl SyncOp {
 mod test {
     use super::*;
     use crate::errors::Result;
-    use crate::storage::{InMemoryStorage, TaskMap};
+    use crate::storage::TaskMap;
     use crate::taskdb::TaskDb;
-    use crate::Operations;
+    use crate::{Operations, StorageConfig};
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
@@ -433,8 +436,8 @@ mod test {
 
             let mut ops1 = Operations::new();
             let mut ops2 = Operations::new();
-            let mut db1 = TaskDb::new(Box::new(InMemoryStorage::new()));
-            let mut db2 = TaskDb::new(Box::new(InMemoryStorage::new()));
+            let mut db1 = TaskDb::new(StorageConfig::InMemory.into_storage().unwrap());
+            let mut db2 = TaskDb::new(StorageConfig::InMemory.into_storage().unwrap());
 
             // Ensure that any expected tasks already exist
             for o in [&o1, &o2] {
