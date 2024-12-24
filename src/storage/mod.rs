@@ -21,9 +21,7 @@ mod config;
 mod inmemory;
 pub(crate) mod sqlite;
 
-pub use config::{AccessMode, StorageConfig};
-pub use inmemory::InMemoryStorage;
-pub use sqlite::SqliteStorage;
+pub use config::StorageConfig;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
@@ -42,10 +40,10 @@ pub(crate) fn taskmap_with(mut properties: Vec<(String, String)>) -> TaskMap {
 }
 
 /// The type of VersionIds
-pub use crate::server::VersionId;
+use crate::server::VersionId;
 
-/// The default for base_version.
-pub(crate) const DEFAULT_BASE_VERSION: Uuid = crate::server::NIL_VERSION_ID;
+/// The default for base_version, if none exists in the DB.
+const DEFAULT_BASE_VERSION: Uuid = crate::server::NIL_VERSION_ID;
 
 /// A Storage transaction, in which storage operations are performed.
 ///

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::encryption::{Cryptor, Sealed, Secret, Unsealed};
 
-pub struct SyncServer {
+pub(crate) struct SyncServer {
     base_url: Url,
     client_id: Uuid,
     cryptor: Cryptor,
@@ -32,7 +32,11 @@ impl SyncServer {
     ///
     /// Pass a client_id to identify this client to the server.  Multiple replicas synchronizing the same task history
     /// should use the same client_id.
-    pub fn new(url: String, client_id: Uuid, encryption_secret: Vec<u8>) -> Result<SyncServer> {
+    pub(crate) fn new(
+        url: String,
+        client_id: Uuid,
+        encryption_secret: Vec<u8>,
+    ) -> Result<SyncServer> {
         let url = Url::parse(&url)
             .map_err(|_| Error::Server(format!("Could not parse {} as a URL", url)))?;
         Ok(SyncServer {
