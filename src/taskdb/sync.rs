@@ -220,16 +220,13 @@ fn apply_version(
 mod test {
     use super::*;
     use crate::server::test::TestServer;
-    use crate::storage::{InMemoryStorage, TaskMap};
-    use crate::taskdb::{snapshot::SnapshotTasks, TaskDb};
+    use crate::storage::TaskMap;
+    use crate::taskdb::snapshot::SnapshotTasks;
+    use crate::taskdb::TaskDb;
     use crate::{Operation, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
-
-    fn newdb() -> TaskDb {
-        TaskDb::new(Box::new(InMemoryStorage::new()))
-    }
 
     fn expect_operations(mut got: Vec<Operation>, mut exp: Vec<Operation>) {
         got.sort();
@@ -241,10 +238,10 @@ mod test {
     fn test_sync() -> Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut db1 = newdb();
+        let mut db1 = TaskDb::new_inmemory();
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
 
-        let mut db2 = newdb();
+        let mut db2 = TaskDb::new_inmemory();
         sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
 
         // make some changes in parallel to db1 and db2..
@@ -357,10 +354,10 @@ mod test {
     fn test_sync_create_delete() -> Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut db1 = newdb();
+        let mut db1 = TaskDb::new_inmemory();
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
 
-        let mut db2 = newdb();
+        let mut db2 = TaskDb::new_inmemory();
         sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
 
         // create and update a task..
@@ -485,10 +482,10 @@ mod test {
     fn test_sync_conflicting_updates() -> Result<()> {
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut db1 = newdb();
+        let mut db1 = TaskDb::new_inmemory();
         sync(&mut server, db1.storage.txn()?.as_mut(), false).unwrap();
 
-        let mut db2 = newdb();
+        let mut db2 = TaskDb::new_inmemory();
         sync(&mut server, db2.storage.txn()?.as_mut(), false).unwrap();
 
         // create and update a task..
@@ -597,7 +594,7 @@ mod test {
         let mut test_server = TestServer::new();
 
         let mut server: Box<dyn Server> = test_server.server();
-        let mut db1 = newdb();
+        let mut db1 = TaskDb::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -641,7 +638,7 @@ mod test {
         test_server.delete_version(Uuid::nil());
 
         // sync to a new DB and check that we got the expected results
-        let mut db2 = newdb();
+        let mut db2 = TaskDb::new_inmemory();
         sync(&mut server, db2.storage.txn()?.as_mut(), false)?;
 
         let task = db2.get_task(uuid)?.unwrap();
@@ -655,7 +652,7 @@ mod test {
         let test_server = TestServer::new();
 
         let mut server: Box<dyn Server> = test_server.server();
-        let mut db1 = newdb();
+        let mut db1 = TaskDb::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -678,7 +675,7 @@ mod test {
 
         let mut server: Box<dyn Server> = test_server.server();
 
-        let mut db = newdb();
+        let mut db = TaskDb::new_inmemory();
         sync(&mut server, db.storage.txn()?.as_mut(), false).unwrap();
 
         // add a task to db
@@ -726,7 +723,7 @@ mod test {
 
         let mut server: Box<dyn Server> = test_server.server();
 
-        let mut db = newdb();
+        let mut db = TaskDb::new_inmemory();
         sync(&mut server, db.storage.txn()?.as_mut(), false).unwrap();
 
         // add a task to db

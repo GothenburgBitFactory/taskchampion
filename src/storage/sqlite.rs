@@ -1,6 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
-use crate::storage::{AccessMode, Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::config::AccessMode;
+use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
@@ -10,7 +11,7 @@ use uuid::Uuid;
 mod schema;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum SqliteError {
+pub(crate) enum SqliteError {
     #[error("SQLite transaction already committted")]
     TransactionAlreadyCommitted,
     #[error("Task storage was opened in read-only mode")]
@@ -77,13 +78,13 @@ impl ToSql for Operation {
 }
 
 /// SqliteStorage is an on-disk storage backed by SQLite3.
-pub struct SqliteStorage {
+pub(super) struct SqliteStorage {
     con: Connection,
     access_mode: AccessMode,
 }
 
 impl SqliteStorage {
-    pub fn new<P: AsRef<Path>>(
+    pub(super) fn new<P: AsRef<Path>>(
         directory: P,
         access_mode: AccessMode,
         create_if_missing: bool,

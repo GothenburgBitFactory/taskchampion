@@ -1,5 +1,6 @@
 use crate::errors::{Error, Result};
-use crate::storage::{StorageTxn, TaskMap, VersionId};
+use crate::server::VersionId;
+use crate::storage::{StorageTxn, TaskMap};
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
@@ -104,7 +105,7 @@ pub(super) fn apply_snapshot(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::storage::{InMemoryStorage, Storage, TaskMap};
+    use crate::{storage::TaskMap, StorageConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -130,7 +131,7 @@ mod test {
 
     #[test]
     fn test_round_trip() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
         let version = Uuid::new_v4();
 
         let task1 = (
@@ -159,7 +160,7 @@ mod test {
         };
 
         // apply that snapshot to a fresh bit of fake
-        let mut storage = InMemoryStorage::new();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
         {
             let mut txn = storage.txn()?;
             apply_snapshot(txn.as_mut(), version, &snap)?;
