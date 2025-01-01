@@ -8,8 +8,8 @@ use chrono::prelude::*;
 use log::trace;
 use std::convert::AsRef;
 use std::convert::TryInto;
-use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// A task, with a high-level interface.
@@ -28,7 +28,7 @@ pub struct Task {
     data: TaskData,
 
     // The dependency map for this replica, for rapidly computing synthetic tags.
-    depmap: Rc<DependencyMap>,
+    depmap: Arc<DependencyMap>,
 
     // True if an operation has alredy been emitted to update the `modified` property.
     updated_modified: bool,
@@ -80,7 +80,7 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
 }
 
 impl Task {
-    pub(crate) fn new(data: TaskData, depmap: Rc<DependencyMap>) -> Task {
+    pub(crate) fn new(data: TaskData, depmap: Arc<DependencyMap>) -> Task {
         Task {
             data,
             depmap,
@@ -538,8 +538,8 @@ mod test {
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
-    fn dm() -> Rc<DependencyMap> {
-        Rc::new(DependencyMap::new())
+    fn dm() -> Arc<DependencyMap> {
+        Arc::new(DependencyMap::new())
     }
 
     // Test task mutation by modifying a task and checking the assertions both on the
