@@ -24,6 +24,16 @@ use uuid::Uuid;
 /// that wraps the key-value store representing a task, while the second is a higher-level type
 /// that supports methods to update specific properties, maintain dependencies and tags, and so on.
 ///
+/// ## Operations
+///
+/// Changes to a replica occur by committing [`Operations`]s. All methods that change a replica
+/// take an argument of type `&mut Operations`, and the necessary operations are added to that
+/// sequence. Those changes may be reflected locally, such as in a [`Task`] or [`TaskData`] value, but
+/// are not reflected in the Replica's storage until committed with [`Replica::commit_operations`].
+///
+/// Undo is supported by producing an [`Operations`] value representing the operations to be
+/// undone. These are then committed with [`Replica::commit_reversed_operations`].
+///
 /// ## Working Set
 ///
 /// A replica maintains a "working set" of tasks that are of current concern to the user,

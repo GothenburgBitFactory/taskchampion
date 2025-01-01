@@ -22,6 +22,9 @@ use uuid::Uuid;
 /// protected by the atomicity of the backend storage.  Concurrent modifications are safe,
 /// but a Task that is cached for more than a few seconds may cause the user to see stale
 /// data.  Fetch, use, and drop Tasks quickly.
+///
+/// See the documentation for [`crate::Replica`] for background on the `ops` arguments to methods
+/// on this type.
 #[derive(Debug, Clone)]
 pub struct Task {
     // The underlying task data.
