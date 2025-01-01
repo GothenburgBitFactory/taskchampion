@@ -29,7 +29,7 @@ Timestamps are stored as UNIX epoch timestamps, in the form of an integer.
 
 The following keys, and key formats, are defined:
 
-* `status` - one of `P` for a pending task (the default), `C` for completed, `D` for deleted, or `R` for recurring
+* `status` - one of `pending` for a pending task (the default), `completed`, `deleted`, or `recurring`
 * `description` - the one-line summary of the task
 * `modified` - the time of the last modification of this task
 * `start` - the most recent time at which this task was started (a task with no `start` key is not active)
