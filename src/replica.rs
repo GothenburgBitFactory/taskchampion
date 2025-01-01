@@ -11,7 +11,7 @@ use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use log::trace;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// A replica represents an instance of a user's task data, providing an easy interface
@@ -37,7 +37,7 @@ pub struct Replica {
     added_undo_point: bool,
 
     /// The dependency map for this replica, if it has been calculated.
-    depmap: Option<Rc<DependencyMap>>,
+    depmap: Option<Arc<DependencyMap>>,
 }
 
 impl Replica {
@@ -151,7 +151,7 @@ impl Replica {
     ///
     /// Calculating this value requires a scan of the full working set and may not be performant.
     /// The [`TaskData`] API avoids generating this value.
-    pub fn dependency_map(&mut self, force: bool) -> Result<Rc<DependencyMap>> {
+    pub fn dependency_map(&mut self, force: bool) -> Result<Arc<DependencyMap>> {
         if force || self.depmap.is_none() {
             // note: we can't use self.get_task here, as that depends on a
             // DependencyMap
@@ -203,7 +203,7 @@ impl Replica {
                     }
                 }
             }
-            self.depmap = Some(Rc::new(dm));
+            self.depmap = Some(Arc::new(dm));
         }
 
         // at this point self.depmap is guaranteed to be Some(_)
