@@ -12,6 +12,7 @@ use uuid::Uuid;
 /// caller to decide how long to keep this value, and how much to trust the accuracy of its
 /// contents.  In practice, the answers are usually "a few milliseconds" and treating unexpected
 /// results as non-fatal.
+#[derive(Debug)]
 pub struct WorkingSet {
     by_index: Vec<Option<Uuid>>,
     by_uuid: HashMap<Uuid, usize>,
