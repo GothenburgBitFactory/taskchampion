@@ -18,11 +18,8 @@ const MSRV_PATH_REGEX: &[(&str, &str)] = &[
         r#"toolchain: "[0-9.]+*" # MSRV"#,
     ),
     (".github/workflows/rust-tests.yml", r#""[0-9.]+" # MSRV"#),
-    (
-        "taskchampion/src/lib.rs",
-        r#"Rust version [0-9.]* and higher"#,
-    ),
-    ("taskchampion/Cargo.toml", r#"^rust-version = "[0-9.]"#),
+    ("src/lib.rs", r#"Rust version [0-9.]* and higher"#),
+    ("Cargo.toml", r#"^rust-version = "[0-9.]"#),
 ];
 
 pub fn main() -> anyhow::Result<()> {
