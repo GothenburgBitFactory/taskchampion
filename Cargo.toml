@@ -9,7 +9,7 @@ repository = "https://github.com/GothenburgBitFactory/taskchampion"
 readme = "src/crate-doc.md"
 license = "MIT"
 edition = "2021"
-rust-version = "1.78.0"
+rust-version = "1.81.0"
 
 [workspace]
 members = [ "xtask" ]
