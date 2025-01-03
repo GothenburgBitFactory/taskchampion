@@ -11,6 +11,9 @@ use uuid::Uuid;
 /// This interface is intended for sophisticated applications like Taskwarrior which give meaning
 /// to key and values themselves. Use [`Task`](crate::Task) for a higher-level interface with
 /// methods to update status, set tags, and so on.
+///
+/// See the documentation for [`crate::Replica`] for background on the `ops` arguments to methods
+/// on this type.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TaskData {
     uuid: Uuid,
@@ -24,8 +27,8 @@ impl TaskData {
     }
 
     /// Create a new, empty task with the given UUID.
-    pub fn create(uuid: Uuid, operations: &mut Operations) -> Self {
-        operations.push(Operation::Create { uuid });
+    pub fn create(uuid: Uuid, ops: &mut Operations) -> Self {
+        ops.push(Operation::Create { uuid });
         Self {
             uuid,
             taskmap: TaskMap::new(),
@@ -72,7 +75,7 @@ impl TaskData {
         &mut self,
         property: impl Into<String>,
         value: Option<String>,
-        operations: &mut Operations,
+        ops: &mut Operations,
     ) {
         let property = property.into();
         let old_value = self.taskmap.get(&property).cloned();
@@ -81,7 +84,7 @@ impl TaskData {
         } else {
             self.taskmap.remove(&property);
         }
-        operations.push(Operation::Update {
+        ops.push(Operation::Update {
             uuid: self.uuid,
             property,
             old_value,
@@ -102,8 +105,8 @@ impl TaskData {
     ///
     /// After this call, the `TaskData` value still exists but has no properties and should be
     /// dropped.
-    pub fn delete(&mut self, operations: &mut Operations) {
-        operations.push(Operation::Delete {
+    pub fn delete(&mut self, ops: &mut Operations) {
+        ops.push(Operation::Delete {
             uuid: self.uuid,
             old_task: std::mem::take(&mut self.taskmap),
         });
