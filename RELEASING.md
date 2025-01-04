@@ -10,7 +10,7 @@
 1. Commit the changes (Cargo.lock will change too) with comment `vX.Y.Z`.
 1. Run `git tag vX.Y.Z`
 1. Run `git push upstream`
-1. Run `git push --tags upstream`
+1. Run `git push upstream tag vX.Y.Z`
 1. Run `cargo publish -p taskchampion`
 1. Bump the patch version in `Cargo.toml` and add the `-pre` suffix. This allows `cargo-semver-checks` to check for changes not accounted for in the version delta.
 1. Run `cargo build --release -p taskchampion` again to update `Cargo.lock`
