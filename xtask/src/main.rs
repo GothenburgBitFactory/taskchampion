@@ -18,8 +18,8 @@ const MSRV_PATH_REGEX: &[(&str, &str)] = &[
         r#"toolchain: "[0-9.]+*" # MSRV"#,
     ),
     (".github/workflows/rust-tests.yml", r#""[0-9.]+" # MSRV"#),
-    ("src/lib.rs", r#"Rust version [0-9.]* and higher"#),
-    ("Cargo.toml", r#"^rust-version = "[0-9.]"#),
+    ("src/crate-doc.md", r#"Rust version [0-9.]+ and higher"#),
+    ("Cargo.toml", r#"^rust-version = "[0-9.]+""#),
 ];
 
 pub fn main() -> anyhow::Result<()> {
@@ -54,6 +54,7 @@ fn msrv(args: Vec<String>, workspace_dir: &Path) -> anyhow::Result<()> {
     // for each file in const paths tuple
     for msrv_file in MSRV_PATH_REGEX {
         let mut is_pattern_in_file = false;
+        let mut updated_file = false;
 
         let path = workspace_dir.join(msrv_file.0);
         let path = Path::new(&path);
@@ -74,12 +75,11 @@ fn msrv(args: Vec<String>, workspace_dir: &Path) -> anyhow::Result<()> {
 
             // if rust version pattern is found and is different, update it
             if let Some(pattern_offset) = re_msrv_pattern.find(line) {
+                is_pattern_in_file = true;
                 if !pattern_offset.as_str().contains(version_replacement_string) {
                     file_string += &re_msrv_version.replace(line, version_replacement_string);
-
                     file_string += "\n";
-
-                    is_pattern_in_file = true;
+                    updated_file = true;
                     continue;
                 }
             }
@@ -89,7 +89,7 @@ fn msrv(args: Vec<String>, workspace_dir: &Path) -> anyhow::Result<()> {
         }
 
         // if pattern was found and updated, write to disk
-        if is_pattern_in_file {
+        if updated_file {
             //  Set the file length to the file_string length
             file.set_len(file_string.len() as u64)?;
 
@@ -98,9 +98,11 @@ fn msrv(args: Vec<String>, workspace_dir: &Path) -> anyhow::Result<()> {
             file.write_all(file_string.as_bytes())?;
 
             // notify user this file was updated
+            println!("xtask: Updated MSRV in {}", msrv_file.0);
+        } else if !is_pattern_in_file {
             println!(
-                "xtask: Updated MSRV in {}",
-                re_msrv_version.replace(msrv_file.0, version_replacement_string)
+                "xtask: Pattern {:?} not found in {}",
+                msrv_file.1, msrv_file.0
             );
         }
     }
