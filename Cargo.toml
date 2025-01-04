@@ -1,6 +1,6 @@
 [package]
 name = "taskchampion"
-version = "2.0.0"
+version = "2.0.1-pre"
 authors = ["Dustin J. Mitchell <dustin@mozilla.com>"]
 description = "Personal task-tracking"
 homepage = "https://gothenburgbitfactory.github.io/taskchampion/"
