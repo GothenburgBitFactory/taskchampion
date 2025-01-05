@@ -66,7 +66,7 @@ impl From<ureq::Error> for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {

@@ -20,7 +20,7 @@ pub(super) enum TagInner {
 }
 
 // see doc comment for Tag, above
-pub const INVALID_TAG_CHARACTERS: &str = "+-*/(<>^! %=~";
+pub(crate) const INVALID_TAG_CHARACTERS: &str = "+-*/(<>^! %=~";
 
 impl Tag {
     /// True if this tag is a synthetic tag
