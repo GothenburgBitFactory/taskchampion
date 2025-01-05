@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![deny(unreachable_pub)]
+#![deny(unnameable_types)]
 #![doc = include_str!("crate-doc.md")]
 
 mod depmap;
