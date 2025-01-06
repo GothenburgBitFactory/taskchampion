@@ -434,8 +434,10 @@ impl Replica {
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         let mut ops = Operations::new();
+        let deleted = Status::Deleted.to_taskmap();
         self.all_task_data()?
             .drain()
+            .filter(|(_, t)| t.get("status") == Some(deleted))
             .filter(|(_, t)| {
                 t.get("modified").map_or(false, |m| {
                     m.parse().map_or(false, |time_sec| {
@@ -1010,28 +1012,33 @@ mod tests {
         let mut rep = Replica::new_inmemory();
         let mut ops = Operations::new();
 
-        // uuid1 is pending, so is not expired.
-        let uuid1 = Uuid::new_v4();
-        let mut t = rep.create_task(uuid1, &mut ops).unwrap();
+        // uuid1 is old but pending, so is not expired.
+        let keeper_uuid1 = Uuid::new_v4();
+        let mut t = rep.create_task(keeper_uuid1, &mut ops).unwrap();
         t.set_description("keeper 1".into(), &mut ops).unwrap();
+        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)
+            .unwrap();
         t.set_status(Status::Pending, &mut ops).unwrap();
 
-        // uuid2 is completed, so is not expired.
-        let uuid2 = Uuid::new_v4();
-        let mut t = rep.create_task(uuid2, &mut ops).unwrap();
+        // uuid2 is old but completed, so is not expired.
+        let keeper_uuid2 = Uuid::new_v4();
+        let mut t = rep.create_task(keeper_uuid2, &mut ops).unwrap();
         t.set_description("keeper 2".into(), &mut ops).unwrap();
+        t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)
+            .unwrap();
         t.set_status(Status::Completed, &mut ops).unwrap();
 
         // uuid3 is deleted but recently modified, so is not expired.
-        let uuid3 = Uuid::new_v4();
-        let mut t = rep.create_task(uuid3, &mut ops).unwrap();
+        let keeper_uuid3 = Uuid::new_v4();
+        let mut t = rep.create_task(keeper_uuid3, &mut ops).unwrap();
         t.set_description("keeper 3".into(), &mut ops).unwrap();
         t.set_status(Status::Deleted, &mut ops).unwrap();
+        t.set_modified(Utc::now(), &mut ops).unwrap();
         t.set_entry(Some(Utc::now()), &mut ops).unwrap();
 
         // uuid4 was deleted long ago, so it is expired.
-        let uuid4 = Uuid::new_v4();
-        let mut t = rep.create_task(uuid4, &mut ops).unwrap();
+        let goner_uuid4 = Uuid::new_v4();
+        let mut t = rep.create_task(goner_uuid4, &mut ops).unwrap();
         t.set_description("goner".into(), &mut ops).unwrap();
         t.set_status(Status::Deleted, &mut ops).unwrap();
         t.set_modified(Utc.with_ymd_and_hms(1980, 1, 1, 0, 0, 0).unwrap(), &mut ops)
@@ -1040,10 +1047,10 @@ mod tests {
 
         rep.expire_tasks().unwrap();
 
-        for (_, t) in rep.all_tasks().unwrap() {
-            println!("got task {}", t.get_description());
-            assert!(t.get_description().starts_with("keeper"));
-        }
+        assert!(rep.get_task_data(keeper_uuid1).unwrap().is_some());
+        assert!(rep.get_task_data(keeper_uuid2).unwrap().is_some());
+        assert!(rep.get_task_data(keeper_uuid3).unwrap().is_some());
+        assert!(rep.get_task_data(goner_uuid4).unwrap().is_none());
     }
 
     #[test]
