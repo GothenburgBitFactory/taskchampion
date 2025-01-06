@@ -1,6 +1,6 @@
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
 
-pub type Timestamp = DateTime<Utc>;
+pub(crate) type Timestamp = DateTime<Utc>;
 
 pub fn utc_timestamp(secs: i64) -> Timestamp {
     match Utc.timestamp_opt(secs, 0) {

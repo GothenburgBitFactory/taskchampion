@@ -131,7 +131,7 @@ mod test {
 
     /// Set all operations' timestamps to the given timestamp, to ease use of
     /// `assert_eq!`.
-    pub fn set_all_timestamps(ops: &mut Operations, set_to: DateTime<Utc>) {
+    fn set_all_timestamps(ops: &mut Operations, set_to: DateTime<Utc>) {
         for op in ops {
             if let Operation::Update { timestamp, .. } = op {
                 *timestamp = set_to;

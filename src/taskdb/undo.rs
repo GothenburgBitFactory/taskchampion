@@ -11,7 +11,7 @@ use log::{debug, info, trace};
 ///
 /// The operations are returned in the order they were applied. Use [`commit_reversed_operations`]
 /// to "undo" them.
-pub fn get_undo_operations(txn: &mut dyn StorageTxn) -> Result<Operations> {
+pub(crate) fn get_undo_operations(txn: &mut dyn StorageTxn) -> Result<Operations> {
     let local_ops = txn.unsynced_operations().unwrap();
     let last_undo_op_idx = local_ops
         .iter()
@@ -66,7 +66,10 @@ fn reverse_ops(op: Operation) -> Vec<SyncOp> {
 ///
 /// This method only supports reversing operations if they precisely match local operations that
 /// have not yet been synchronized, and will return `false` if this is not the case.
-pub fn commit_reversed_operations(txn: &mut dyn StorageTxn, undo_ops: Operations) -> Result<bool> {
+pub(crate) fn commit_reversed_operations(
+    txn: &mut dyn StorageTxn,
+    undo_ops: Operations,
+) -> Result<bool> {
     let mut applied = false;
     let local_ops = txn.unsynced_operations().unwrap();
     let mut undo_ops = undo_ops.to_vec();

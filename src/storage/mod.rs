@@ -21,7 +21,7 @@ mod config;
 mod inmemory;
 pub(crate) mod sqlite;
 
-pub use config::StorageConfig;
+pub use config::{AccessMode, StorageConfig};
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
