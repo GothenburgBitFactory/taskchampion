@@ -434,9 +434,10 @@ impl Replica {
     pub fn expire_tasks(&mut self) -> Result<()> {
         let six_mos_ago = Utc::now() - Duration::days(180);
         let mut ops = Operations::new();
+        let deleted = Status::Deleted.to_taskmap();
         self.all_task_data()?
             .drain()
-            .filter(|(_, t)| t.get("status") == Some("deleted"))
+            .filter(|(_, t)| t.get("status") == Some(deleted))
             .filter(|(_, t)| {
                 t.get("modified").map_or(false, |m| {
                     m.parse().map_or(false, |time_sec| {
