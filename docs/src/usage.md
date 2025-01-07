@@ -38,16 +38,19 @@ This may refer to an instance of `taskchampion-sync-server` or a number of other
 
 ### Rust
 
-TaskChampion is implemented in Rust, and implementation represents its primary public API.
-It is documented at [docs.rs/taskchampion](https://docs.rs/taskchampion/latest/taskchampion/).
+TaskChampion is implemented in Rust, and this implementation represents its
+primary public API. It is documented at
+[docs.rs/taskchampion](https://docs.rs/taskchampion/latest/taskchampion/).
 
-### C
+### Python
 
-The C API contains a rough mapping of Rust types to opaque C structures, and Rust methods to C functions.
+TaskChampion is available from Python via
+[taskchampion-py](https://pypi.org/project/taskchampion-py/). The Python API is
+closely modeled on the Rust API.
 
-The `taskchampion-lib` crate generates libraries suitable for use from C (or any C-compatible language).
-It is a "normal" Cargo crate that happens to export a number of `extern "C"` symbols, and also contains a [`taskchampion.h`](https://github.com/GothenburgBitFactory/taskchampion/blob/main/lib/taskchampion.h) defining those symbols.
-The primary documentation for the C API is in the header file.
+### C/C++
 
-*WARNING: the C API is not yet stable!*
-Please consult with the TaskChampion developers before relying on this API.
+C/C++ users should use a tool like [cxx](https://cxx.rs) to wrap this package.
+See
+[Taskwarrior](https://github.com/GothenburgBitFactory/taskwarrior/tree/develop/src/taskchampion-cpp)
+for an example.
