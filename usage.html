@@ -167,15 +167,18 @@ The working set can be &quot;rebuilt&quot; as the task list changes, updating th
 This may refer to an instance of <code>taskchampion-sync-server</code> or a number of other options.</p>
 <h2 id="apis"><a class="header" href="#apis">APIs</a></h2>
 <h3 id="rust"><a class="header" href="#rust">Rust</a></h3>
-<p>TaskChampion is implemented in Rust, and implementation represents its primary public API.
-It is documented at <a href="https://docs.rs/taskchampion/latest/taskchampion/">docs.rs/taskchampion</a>.</p>
-<h3 id="c"><a class="header" href="#c">C</a></h3>
-<p>The C API contains a rough mapping of Rust types to opaque C structures, and Rust methods to C functions.</p>
-<p>The <code>taskchampion-lib</code> crate generates libraries suitable for use from C (or any C-compatible language).
-It is a &quot;normal&quot; Cargo crate that happens to export a number of <code>extern &quot;C&quot;</code> symbols, and also contains a <a href="https://github.com/GothenburgBitFactory/taskchampion/blob/main/lib/taskchampion.h"><code>taskchampion.h</code></a> defining those symbols.
-The primary documentation for the C API is in the header file.</p>
-<p><em>WARNING: the C API is not yet stable!</em>
-Please consult with the TaskChampion developers before relying on this API.</p>
+<p>TaskChampion is implemented in Rust, and this implementation represents its
+primary public API. It is documented at
+<a href="https://docs.rs/taskchampion/latest/taskchampion/">docs.rs/taskchampion</a>.</p>
+<h3 id="python"><a class="header" href="#python">Python</a></h3>
+<p>TaskChampion is available from Python via
+<a href="https://pypi.org/project/taskchampion-py/">taskchampion-py</a>. The Python API is
+closely modeled on the Rust API.</p>
+<h3 id="cc"><a class="header" href="#cc">C/C++</a></h3>
+<p>C/C++ users should use a tool like <a href="https://cxx.rs">cxx</a> to wrap this package.
+See
+<a href="https://github.com/GothenburgBitFactory/taskwarrior/tree/develop/src/taskchampion-cpp">Taskwarrior</a>
+for an example.</p>
 
                     </main>
 
