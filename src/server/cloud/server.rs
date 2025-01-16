@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn get_child_versions_empty() {
         let mut server = make_server();
-        assert_eq!(server.get_child_versions(&Uuid::new_v4()).unwrap(), vec![]);
+        assert_eq!(server.get_child_versions(&Uuid::new_v4()).unwrap().len(), 0);
     }
 
     #[test]
@@ -811,7 +811,7 @@ mod tests {
         let mut server = make_server();
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v2, v1, 1000, b"first");
-        assert_eq!(server.get_child_versions(&v1).unwrap(), vec![]);
+        assert_eq!(server.get_child_versions(&v1).unwrap().len(), 0);
         assert_eq!(server.get_child_versions(&v2).unwrap(), vec![v1]);
     }
 
@@ -821,8 +821,8 @@ mod tests {
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v3, v1, 1000, b"first");
         server.mock_add_version(v3, v2, 1000, b"second");
-        assert_eq!(server.get_child_versions(&v1).unwrap(), vec![]);
-        assert_eq!(server.get_child_versions(&v2).unwrap(), vec![]);
+        assert_eq!(server.get_child_versions(&v1).unwrap().len(), 0);
+        assert_eq!(server.get_child_versions(&v2).unwrap().len(), 0);
         let versions = server.get_child_versions(&v3).unwrap();
         assert!(versions == vec![v1, v2] || versions == vec![v2, v1]);
     }
