@@ -30,7 +30,33 @@ use uuid::Uuid;
 /// take an argument of type `&mut Operations`, and the necessary operations are added to that
 /// sequence. Those changes may be reflected locally, such as in a [`Task`] or [`TaskData`] value, but
 /// are not reflected in the Replica's storage until committed with [`Replica::commit_operations`].
-///
+/**
+```rust
+# use taskchampion::chrono::{TimeZone, Utc};
+# use taskchampion::{storage::AccessMode, Operations, Replica, Status, StorageConfig, Uuid};
+# use tempfile::TempDir;
+# fn main() -> anyhow::Result<()> {
+# let tmp_dir = TempDir::new()?;
+# let mut replica = Replica::new(StorageConfig::OnDisk {
+#   taskdb_dir: tmp_dir.path().to_path_buf(),
+#   create_if_missing: true,
+#   access_mode: AccessMode::ReadWrite,
+# }.into_storage()?);
+// Create a new task, recording the required operations.
+let mut ops = Operations::new();
+let uuid = Uuid::new_v4();
+let mut t = replica.create_task(uuid, &mut ops)?;
+t.set_description("my first task".into(), &mut ops)?;
+t.set_status(Status::Pending, &mut ops)?;
+t.set_entry(Some(Utc::now()), &mut ops)?;
+
+// Commit those operations to storage.
+replica.commit_operations(ops)?;
+#
+# Ok(())
+# }
+```
+**/
 /// Undo is supported by producing an [`Operations`] value representing the operations to be
 /// undone. These are then committed with [`Replica::commit_reversed_operations`].
 ///
