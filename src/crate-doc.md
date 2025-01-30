@@ -29,7 +29,36 @@ Replica synchronization takes place against a server.
 Create a server with [`ServerConfig`].
 
 The [`server`] module defines the interface a server must meet.
-Users can define their own server impelementations.
+Several server implementations are included, and users can define their own implementations.
+
+# Example
+
+```rust
+# use taskchampion::{storage::AccessMode, ServerConfig, Replica, StorageConfig};
+# use tempfile::TempDir;
+# fn main() -> anyhow::Result<()> {
+# let taskdb_dir = TempDir::new()?;
+# let taskdb_dir = taskdb_dir.path().to_path_buf();
+# let server_dir = TempDir::new()?;
+# let server_dir = server_dir.path().to_path_buf();
+// Create a new Replica, storing data on disk.
+let storage = StorageConfig::OnDisk {
+  taskdb_dir,
+  create_if_missing: true,
+  access_mode: AccessMode::ReadWrite,
+}.into_storage()?;
+let mut replica = Replica::new(storage);
+
+// Set up a local, on-disk server.
+let server_config = ServerConfig::Local { server_dir };
+let mut server = server_config.into_server()?;
+
+// Sync to that server.
+replica.sync(&mut server, true)?;
+#
+# Ok(())
+# }
+```
 
 # Feature Flags
 
