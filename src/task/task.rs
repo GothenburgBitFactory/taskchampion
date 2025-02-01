@@ -219,13 +219,16 @@ impl Task {
     /// Get the named user defined attributes (UDA).  This will return None
     /// for any key defined in the Task data model, regardless of whether
     /// it is set or not.
+    #[deprecated(note = "namespaced UDAs will not be supported in the future")]
     pub fn get_uda(&self, namespace: &str, key: &str) -> Option<&str> {
+        #[allow(deprecated)]
         self.get_legacy_uda(uda_tuple_to_string(namespace, key).as_ref())
     }
 
     /// Get the user defined attributes (UDAs) of this task, in arbitrary order.  Each key is split
     /// on the first `.` character.  Legacy keys that do not contain `.` are represented as `("",
     /// key)`.
+    #[deprecated(note = "namespaced UDAs will not be supported in the future")]
     pub fn get_udas(&self) -> impl Iterator<Item = ((&str, &str), &str)> + '_ {
         self.data
             .iter()
@@ -235,7 +238,14 @@ impl Task {
 
     /// Get the named user defined attribute (UDA) in a legacy format.  This will return None for
     /// any key defined in the Task data model, regardless of whether it is set or not.
+    #[deprecated(note = "please use Task::get_user_defined_attribute")]
     pub fn get_legacy_uda(&self, key: &str) -> Option<&str> {
+        self.get_user_defined_attribute(key)
+    }
+
+    /// Get the named user defined attribute (UDA). This will return None for any key
+    /// defined in the Task data model, regardless of whether it is set or not.
+    pub fn get_user_defined_attribute(&self, key: &str) -> Option<&str> {
         if Task::is_known_key(key) {
             return None;
         }
@@ -243,7 +253,13 @@ impl Task {
     }
 
     /// Like `get_udas`, but returning each UDA key as a single string.
+    #[deprecated(note = "please use Task::get_user_defined_attributes")]
     pub fn get_legacy_udas(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.get_user_defined_attributes()
+    }
+
+    /// Return each UDA key as a single string.
+    pub fn get_user_defined_attributes(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
         self.data
             .iter()
             .filter(|(p, _)| !Task::is_known_key(p))
@@ -437,6 +453,7 @@ impl Task {
 
     /// Set a user-defined attribute (UDA).  This will fail if the key is defined by the data
     /// model.
+    #[deprecated(note = "namespaced UDAs will not be supported in the future")]
     pub fn set_uda(
         &mut self,
         namespace: impl AsRef<str>,
@@ -445,11 +462,13 @@ impl Task {
         ops: &mut Operations,
     ) -> Result<()> {
         let key = uda_tuple_to_string(namespace, key);
+        #[allow(deprecated)]
         self.set_legacy_uda(key, value, ops)
     }
 
     /// Remove a user-defined attribute (UDA).  This will fail if the key is defined by the data
     /// model.
+    #[deprecated(note = "namespaced UDAs will not be supported in the future")]
     pub fn remove_uda(
         &mut self,
         namespace: impl AsRef<str>,
@@ -457,11 +476,23 @@ impl Task {
         ops: &mut Operations,
     ) -> Result<()> {
         let key = uda_tuple_to_string(namespace, key);
+        #[allow(deprecated)]
         self.remove_legacy_uda(key, ops)
     }
 
     /// Set a user-defined attribute (UDA), where the key is a legacy key.
+    #[deprecated(note = "please use Task::set_user_defined_attribute")]
     pub fn set_legacy_uda(
+        &mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        self.set_user_defined_attribute(key, value, ops)
+    }
+
+    /// Set a user-defined attribute (UDA).
+    pub fn set_user_defined_attribute(
         &mut self,
         key: impl Into<String>,
         value: impl Into<String>,
@@ -478,7 +509,17 @@ impl Task {
     }
 
     /// Remove a user-defined attribute (UDA), where the key is a legacy key.
+    #[deprecated(note = "please use Task::remove_user_defined_attribute")]
     pub fn remove_legacy_uda(
+        &mut self,
+        key: impl Into<String>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        self.remove_user_defined_attribute(key, ops)
+    }
+
+    /// Remove a user-defined attribute (UDA).
+    pub fn remove_user_defined_attribute(
         &mut self,
         key: impl Into<String>,
         ops: &mut Operations,
@@ -1212,6 +1253,30 @@ mod test {
     }
 
     #[test]
+    fn test_get_user_defined_attribute() {
+        let task = Task::new(
+            TaskData::new(
+                Uuid::new_v4(),
+                vec![
+                    ("description".into(), "not a uda".into()),
+                    ("dep_1234".into(), "not a uda".into()),
+                    ("githubid".into(), "123".into()),
+                    ("jira.url".into(), "h://x".into()),
+                ]
+                .drain(..)
+                .collect(),
+            ),
+            dm(),
+        );
+
+        assert_eq!(task.get_user_defined_attribute("description"), None); // invalid UDA
+        assert_eq!(task.get_user_defined_attribute("dep_1234"), None); // invalid UDA
+        assert_eq!(task.get_user_defined_attribute("githubid"), Some("123"));
+        assert_eq!(task.get_user_defined_attribute("jira.url"), Some("h://x"));
+        assert_eq!(task.get_user_defined_attribute("bugzilla.url"), None);
+    }
+
+    #[test]
     fn test_set_uda() {
         with_mut_task(
             |task, ops| {
@@ -1248,6 +1313,26 @@ mod test {
     }
 
     #[test]
+    fn test_set_user_defined_attribute() {
+        with_mut_task(
+            |task, ops| {
+                task.set_user_defined_attribute("jira.url", "h://y", ops)
+                    .unwrap();
+                task.set_user_defined_attribute("jiraid", "TW-1234", ops)
+                    .unwrap();
+            },
+            |task| {
+                let mut udas: Vec<_> = task.get_udas().collect();
+                udas.sort_unstable();
+                assert_eq!(
+                    udas,
+                    vec![(("", "jiraid"), "TW-1234"), (("jira", "url"), "h://y")]
+                );
+            },
+        )
+    }
+
+    #[test]
     fn test_set_uda_invalid() {
         with_mut_task(
             |task, ops| {
@@ -1255,6 +1340,12 @@ mod test {
                 assert!(task.set_uda("", "tag_abc", "123", ops).is_err());
                 assert!(task.set_legacy_uda("modified", "123", ops).is_err());
                 assert!(task.set_legacy_uda("tag_abc", "123", ops).is_err());
+                assert!(task
+                    .set_user_defined_attribute("modified", "123", ops)
+                    .is_err());
+                assert!(task
+                    .set_user_defined_attribute("tag_abc", "123", ops)
+                    .is_err());
             },
             |_task| {},
         )
@@ -1289,6 +1380,20 @@ mod test {
     }
 
     #[test]
+    fn test_remove_user_defined_attribute() {
+        with_mut_task(
+            |task, ops| {
+                task.data.update("githubid", Some("123".into()), ops);
+                task.remove_user_defined_attribute("githubid", ops).unwrap();
+            },
+            |task| {
+                let udas: Vec<_> = task.get_user_defined_attributes().collect();
+                assert_eq!(udas, vec![]);
+            },
+        )
+    }
+
+    #[test]
     fn test_remove_uda_invalid() {
         with_mut_task(
             |task, ops| {
@@ -1296,6 +1401,8 @@ mod test {
                 assert!(task.remove_uda("", "tag_abc", ops).is_err());
                 assert!(task.remove_legacy_uda("modified", ops).is_err());
                 assert!(task.remove_legacy_uda("tag_abc", ops).is_err());
+                assert!(task.remove_user_defined_attribute("modified", ops).is_err());
+                assert!(task.remove_user_defined_attribute("tag_abc", ops).is_err());
             },
             |_task| {},
         )
