@@ -180,9 +180,6 @@ Reconciling these two changes on a sync operation would result in one change win
 These attributes can be used to store additional data associated with a task.
 For example, applications that synchronize tasks with other systems such as calendars or team planning services might store unique identifiers for those systems as UDAs.
 The application defining a UDA defines the format of the value.</p>
-<p>UDAs <em>should</em> have a namespaced structure of the form <code>&lt;namespace&gt;.&lt;key&gt;</code>, where <code>&lt;namespace&gt;</code> identifies the application defining the UDA.
-For example, a service named &quot;DevSync&quot; synchronizing tasks from GitHub might use UDAs like <code>devsync.github.issue-id</code>.
-Note that many existing UDAs for Taskwarrior integrations do not follow this pattern; these are referred to as legacy UDAs.</p>
 
                     </main>
 
