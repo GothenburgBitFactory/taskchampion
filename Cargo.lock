@@ -1160,9 +1160,9 @@ dependencies = [
 
 [[package]]
 name = "google-cloud-storage"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e81dff54dbfa83705c896179ecaa4f384bfbfac90f3b637f38541443275b8a3f"
+checksum = "34a73d9e94d35665909050f02e035d8bdc82e419241b1b027ebf1ea51dc8a470"
 dependencies = [
  "anyhow",
  "async-stream",
