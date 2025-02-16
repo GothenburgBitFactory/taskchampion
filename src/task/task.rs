@@ -576,6 +576,7 @@ impl Task {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod test {
     use super::*;
     use crate::Replica;
