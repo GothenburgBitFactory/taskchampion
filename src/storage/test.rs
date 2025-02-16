@@ -698,5 +698,20 @@ pub(super) fn set_working_set_item(mut storage: impl Storage) -> Result<()> {
         assert_eq!(ws, vec![None, None, Some(uuid1)]);
     }
 
+    // Set the last item to None
+    {
+        let mut txn = storage.txn()?;
+        txn.set_working_set_item(1, Some(uuid1))?;
+        txn.set_working_set_item(2, None)?;
+        txn.commit()?;
+    }
+
+    {
+        let mut txn = storage.txn()?;
+        let ws = txn.get_working_set()?;
+        // Note no trailing `None`.
+        assert_eq!(ws, vec![None, Some(uuid1)]);
+    }
+
     Ok(())
 }
