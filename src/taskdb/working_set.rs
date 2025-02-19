@@ -253,7 +253,7 @@ mod test {
         });
         db.commit_operations(ops, |_| false)?;
 
-        // set the existing working_set as we want it, containing UUIDs 0 and 1.
+        // set the existing working_set as we want it, containing all three UUIDs.
         {
             let mut txn = db.storage.txn()?;
             txn.clear_working_set()?;
