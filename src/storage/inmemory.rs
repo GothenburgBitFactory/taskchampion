@@ -39,6 +39,14 @@ impl Txn<'_> {
             &self.storage.data
         }
     }
+
+    // Remove any "None" items from the end of the working set.
+    fn normalize_working_set(&mut self) {
+        let working_set = &mut self.mut_data_ref().working_set;
+        while let Some(None) = &working_set[1..].last() {
+            working_set.pop();
+        }
+    }
 }
 
 impl StorageTxn for Txn<'_> {
@@ -203,6 +211,8 @@ impl StorageTxn for Txn<'_> {
             )));
         }
         working_set[index] = uuid;
+
+        self.normalize_working_set();
         Ok(())
     }
 
