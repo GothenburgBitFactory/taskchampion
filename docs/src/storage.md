@@ -78,6 +78,11 @@ Replica operations are converted to sync operations as follows:
  * `Update(uuid, property, oldValue, newValue, timestamp)` -> `Update(uuid, property, newValue, timestamp)`
  * `UndoPoint()` -> Ø (dropped from operation sequence)
 
-Once a sequence of operations has been synchronized, there is no need to store those operations on the replica.
-The current implementation deletes operations at that time.
-An alternative approach is to keep operations for existing tasks, and provide access to those operations as a "history" of modifications to the task.
+Once a sequence of operations has been synchronized, they are not considered in subsequent sync operations.
+
+### Storage
+
+The storage backend stores all operations that apply to existing tasks, tracking which have and have not been synchronized.
+Only un-synchronized operations are considered when performing a sync operation.
+Synchronized operations are kept as a log of changes to the relevant tasks.
+`UndoPoint` operations are neither synchronized nor stored after a sync operation.
