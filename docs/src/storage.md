@@ -24,7 +24,7 @@ In other words, operations act as deltas between database states.
 Operations are crucial to synchronization of replicas, described in [Synchronization Model](./sync-model.md).
 
 Operations are entirely managed by the replica, and some combinations of operations are described as "invalid" here.
-A replica must not create invalid operations, but should be resilient to receiving invalid operations during a synchronization operation.
+A replica must not create invalid operations, but should be resilient to receiving invalid operations during the synchronization process.
 
 Each operation has one of the forms 
 
@@ -78,6 +78,9 @@ Replica operations are converted to sync operations as follows:
  * `Update(uuid, property, oldValue, newValue, timestamp)` -> `Update(uuid, property, newValue, timestamp)`
  * `UndoPoint()` -> Ø (dropped from operation sequence)
 
-Once a sequence of operations has been synchronized, there is no need to store those operations on the replica.
-The current implementation deletes operations at that time.
-An alternative approach is to keep operations for existing tasks, and provide access to those operations as a "history" of modifications to the task.
+### Storage
+
+The storage backend stores all operations that apply to existing tasks, tracking which have and have not been synchronized.
+Only unsynchronized operations are used in the synchronization process.
+Synchronized operations are kept as a log of changes to the relevant tasks.
+Synchronized `UndoPoint` operations are not stored.
