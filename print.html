@@ -570,7 +570,7 @@ See <a href="./tasks.html">Tasks</a> for details on the content of that map.</p>
 In other words, operations act as deltas between database states.
 Operations are crucial to synchronization of replicas, described in <a href="./sync-model.html">Synchronization Model</a>.</p>
 <p>Operations are entirely managed by the replica, and some combinations of operations are described as &quot;invalid&quot; here.
-A replica must not create invalid operations, but should be resilient to receiving invalid operations during a synchronization operation.</p>
+A replica must not create invalid operations, but should be resilient to receiving invalid operations during the synchronization process.</p>
 <p>Each operation has one of the forms </p>
 <ul>
 <li><code>Create(uuid)</code></li>
@@ -616,9 +616,11 @@ Replica operations are converted to sync operations as follows:</p>
 <li><code>Update(uuid, property, oldValue, newValue, timestamp)</code> -&gt; <code>Update(uuid, property, newValue, timestamp)</code></li>
 <li><code>UndoPoint()</code> -&gt; Ø (dropped from operation sequence)</li>
 </ul>
-<p>Once a sequence of operations has been synchronized, there is no need to store those operations on the replica.
-The current implementation deletes operations at that time.
-An alternative approach is to keep operations for existing tasks, and provide access to those operations as a &quot;history&quot; of modifications to the task.</p>
+<h3 id="storage-1"><a class="header" href="#storage-1">Storage</a></h3>
+<p>The storage backend stores all operations that apply to existing tasks, tracking which have and have not been synchronized.
+Only unsynchronized operations are used in the synchronization process.
+Synchronized operations are kept as a log of changes to the relevant tasks.
+Synchronized <code>UndoPoint</code> operations are not stored.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="task-database"><a class="header" href="#task-database">Task Database</a></h1>
 <p>The task database is a layer of abstraction above the replica storage layer, responsible for maintaining some important invariants.
 While the storage is pluggable, there is only one implementation of the task database.</p>
