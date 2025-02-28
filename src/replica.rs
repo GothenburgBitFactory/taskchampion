@@ -465,9 +465,9 @@ impl Replica {
             .drain()
             .filter(|(_, t)| t.get("status") == Some(deleted))
             .filter(|(_, t)| {
-                t.get("modified").map_or(false, |m| {
-                    m.parse().map_or(false, |time_sec| {
-                        DateTime::from_timestamp(time_sec, 0).map_or(false, |dt| dt < six_mos_ago)
+                t.get("modified").is_some_and(|m| {
+                    m.parse().is_ok_and(|time_sec| {
+                        DateTime::from_timestamp(time_sec, 0).is_some_and(|dt| dt < six_mos_ago)
                     })
                 })
             })
