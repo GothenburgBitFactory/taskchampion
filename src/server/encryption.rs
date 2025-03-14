@@ -31,7 +31,7 @@ impl Cryptor {
         let rng = rand::SystemRandom::new();
         let mut salt = [0u8; 16];
         rng.fill(&mut salt)
-            .map_err(|_| anyhow::anyhow!("error generating random salt"))?;
+            .map_err(|e| anyhow::anyhow!("error generating random salt: {e}"))?;
         Ok(salt.to_vec())
     }
 
@@ -47,7 +47,7 @@ impl Cryptor {
         );
 
         let unbound_key = aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key_bytes)
-            .map_err(|_| anyhow::anyhow!("error while creating AEAD key"))?;
+            .map_err(|e| anyhow::anyhow!("error while creating AEAD key: {e}"))?;
         Ok(aead::LessSafeKey::new(unbound_key))
     }
 
@@ -61,7 +61,7 @@ impl Cryptor {
         let mut nonce_buf = [0u8; aead::NONCE_LEN];
         self.rng
             .fill(&mut nonce_buf)
-            .map_err(|_| anyhow::anyhow!("error generating random nonce"))?;
+            .map_err(|e| anyhow::anyhow!("error generating random nonce: {e}"))?;
         let nonce = aead::Nonce::assume_unique_for_key(nonce_buf);
 
         let aad = self.make_aad(version_id);
@@ -69,7 +69,7 @@ impl Cryptor {
         let tag = self
             .key
             .seal_in_place_separate_tag(nonce, aad, &mut payload)
-            .map_err(|_| anyhow::anyhow!("error while sealing"))?;
+            .map_err(|e| anyhow::anyhow!("error while sealing: {e}"))?;
         payload.extend_from_slice(tag.as_ref());
 
         let env = Envelope {
@@ -101,7 +101,7 @@ impl Cryptor {
         let plaintext = self
             .key
             .open_in_place(nonce, aad, payload.as_mut())
-            .map_err(|_| anyhow::anyhow!("error while unsealing encrypted value"))?;
+            .map_err(|e| anyhow::anyhow!("error while unsealing encrypted value: {e}"))?;
 
         Ok(Unsealed {
             version_id,
