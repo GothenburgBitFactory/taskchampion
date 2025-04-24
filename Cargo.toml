@@ -11,7 +11,7 @@ keywords = ["cli", "todo", "tasks", "taskwarrior", "task-tracking"]
 readme = "src/crate-doc.md"
 license = "MIT"
 edition = "2021"
-rust-version = "1.81.0"
+rust-version = "1.82.0"
 
 [workspace]
 members = [ "xtask" ]
