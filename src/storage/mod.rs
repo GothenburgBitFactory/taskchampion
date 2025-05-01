@@ -24,7 +24,6 @@ pub(crate) mod sqlite;
 
 pub use config::{AccessMode, StorageConfig};
 
-#[cfg(feature = "storage-memory")]
 mod inmemory;
 
 #[doc(hidden)]

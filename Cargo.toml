@@ -29,11 +29,9 @@ server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
 # Support for sync to AWS
 server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:tokio"]
 # Support for all task storage backends
-storage = ["storage-sqlite", "storage-memory"]
+storage = ["storage-sqlite"]
 # Support for SQLite task storage
 storage-sqlite = ["dep:rusqlite"]
-# Support for in-memory task storage
-storage-memory = []
 # (private) Support for sync protocol encryption
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync

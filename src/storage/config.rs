@@ -1,8 +1,6 @@
-#[cfg(feature = "storage-memory")]
-use super::inmemory::InMemoryStorage;
 #[cfg(feature = "storage-sqlite")]
 use super::sqlite::SqliteStorage;
-use super::Storage;
+use super::{inmemory::InMemoryStorage, Storage};
 use crate::errors::Result;
 use std::path::PathBuf;
 
@@ -29,7 +27,6 @@ pub enum StorageConfig {
         access_mode: AccessMode,
     },
     /// Store the data in memory.  This is only useful for testing.
-    #[cfg(feature = "storage-memory")]
     InMemory,
 }
 
@@ -46,7 +43,6 @@ impl StorageConfig {
                 access_mode,
                 create_if_missing,
             )?),
-            #[cfg(feature = "storage-memory")]
             StorageConfig::InMemory => Box::new(InMemoryStorage::new()),
         })
     }
