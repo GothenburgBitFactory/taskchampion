@@ -13,6 +13,7 @@ traits defined here and pass the result to [`Replica`](crate::Replica).
 pub(crate) mod test;
 
 mod config;
+#[cfg(feature = "storage-sqlite")]
 mod local;
 mod op;
 mod types;
