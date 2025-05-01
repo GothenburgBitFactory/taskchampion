@@ -17,13 +17,11 @@ use uuid::Uuid;
 #[cfg(test)]
 mod test;
 
-#[cfg(feature = "storage-sqlite")]
 mod config;
 
 #[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
-#[cfg(feature = "storage-sqlite")]
 pub use config::{AccessMode, StorageConfig};
 
 #[cfg(feature = "storage-memory")]
