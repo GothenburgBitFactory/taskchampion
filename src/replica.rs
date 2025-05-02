@@ -32,6 +32,8 @@ use uuid::Uuid;
 /// are not reflected in the Replica's storage until committed with [`Replica::commit_operations`].
 /**
 ```rust
+# #[cfg(feature = "storage-sqlite")]
+# {
 # use taskchampion::chrono::{TimeZone, Utc};
 # use taskchampion::{storage::AccessMode, Operations, Replica, Status, StorageConfig, Uuid};
 # use tempfile::TempDir;
@@ -54,6 +56,7 @@ t.set_entry(Some(Utc::now()), &mut ops)?;
 replica.commit_operations(ops)?;
 #
 # Ok(())
+# }
 # }
 ```
 **/
