@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
+#[cfg(feature = "storage-sqlite")]
 use taskchampion::{Operations, Replica, ServerConfig, StorageConfig, TaskData, Uuid};
 use tempfile::TempDir;
 
@@ -26,6 +27,7 @@ fn actions() -> impl Strategy<Value = Vec<(Action, u8)>> {
 
 proptest! {
 #[test]
+#[cfg(feature = "storage-sqlite")]
 /// Check that various sequences of operations on mulitple db's do not get the db's into an
 /// incompatible state.  The main concern here is that there might be a sequence of operations
 /// that results in a task being in different states in different replicas. Different tasks

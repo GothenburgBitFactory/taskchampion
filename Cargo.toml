@@ -18,16 +18,22 @@ members = [ "xtask" ]
 resolver = "2"
 
 [features]
-default = ["sync", "bundled"]
+default = ["sync", "bundled", "storage"]
 
 # Support for all sync solutions
-sync = ["server-sync", "server-gcp", "server-aws"]
+sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
 server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
 # Support for sync to AWS
 server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:tokio"]
+# Suppport for sync to another SQLite database on the same machine
+server-local = ["storage-sqlite"]
+# Support for all task storage backends
+storage = ["storage-sqlite"]
+# Support for SQLite task storage
+storage-sqlite = ["dep:rusqlite"]
 # (private) Support for sync protocol encryption
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
@@ -51,7 +57,7 @@ flate2 = "1"
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
 log = "^0.4.17"
 ring = { version = "0.17", optional = true }
-rusqlite = { version = "0.35"}
+rusqlite = { version = "0.35", optional = true}
 serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.27"

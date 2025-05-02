@@ -13,12 +13,14 @@ traits defined here and pass the result to [`Replica`](crate::Replica).
 pub(crate) mod test;
 
 mod config;
-mod local;
 mod op;
 mod types;
 
 #[cfg(feature = "encryption")]
 mod encryption;
+
+#[cfg(feature = "server-local")]
+mod local;
 
 #[cfg(feature = "server-sync")]
 mod sync;

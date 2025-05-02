@@ -34,6 +34,8 @@ Several server implementations are included, and users can define their own impl
 # Example
 
 ```rust
+# #[cfg(feature = "storage-sqlite")]
+# {
 # use taskchampion::{storage::AccessMode, ServerConfig, Replica, StorageConfig};
 # use tempfile::TempDir;
 # fn main() -> anyhow::Result<()> {
@@ -57,6 +59,7 @@ let mut server = server_config.into_server()?;
 replica.sync(&mut server, true)?;
 #
 # Ok(())
+# }
 # }
 ```
 

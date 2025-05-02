@@ -1,4 +1,6 @@
-use super::{inmemory::InMemoryStorage, sqlite::SqliteStorage, Storage};
+#[cfg(feature = "storage-sqlite")]
+use super::sqlite::SqliteStorage;
+use super::{inmemory::InMemoryStorage, Storage};
 use crate::errors::Result;
 use std::path::PathBuf;
 
@@ -12,6 +14,7 @@ pub enum AccessMode {
 #[non_exhaustive]
 pub enum StorageConfig {
     /// Store the data on disk.  This is the common choice.
+    #[cfg(feature = "storage-sqlite")]
     OnDisk {
         /// Path containing the task DB.
         taskdb_dir: PathBuf,
@@ -30,6 +33,7 @@ pub enum StorageConfig {
 impl StorageConfig {
     pub fn into_storage(self) -> Result<Box<dyn Storage>> {
         Ok(match self {
+            #[cfg(feature = "storage-sqlite")]
             StorageConfig::OnDisk {
                 taskdb_dir,
                 create_if_missing,

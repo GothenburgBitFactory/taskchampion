@@ -18,10 +18,13 @@ use uuid::Uuid;
 mod test;
 
 mod config;
-mod inmemory;
+
+#[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
 pub use config::{AccessMode, StorageConfig};
+
+mod inmemory;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.

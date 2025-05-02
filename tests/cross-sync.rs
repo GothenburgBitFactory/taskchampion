@@ -4,6 +4,7 @@ use taskchampion::{Operations, Replica, ServerConfig, Status, StorageConfig, Uui
 use tempfile::TempDir;
 
 #[test]
+#[cfg(feature = "server-local")]
 fn cross_sync() -> anyhow::Result<()> {
     // set up two replicas, and demonstrate replication between them
     let mut rep1 = Replica::new(StorageConfig::InMemory.into_storage()?);

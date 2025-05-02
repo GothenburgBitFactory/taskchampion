@@ -3,11 +3,13 @@ use taskchampion::{Operations, Replica, ServerConfig, Status, StorageConfig, Uui
 use tempfile::TempDir;
 
 #[test]
+#[cfg(feature = "server-local")]
 fn update_and_delete_sync_delete_first() -> anyhow::Result<()> {
     update_and_delete_sync(true)
 }
 
 #[test]
+#[cfg(feature = "server-local")]
 fn update_and_delete_sync_update_first() -> anyhow::Result<()> {
     update_and_delete_sync(false)
 }
@@ -15,6 +17,7 @@ fn update_and_delete_sync_update_first() -> anyhow::Result<()> {
 /// Test what happens when an update is sync'd into a repo after a task is deleted.
 /// If delete_first, then the deletion is sync'd to the server first; otherwise
 /// the update is sync'd first.  Either way, the task is gone.
+#[cfg(feature = "server-local")]
 fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     // set up two replicas, and demonstrate replication between them
     let mut rep1 = Replica::new(StorageConfig::InMemory.into_storage()?);
