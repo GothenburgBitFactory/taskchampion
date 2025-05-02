@@ -8,7 +8,7 @@ use crate::server::cloud::aws::AwsService;
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
 use crate::server::cloud::CloudServer;
-#[cfg(feature = "storage-sqlite")]
+#[cfg(feature = "server-local")]
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
@@ -23,7 +23,7 @@ use uuid::Uuid;
 #[non_exhaustive]
 pub enum ServerConfig {
     /// A local task database, for situations with a single replica.
-    #[cfg(feature = "storage-sqlite")]
+    #[cfg(feature = "server-local")]
     Local {
         /// Path containing the server's DB
         server_dir: PathBuf,
@@ -97,7 +97,7 @@ impl ServerConfig {
     /// Get a server based on this configuration
     pub fn into_server(self) -> Result<Box<dyn Server>> {
         Ok(match self {
-            #[cfg(feature = "storage-sqlite")]
+            #[cfg(feature = "server-local")]
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
             #[cfg(feature = "server-sync")]
             ServerConfig::Remote {

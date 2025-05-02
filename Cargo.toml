@@ -21,13 +21,15 @@ resolver = "2"
 default = ["sync", "bundled", "storage"]
 
 # Support for all sync solutions
-sync = ["server-sync", "server-gcp", "server-aws"]
+sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
 server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
 # Support for sync to AWS
 server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:tokio"]
+# Suppport for sync to another SQLite database on the same machine
+server-local = ["storage-sqlite"]
 # Support for all task storage backends
 storage = ["storage-sqlite"]
 # Support for SQLite task storage
