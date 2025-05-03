@@ -37,8 +37,14 @@ impl SyncServer {
         client_id: Uuid,
         encryption_secret: Vec<u8>,
     ) -> Result<SyncServer> {
-        let url = Url::parse(&url)
+        let mut url = Url::parse(&url)
             .map_err(|_| Error::Server(format!("Could not parse {} as a URL", url)))?;
+        // Ensure the path has a trailing slash, so that `Url::join` correctly appends
+        // additional path segments to it.
+        let path = url.path();
+        if !path.ends_with('/') {
+            url.set_path(&format!("{}/", path));
+        }
         Ok(SyncServer {
             base_url: url,
             client_id,
@@ -202,5 +208,45 @@ impl Server for SyncServer {
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(err) => Err(err.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn sync_server_url_construction() -> anyhow::Result<()> {
+        let client_id = Uuid::new_v4();
+        let encryption_secret = vec![];
+        let bare_domain = SyncServer::new(
+            "https://example.com".into(),
+            client_id,
+            encryption_secret.clone(),
+        )?;
+        let no_slash_path = SyncServer::new(
+            "https://example.com/foo/bar".into(),
+            client_id,
+            encryption_secret.clone(),
+        )?;
+        let slash_path = SyncServer::new(
+            "https://example.com/foo/bar/".into(),
+            client_id,
+            encryption_secret,
+        )?;
+
+        assert_eq!(
+            bare_domain.construct_endpoint_url("v1/a/b")?,
+            Url::parse("https://example.com/v1/a/b")?
+        );
+        assert_eq!(
+            no_slash_path.construct_endpoint_url("v1/a/b")?,
+            Url::parse("https://example.com/foo/bar/v1/a/b")?
+        );
+        assert_eq!(
+            slash_path.construct_endpoint_url("v1/a/b")?,
+            Url::parse("https://example.com/foo/bar/v1/a/b")?
+        );
+        Ok(())
     }
 }
