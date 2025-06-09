@@ -575,6 +575,226 @@ impl Task {
     }
 }
 
+pub mod composing_json {
+    use std::sync::Arc;
+
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+    use uuid::Uuid;
+
+    use crate::{storage::TaskMap, DependencyMap, Status, TaskData};
+
+    use super::Task;
+
+    #[derive(Deserialize, Serialize)]
+    struct JsonTask {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
+        annotations: Vec<JsonAnnotation>,
+
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
+        tags: Vec<String>,
+
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
+        depends: Vec<Uuid>,
+
+        description: String,
+        due: Option<DateTime<Utc>>,
+        modified: Option<DateTime<Utc>>,
+        status: String,
+        priority: String,
+        wait: Option<DateTime<Utc>>,
+        entry: Option<DateTime<Utc>>,
+
+        #[serde(flatten)]
+        udas: serde_json::Map<String, serde_json::Value>,
+    }
+
+    #[derive(Deserialize, Serialize)]
+    struct JsonAnnotation {
+        entry: DateTime<Utc>,
+        description: String,
+    }
+
+    impl Task {
+        /// Compose this [`Task`] into its JSON representation.
+        ///
+        /// This is the same representation, that is passed to hooks.
+        pub fn compose_json(&self) -> Value {
+            // SPDX-SnippetBegin
+            // SPDX-SnippetCopyrightText: 2006 - 2021, Tomas Babej, Paul Beckingham, Federico Hernandez.
+            // SPDX-License-Identifier: MIT
+            // The algorithm was adopted from task warrior, but adopted to task champions API.
+            // As such, we simply add all user_defined_attributes (without checking their type, because
+            // we cannot know it) and the defined properties.
+
+            let mut udas = serde_json::Map::new();
+            for (name, value) in self.get_user_defined_attributes() {
+                // If value is an empty string, do not ever output it
+                if value.is_empty() {
+                    continue;
+                }
+
+                udas.insert(name.to_owned(), value.into());
+            }
+
+            {
+                let annotations: Vec<_> = self
+                    .get_annotations()
+                    .map(|an| JsonAnnotation {
+                        entry: an.entry,
+                        description: an.description,
+                    })
+                    .collect();
+                let tags: Vec<_> = self.get_tags().map(|tag| tag.to_string()).collect();
+                let depends: Vec<_> = self.get_dependencies().collect();
+
+                serde_json::to_value(&JsonTask {
+                    annotations,
+                    tags,
+                    depends,
+                    description: self.get_description().to_owned(),
+                    due: self.get_due(),
+                    modified: self.get_modified(),
+                    // start: self.get_start(),
+                    status: self.get_status().to_taskmap().to_owned(),
+                    priority: self.get_priority().to_owned(),
+                    wait: self.get_wait(),
+                    // end: self.get_end(),
+                    entry: self.get_entry(),
+                    udas,
+                })
+                .expect("To always work")
+            }
+            // SPDX-SnippetEnd
+        }
+
+        /// The inverse of [`compose_json`][`Self::compose_json`].
+        pub fn from_composed_json(
+            input: serde_json::Map<String, Value>,
+        ) -> std::result::Result<Self, parse::Error> {
+            // SPDX-SnippetBegin
+            // SPDX-SnippetCopyrightText: 2006 - 2021, Tomas Babej, Paul Beckingham, Federico Hernandez.
+            // SPDX-License-Identifier: MIT
+
+            let json_task: JsonTask = serde_json::from_value(Value::Object(input.clone()))
+                .map_err(|err| parse::Error::InvalidJson { err, input })?;
+
+            let mut task_map = TaskMap::new();
+            for (key, value) in json_task.udas {
+                // TODO(@bpeetz): Not so sure, that this `ToString::to_string` is correct here. <2025-06-09>
+                task_map.insert(key, value.to_string());
+            }
+
+            for tag in json_task.tags {
+                task_map.insert("tag_".to_owned() + tag.as_str(), "x".to_owned());
+            }
+            for dependency in json_task.depends {
+                task_map.insert(
+                    "dep_".to_owned() + dependency.to_string().as_str(),
+                    "x".to_owned(),
+                );
+            }
+            for annotation in json_task.annotations {
+                fn mk_key(stamp: i64) -> String {
+                    "annotation_".to_owned() + stamp.to_string().as_str()
+                }
+
+                let mut stamp = annotation.entry.timestamp();
+                while task_map.contains_key(&mk_key(stamp)) {
+                    stamp += 1;
+                }
+
+                assert_eq!(
+                    task_map.insert(mk_key(stamp), annotation.description),
+                    None,
+                    "We should have avoided duplicated keys"
+                )
+            }
+
+            let mut me = Task::new(
+                TaskData::new(Uuid::new_v4(), task_map),
+                Arc::new(DependencyMap::new()),
+            );
+
+            let mut ops = vec![];
+            me.set_description(json_task.description.clone(), &mut ops)
+                .map_err(|err| parse::Error::SetDescription(err, json_task.description))?;
+            me.set_due(json_task.due, &mut ops)
+                .map_err(|err| parse::Error::SetDue(err, json_task.due))?;
+            me.set_status(Status::from_taskmap(&json_task.status), &mut ops)
+                .map_err(|err| parse::Error::SetStatus(err, json_task.status))?;
+            me.set_priority(json_task.priority.clone(), &mut ops)
+                .map_err(|err| parse::Error::SetPriority(err, json_task.priority))?;
+            me.set_wait(json_task.wait, &mut ops)
+                .map_err(|err| parse::Error::SetWait(err, json_task.wait))?;
+            me.set_entry(json_task.entry, &mut ops)
+                .map_err(|err| parse::Error::SetEntry(err, json_task.entry))?;
+
+            // NOTE(@bpeetz): Always update the modified prop last, so that it actually takes affect.
+            // <2025-06-09>
+            if let Some(modified) = json_task.modified {
+                me.set_modified(modified, &mut ops)
+                    .map_err(|err| parse::Error::SetModified(err, modified))?;
+            }
+            drop(ops);
+
+            Ok(me)
+
+            // SPDX-SnippetEnd
+        }
+    }
+
+    #[allow(missing_docs)]
+    pub mod parse {
+        use chrono::{DateTime, Utc};
+        use serde_json::{Map, Value};
+
+        /// The Error returned by [`Task::from_composed_json`][`super::Task::from_composed_json`].
+        #[derive(Debug, thiserror::Error)]
+        pub enum Error {
+            #[error("Expected a string json value, but got: {0}")]
+            ExpectedString(Value),
+
+            #[error("The Json value ('{input:?}') was invalid: {err}")]
+            InvalidJson {
+                err: serde_json::Error,
+                input: Map<String, Value>,
+            },
+
+            #[error("Expected value ('{value}') to be a date, but was not: {err}")]
+            InvalidDate {
+                err: chrono::ParseError,
+                value: Value,
+            },
+
+            #[error("Failed to set modified to {1}: {0}")]
+            SetModified(crate::Error, DateTime<Utc>),
+
+            #[error("Failed to set entry to {1:#?}: {0}")]
+            SetEntry(crate::Error, Option<DateTime<Utc>>),
+
+            #[error("Failed to set wait to {1:#?}: {0}")]
+            SetWait(crate::Error, Option<DateTime<Utc>>),
+
+            #[error("Failed to set priority to {1}: {0}")]
+            SetPriority(crate::Error, String),
+
+            #[error("Failed to set status to {1}: {0}")]
+            SetStatus(crate::Error, String),
+
+            #[error("Failed to set due to {1:#?}: {0}")]
+            SetDue(crate::Error, Option<DateTime<Utc>>),
+
+            #[error("Failed to set description to {1}: {0}")]
+            SetDescription(crate::Error, String),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod test {
