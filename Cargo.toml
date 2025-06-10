@@ -14,7 +14,7 @@ edition = "2021"
 rust-version = "1.82.0"
 
 [workspace]
-members = [ "xtask" ]
+members = [ "xtask", "taskchampion-hooks" ]
 resolver = "2"
 
 [features]
