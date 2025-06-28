@@ -19,7 +19,7 @@ mod workingset;
 pub use depmap::DependencyMap;
 pub use errors::Error;
 pub use operation::{Operation, Operations};
-pub use replica::Replica;
+pub use replica::{Replica, deconstruct_operations};
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
 pub use task::{composing_json, utc_timestamp, Annotation, Status, Tag, Task, TaskData};

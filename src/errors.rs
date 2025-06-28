@@ -55,6 +55,8 @@ where
 other_error!(crate::hooks::hook::read::Error);
 #[cfg(feature = "hooks")]
 other_error!(crate::hooks::hook::execute::Error);
+#[cfg(feature = "hooks")]
+other_error!(crate::replica::deconstruct_operations::Error);
 
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::http::Error);
