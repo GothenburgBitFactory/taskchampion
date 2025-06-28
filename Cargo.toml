@@ -18,7 +18,7 @@ members = [ "xtask" ]
 resolver = "2"
 
 [features]
-default = ["sync", "bundled", "storage"]
+default = ["sync", "bundled", "storage", "hooks"]
 
 # Support hook execution
 hooks = []
@@ -49,6 +49,9 @@ tls-native-roots = ["ureq/native-certs"]
 all-features = true
 
 [dependencies]
+# Debug only
+stderrlog = "0.6.0"
+
 anyhow = "1.0"
 aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
