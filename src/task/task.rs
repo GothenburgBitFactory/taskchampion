@@ -575,6 +575,7 @@ impl Task {
     }
 }
 
+#[cfg(feature = "hooks")]
 pub mod composing_json {
     use std::sync::Arc;
 
@@ -623,7 +624,7 @@ pub mod composing_json {
         /// Compose this [`Task`] into its JSON representation.
         ///
         /// This is the same representation, that is passed to hooks.
-        pub fn compose_json(&self) -> Value {
+        pub fn compose_json(&self) -> (Uuid, Value) {
             // SPDX-SnippetBegin
             // SPDX-SnippetCopyrightText: 2006 - 2021, Tomas Babej, Paul Beckingham, Federico Hernandez.
             // SPDX-License-Identifier: MIT
@@ -652,22 +653,25 @@ pub mod composing_json {
                 let tags: Vec<_> = self.get_tags().map(|tag| tag.to_string()).collect();
                 let depends: Vec<_> = self.get_dependencies().collect();
 
-                serde_json::to_value(&JsonTask {
-                    annotations,
-                    tags,
-                    depends,
-                    description: self.get_description().to_owned(),
-                    due: self.get_due(),
-                    modified: self.get_modified(),
-                    // start: self.get_start(),
-                    status: self.get_status().to_taskmap().to_owned(),
-                    priority: self.get_priority().to_owned(),
-                    wait: self.get_wait(),
-                    // end: self.get_end(),
-                    entry: self.get_entry(),
-                    udas,
-                })
-                .expect("To always work")
+                (
+                    self.get_uuid(),
+                    serde_json::to_value(&JsonTask {
+                        annotations,
+                        tags,
+                        depends,
+                        description: self.get_description().to_owned(),
+                        due: self.get_due(),
+                        modified: self.get_modified(),
+                        // start: self.get_start(),
+                        status: self.get_status().to_taskmap().to_owned(),
+                        priority: self.get_priority().to_owned(),
+                        wait: self.get_wait(),
+                        // end: self.get_end(),
+                        entry: self.get_entry(),
+                        udas,
+                    })
+                    .expect("To always work"),
+                )
             }
             // SPDX-SnippetEnd
         }
@@ -675,6 +679,7 @@ pub mod composing_json {
         /// The inverse of [`compose_json`][`Self::compose_json`].
         pub fn from_composed_json(
             input: serde_json::Map<String, Value>,
+            uuid: Uuid,
         ) -> std::result::Result<Self, parse::Error> {
             // SPDX-SnippetBegin
             // SPDX-SnippetCopyrightText: 2006 - 2021, Tomas Babej, Paul Beckingham, Federico Hernandez.
@@ -716,7 +721,7 @@ pub mod composing_json {
             }
 
             let mut me = Task::new(
-                TaskData::new(Uuid::new_v4(), task_map),
+                TaskData::new(uuid, task_map),
                 Arc::new(DependencyMap::new()),
             );
 

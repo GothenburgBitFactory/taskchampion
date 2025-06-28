@@ -20,6 +20,8 @@ resolver = "2"
 [features]
 default = ["sync", "bundled", "storage"]
 
+# Support hook execution
+hooks = []
 # Support for all sync solutions
 sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server

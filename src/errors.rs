@@ -42,6 +42,20 @@ other_error!(rusqlite::Error);
 #[cfg(feature = "storage-sqlite")]
 other_error!(crate::storage::sqlite::SqliteError);
 
+#[cfg(feature = "hooks")]
+impl<E> From<crate::hooks::load::Error<E>> for Error
+where
+    E: crate::hooks::hook::hook_kinds::HookKind + Sync + Send + 'static,
+{
+    fn from(err: crate::hooks::load::Error<E>) -> Self {
+        Self::Other(err.into())
+    }
+}
+#[cfg(feature = "hooks")]
+other_error!(crate::hooks::hook::read::Error);
+#[cfg(feature = "hooks")]
+other_error!(crate::hooks::hook::execute::Error);
+
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::http::Error);
 #[cfg(feature = "server-gcp")]

@@ -6,6 +6,7 @@
 
 mod depmap;
 mod errors;
+pub mod hooks;
 mod operation;
 mod replica;
 pub mod server;
