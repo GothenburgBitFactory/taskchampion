@@ -57,8 +57,14 @@ impl<'de> Deserialize<'de> for SnapshotTasks {
 
 impl SnapshotTasks {
     pub(super) fn encode(&self) -> Result<Vec<u8>> {
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        let encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        // Wrap the ZlibEncoder in a buffer so that it sees fewer, larger writes. This
+        // dramatically encoding performance.
+        let mut encoder = std::io::BufWriter::new(encoder);
         serde_json::to_writer(&mut encoder, &self)?;
+        let encoder = encoder
+            .into_inner()
+            .map_err(|e| anyhow::anyhow!("While flushing snapshot encoder: {e}"))?;
         Ok(encoder.finish()?)
     }
 
