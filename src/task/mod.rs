@@ -11,5 +11,6 @@ pub use data::TaskData;
 pub use status::Status;
 pub use tag::Tag;
 pub use task::Task;
+pub use task::composing_json;
 pub use time::utc_timestamp;
 pub(crate) use time::Timestamp;

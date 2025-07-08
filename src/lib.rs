@@ -6,6 +6,7 @@
 
 mod depmap;
 mod errors;
+pub mod hooks;
 mod operation;
 mod replica;
 pub mod server;
@@ -18,10 +19,10 @@ mod workingset;
 pub use depmap::DependencyMap;
 pub use errors::Error;
 pub use operation::{Operation, Operations};
-pub use replica::Replica;
+pub use replica::{Replica, deconstruct_operations};
 pub use server::{Server, ServerConfig};
 pub use storage::StorageConfig;
-pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
+pub use task::{composing_json, utc_timestamp, Annotation, Status, Tag, Task, TaskData};
 pub use workingset::WorkingSet;
 
 /// Re-exported type from the `uuid` crate, for ease of compatibility for consumers of this crate.

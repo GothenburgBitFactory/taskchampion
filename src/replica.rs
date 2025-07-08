@@ -11,6 +11,9 @@ use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use log::trace;
 use std::collections::HashMap;
+#[cfg(feature = "hooks")]
+use std::mem;
+use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -77,6 +80,9 @@ pub struct Replica {
 
     /// The dependency map for this replica, if it has been calculated.
     depmap: Option<Arc<DependencyMap>>,
+
+    #[cfg(feature = "hooks")]
+    hook_base_path: Option<PathBuf>,
 }
 
 impl Replica {
@@ -85,6 +91,8 @@ impl Replica {
             taskdb: TaskDb::new(storage),
             added_undo_point: false,
             depmap: None,
+            #[cfg(feature = "hooks")]
+            hook_base_path: None,
         }
     }
 
@@ -93,6 +101,15 @@ impl Replica {
         use crate::StorageConfig;
 
         Replica::new(StorageConfig::InMemory.into_storage().unwrap())
+    }
+
+    /// Activate hook execution.
+    ///
+    /// The replica will now automatically execute the right hooks under the `hook_base_path` on
+    /// [`committing`][`Self::commit_operations`] to the database.
+    #[cfg(feature = "hooks")]
+    pub fn with_hooks(&mut self, hook_base_path: impl Into<PathBuf>) {
+        self.hook_base_path = Some(hook_base_path.into())
     }
 
     /// Update an existing task.  If the value is Some, the property is added or updated.  If the
@@ -352,9 +369,77 @@ impl Replica {
     ///
     /// All local state on the replica will be updated accordingly, including the working set and
     /// and temporarily cached data.
-    pub fn commit_operations(&mut self, operations: Operations) -> Result<()> {
+    #[cfg_attr(
+        feature = "hooks",
+        doc = r"
+    # Note
+    This function will execute hooks, if the replica has a hook_base_path set.
+    These hooks can change the operations that are actually committed."
+    )]
+    pub fn commit_operations(&mut self, mut operations: Operations) -> Result<()> {
         if operations.is_empty() {
             return Ok(());
+        }
+
+        #[cfg(feature = "hooks")]
+        if let Some(base_dir) = mem::take(&mut self.hook_base_path) {
+            use crate::hooks::hook::hook_kinds;
+            // The hook execution order is as follows:
+            // - on-commit
+            // - on-add
+            // - on-modify
+            //
+            // We first check the on-commit hooks, as they can take the
+            // operations directly.  The other two need heuristics to
+            // determine whether the operations point to a task, that was
+            // added or modified.
+
+            if let Some(on_commit) = crate::hooks::hooks::<hook_kinds::OnCommit>(&base_dir)? {
+                for maybe_hook in on_commit {
+                    let hook = maybe_hook??;
+                    operations = hook.execute(operations)?;
+                }
+            }
+
+            {
+                let DeconstructedOperations {
+                    mut added,
+                    deleted,
+                    mut modified,
+                } = self.deconstruct_operations(operations)?;
+
+                if let Some(on_add) = crate::hooks::hooks::<hook_kinds::OnAdd>(&base_dir)? {
+                    for maybe_hook in on_add {
+                        let hook = maybe_hook??;
+                        added = added
+                            .into_iter()
+                            .map(|at| Ok(hook.execute(at)?))
+                            .collect::<Result<_>>()?;
+                    }
+                }
+
+                if let Some(on_modify) = crate::hooks::hooks::<hook_kinds::OnModify>(&base_dir)? {
+                    for maybe_hook in on_modify {
+                        let hook = maybe_hook??;
+                        modified = modified
+                            .into_iter()
+                            .map(|(old, new)| Ok((old.clone(), hook.execute(old, new)?)))
+                            .collect::<Result<_>>()?;
+                    }
+                }
+
+                // TODO(@bpeetz): The API would suggest adding another
+                // `OnDelete` hook, but per the v1 spec, deletes are treated as modifications with a changed status. <2025-06-23>
+
+                operations = self.reconstruct_operations(DeconstructedOperations {
+                    added,
+                    deleted,
+                    modified,
+                })?;
+            }
+
+            // Move the taken basedir back.
+            self.hook_base_path = Some(base_dir);
         }
 
         // Add tasks to the working set when the status property is updated from anything other
@@ -505,6 +590,181 @@ impl Replica {
         ops
     }
 
+    /// Deconstruct an sequence of [`Operations`][`Operation`], into
+    /// - added,
+    /// - deleted and
+    /// - modified tasks.
+    ///
+    /// This deconstruction is based on imperfect heuristics and as such probably not round trip
+    /// safe.
+    ///
+    /// It is essentially the inverse of [`Self::reconstruct_operations`].
+    #[cfg(feature = "hooks")]
+    fn deconstruct_operations(&mut self, ops: Operations) -> Result<DeconstructedOperations> {
+        // NOTE(@bpeetz): Keep this in sync with the docs in the hook API spec. <2025-06-28>
+
+        let mut operation_stacks: HashMap<Uuid, Vec<Operation>> = HashMap::new();
+
+        // Sort the operations per-uuid into stacks.
+        for op in ops {
+            if let Some(uuid) = op.get_uuid() {
+                if let Some(slot) = operation_stacks.get_mut(&uuid) {
+                    slot.push(op);
+                } else {
+                    operation_stacks.insert(uuid, vec![op]);
+                }
+            } else {
+                // This is a undo operation, we should probably use this in the destructuring
+                // heuristic.
+            }
+        }
+
+        let mut added_tasks = vec![];
+        let mut deleted_tasks = vec![];
+        let mut modified_tasks = vec![];
+
+        for (uuid, mut ops) in operation_stacks {
+            let mut current_task_base = None;
+            let mut current_task_head = None;
+            let mut task_was_created = false;
+
+            ops.sort();
+
+            for op in ops {
+                match op {
+                    Operation::Create { uuid: _ } => {
+                        assert_eq!(current_task_head, None);
+
+                        current_task_head = Some(Task::new(
+                            TaskData::new(uuid, TaskMap::new()),
+                            Arc::new(DependencyMap::new()),
+                        ));
+                        task_was_created = true;
+                    }
+                    Operation::Delete { uuid: _, old_task } => {
+                        if current_task_head.is_some() {
+                            current_task_head = None;
+                            continue;
+                        }
+
+                        // The delete was not preceded by a Create op.
+                        deleted_tasks.push(Task::new(
+                            TaskData::new(uuid, old_task),
+                            Arc::new(DependencyMap::new()),
+                        ));
+                    }
+                    Operation::Update {
+                        uuid: _,
+                        property,
+                        old_value: _,
+                        value,
+                        timestamp: _,
+                    } => {
+                        let mut target_task = if let Some(ct) = current_task_head {
+                            ct
+                        } else {
+                            let task = self.get_task(uuid)?.expect(
+                                "A non-existent task was updated?\
+                                We should probably handle this case, but currently do not",
+                            );
+                            current_task_base = Some(task.clone());
+                            task
+                        };
+
+                        target_task.set_value(
+                            property,
+                            value.to_owned(),
+                            &mut Operations::new(),
+                        )?;
+
+                        current_task_head = Some(target_task);
+                    }
+                    Operation::UndoPoint => {
+                        // As outlined in the comment above, this should probably not be ignored,
+                        // but currently is.
+                    }
+                }
+            }
+
+            if let Some(current_task_head) = current_task_head {
+                if task_was_created {
+                    added_tasks.push(current_task_head);
+                } else {
+                    modified_tasks.push((
+                        current_task_base.expect("Should be some"),
+                        current_task_head,
+                    ));
+                }
+            }
+        }
+
+        Ok(DeconstructedOperations {
+            added: added_tasks,
+            deleted: deleted_tasks,
+            modified: modified_tasks,
+        })
+    }
+
+    /// Reconstruct an sequence of [`Operations`][`Operation`], from
+    /// - added,
+    /// - deleted and
+    /// - modified tasks.
+    ///
+    /// This reconstruction is based on imperfect heuristics and as such probably not round trip
+    /// safe.
+    ///
+    /// It is essentially the inverse of [`Self::deconstruct_operations`].
+    #[cfg(feature = "hooks")]
+    fn reconstruct_operations(&mut self, dec_ops: DeconstructedOperations) -> Result<Operations> {
+        // NOTE(@bpeetz): Keep this in sync with the docs in the hook API spec. <2025-06-28>
+        let mut ops = Operations::new();
+
+        for added in dec_ops.added {
+            if let Some(found) = self.get_task(added.get_uuid())? {
+                Err(deconstruct_operations::Error::AddedAlreadyPresent {
+                    found,
+                    wanted_to_add: added,
+                })?;
+            } else {
+                let mut new_task = self.create_task(added.get_uuid(), &mut ops)?;
+
+                for (prop, val) in added.clone().into_task_data().iter() {
+                    new_task.set_value(prop, Some(val.to_owned()), &mut ops)?;
+                }
+            }
+        }
+
+        for (old, new) in dec_ops.modified {
+            if new.get_uuid() != old.get_uuid() {
+                return Err(
+                    deconstruct_operations::Error::ModifiedUuidMismatch { old, new }.into(),
+                );
+            }
+
+            if let Some(mut found) = self.get_task(new.get_uuid())? {
+                for (prop, val) in new.clone().into_task_data().iter() {
+                    if let Some(found_val) = found.get_value(prop) {
+                        if found_val != val {
+                            found.set_value(prop, Some(val.to_owned()), &mut ops)?;
+                        }
+                    }
+                }
+            } else {
+                Err(deconstruct_operations::Error::ModifiedNotPresent { old, new })?;
+            }
+        }
+
+        for deleted in dec_ops.deleted {
+            if let Some(mut found) = self.get_task(deleted.get_uuid())? {
+                found.set_status(Status::Deleted, &mut ops)?;
+            } else {
+                Err(deconstruct_operations::Error::DeletedNotPresent { deleted })?;
+            }
+        }
+
+        Ok(ops)
+    }
+
     /// Get the number of operations local to this replica and not yet synchronized to the server.
     pub fn num_local_operations(&mut self) -> Result<usize> {
         self.taskdb.num_operations()
@@ -514,6 +774,36 @@ impl Replica {
     pub fn num_undo_points(&mut self) -> Result<usize> {
         self.taskdb.num_undo_points()
     }
+}
+
+#[cfg(feature = "hooks")]
+#[allow(missing_docs)]
+pub mod deconstruct_operations {
+    use crate::Task;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum Error {
+        #[error("An task, that should be added was already present in the db:\
+            found {}, wanted to add {}", found.get_description(), wanted_to_add.get_description())]
+        AddedAlreadyPresent { found: Task, wanted_to_add: Task },
+
+        #[error("Deleted task is no longer present in replica: {}", deleted.get_description())]
+        DeletedNotPresent { deleted: Task },
+
+        #[error("Modified task is no longer present in replica: {}", new.get_description())]
+        ModifiedNotPresent { old: Task, new: Task },
+
+        #[error("The old and new task uuid, for a modified task,\
+            no longer matches: old: {}; new: {}", old.get_uuid(), new.get_uuid())]
+        ModifiedUuidMismatch { old: Task, new: Task },
+    }
+}
+
+#[cfg(feature = "hooks")]
+struct DeconstructedOperations {
+    added: Vec<Task>,
+    deleted: Vec<Task>,
+    modified: Vec<(Task, Task)>,
 }
 
 #[cfg(test)]
