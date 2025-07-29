@@ -71,5 +71,5 @@ url = { version = "2", optional = true }
 [dev-dependencies]
 proptest = "^1.7.0"
 tempfile = "3"
-rstest = "0.25"
+rstest = "0.26"
 pretty_assertions = "1"
