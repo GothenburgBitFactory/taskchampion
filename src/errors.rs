@@ -36,6 +36,7 @@ macro_rules! other_error {
 }
 other_error!(io::Error);
 other_error!(serde_json::Error);
+other_error!(tokio::task::JoinError);
 
 #[cfg(feature = "storage-sqlite")]
 other_error!(rusqlite::Error);
@@ -43,6 +44,13 @@ other_error!(rusqlite::Error);
 other_error!(crate::storage::sqlite::SqliteError);
 #[cfg(feature = "storage-sqlite")]
 other_error!(tokio_rusqlite::Error);
+
+#[cfg(feature = "storage-sqlite")]
+impl From<Error> for tokio_rusqlite::Error {
+    fn from(e: Error) -> Self {
+        tokio_rusqlite::Error::Other(e.into())
+    }
+}
 
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::http::Error);

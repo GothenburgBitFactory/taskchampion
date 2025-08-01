@@ -1,7 +1,8 @@
-#[cfg(feature = "storage-sqlite")]
-use super::sqlite::SqliteStorage;
 use super::{inmemory::InMemoryStorage, Storage};
 use crate::errors::Result;
+use crate::storage::async_storage::adapter::BlockingStorageAdapter;
+#[cfg(feature = "storage-sqlite")]
+use crate::storage::sqlite::AsyncSqliteStorage;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +39,18 @@ impl StorageConfig {
                 taskdb_dir,
                 create_if_missing,
                 access_mode,
-            } => Box::new(SqliteStorage::new(
-                taskdb_dir,
-                access_mode,
-                create_if_missing,
-            )?),
-            StorageConfig::InMemory => Box::new(InMemoryStorage::new()),
+            } => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let async_storage = rt.block_on(AsyncSqliteStorage::new(
+                    taskdb_dir,
+                    access_mode,
+                    create_if_missing,
+                ))?;
+                Box::new(BlockingStorageAdapter::new(Box::new(async_storage))?)
+            }
+            StorageConfig::InMemory => Box::new(BlockingStorageAdapter::new(Box::new(
+                InMemoryStorage::new(),
+            ))?),
         })
     }
 }

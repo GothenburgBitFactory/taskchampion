@@ -1,6 +1,7 @@
 use crate::errors::{Error, Result};
 use anyhow::Context;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
+use tokio_rusqlite::Connection;
 
 /// A database schema version.
 ///
@@ -26,8 +27,8 @@ type UpgradeFn = fn(&Transaction) -> Result<()>;
 const VERSIONS: &[(DbVersion, UpgradeFn)] = &[(DbVersion(0, 1), upgrade_to_0_1)];
 pub(super) const LATEST_VERSION: DbVersion = VERSIONS[VERSIONS.len() - 1].0;
 
-pub(super) fn upgrade_db(con: &mut Connection) -> Result<()> {
-    let mut current_version = get_db_version(con)?;
+pub(super) async fn upgrade_db(con: &mut Connection) -> Result<()> {
+    let mut current_version = get_db_version(con).await?;
 
     if current_version.0 > LATEST_VERSION.0 {
         return Err(Error::Database(
@@ -37,9 +38,12 @@ pub(super) fn upgrade_db(con: &mut Connection) -> Result<()> {
 
     for (version, upgrade) in VERSIONS {
         if current_version < *version {
-            let t = con.transaction()?;
-            upgrade(&t)?;
-            t.commit()?;
+            con.call(move |c| -> tokio_rusqlite::Result<()> {
+                let t = c.transaction()?;
+                upgrade(&t)?;
+                t.commit().map_err(rusqlite::Error::into)
+            })
+            .await?;
             current_version = *version;
         }
     }
@@ -122,26 +126,31 @@ fn create_version_table(t: &Transaction) -> Result<()> {
 /// This takes a connection for efficiency: this is called every time a Storage instance is
 /// created, so the overhead of BEGIN and COMMIT for a transaction is unnecessary in the happy
 /// path.
-pub(super) fn get_db_version(con: &mut Connection) -> Result<DbVersion> {
-    let version: Option<(u32, u32)> = match con
-        .query_row("SELECT major, minor FROM version", [], |r| {
-            Ok((r.get("major")?, r.get("minor")?))
-        })
-        .optional()
-    {
-        Ok(v) => v,
-        Err(err @ rusqlite::Error::SqliteFailure(_, _)) => {
-            // This error may have occurred because the "version" table does not exist, in which
-            // case the version is (0, 0).
-            if has_column(&con.transaction()?, "version", "major")? {
-                return Err(err.into());
+pub(super) async fn get_db_version(con: &mut Connection) -> Result<DbVersion> {
+    con.call(|c| {
+        // First, check if the `version` table exists at all.
+        let version = match c
+            .query_row("SELECT major, minor FROM version", [], |r| {
+                Ok((r.get("major")?, r.get("minor")?))
+            })
+            .optional()
+        {
+            Ok(v) => v,
+            Err(err @ rusqlite::Error::SqliteFailure(_, _)) => {
+                // This error may have occurred because the "version" table does not exist, in which
+                // case the version is (0, 0).
+                if has_column(&c.transaction()?, "version", "major")? {
+                    return Err(err.into());
+                }
+                None
             }
-            None
-        }
-        Err(err) => return Err(err.into()),
-    };
-    let (major, minor) = version.unwrap_or((0, 0));
-    Ok(DbVersion(major, minor))
+            Err(err) => return Err(err.into()),
+        };
+        let (major, minor) = version.unwrap_or((0, 0));
+        Ok(DbVersion(major, minor))
+    })
+    .await
+    .map_err(Error::from)
 }
 
 /// Set the current DB version.
@@ -170,56 +179,68 @@ fn has_column(t: &Transaction, table: &str, column: &str) -> Result<bool> {
 mod test {
     use super::*;
 
-    #[test]
-    fn get_db_version_no_table() -> Result<()> {
-        let mut con = Connection::open_in_memory()?;
-        assert_eq!(get_db_version(&mut con)?, DbVersion(0, 0));
+    #[tokio::test]
+    async fn get_db_version_no_table() -> Result<()> {
+        let mut con = Connection::open_in_memory().await?;
+        assert_eq!(get_db_version(&mut con).await?, DbVersion(0, 0));
         Ok(())
     }
 
-    #[test]
-    fn get_db_version_empty() -> Result<()> {
-        let mut con = Connection::open_in_memory()?;
-        let t = con.transaction()?;
-        create_version_table(&t)?;
-        t.commit()?;
-        assert_eq!(get_db_version(&mut con)?, DbVersion(0, 0));
+    #[tokio::test]
+    async fn get_db_version_empty() -> Result<()> {
+        let mut con = Connection::open_in_memory().await?;
+        con.call(|c| {
+            let t = c.transaction()?;
+            create_version_table(&t)?;
+            t.commit().map_err(tokio_rusqlite::Error::from)
+        })
+        .await?;
+        assert_eq!(get_db_version(&mut con).await?, DbVersion(0, 0));
         Ok(())
     }
 
-    #[test]
-    fn get_db_version_set() -> Result<()> {
-        let mut con = Connection::open_in_memory()?;
-        let t = con.transaction()?;
-        create_version_table(&t)?;
-        set_db_version(&t, DbVersion(3, 5))?;
-        t.commit()?;
-        assert_eq!(get_db_version(&mut con)?, DbVersion(3, 5));
+    #[tokio::test]
+    async fn get_db_version_set() -> Result<()> {
+        let mut con = Connection::open_in_memory().await?;
+        con.call(|c| {
+            let t = c.transaction()?;
+            create_version_table(&t)?;
+            set_db_version(&t, DbVersion(3, 5))?;
+            t.commit().map_err(tokio_rusqlite::Error::from)
+        })
+        .await?;
+        assert_eq!(get_db_version(&mut con).await?, DbVersion(3, 5));
         Ok(())
     }
 
-    #[test]
-    fn get_db_version_set_twice() -> Result<()> {
-        let mut con = Connection::open_in_memory()?;
-        let t = con.transaction()?;
-        create_version_table(&t)?;
-        set_db_version(&t, DbVersion(3, 5))?;
-        set_db_version(&t, DbVersion(4, 7))?;
-        t.commit()?;
-        assert_eq!(get_db_version(&mut con)?, DbVersion(4, 7));
+    #[tokio::test]
+    async fn get_db_version_set_twice() -> Result<()> {
+        let mut con = Connection::open_in_memory().await?;
+        con.call(|c| {
+            let t = c.transaction()?;
+            create_version_table(&t)?;
+            set_db_version(&t, DbVersion(3, 5))?;
+            set_db_version(&t, DbVersion(4, 7))?;
+            t.commit().map_err(tokio_rusqlite::Error::from)
+        })
+        .await?;
+        assert_eq!(get_db_version(&mut con).await?, DbVersion(4, 7));
         Ok(())
     }
 
-    #[test]
-    fn test_upgrade_to_0_1() -> Result<()> {
-        let mut con = Connection::open_in_memory()?;
-        {
-            let t = con.transaction()?;
+    #[tokio::test]
+    async fn test_upgrade_to_0_1() -> Result<()> {
+        let mut con = Connection::open_in_memory().await?;
+
+        con.call(|c| {
+            let t = c.transaction()?;
             upgrade_to_0_1(&t)?;
-            t.commit()?;
-        }
-        {
-            let t = con.transaction()?;
+            t.commit().map_err(tokio_rusqlite::Error::from)
+        })
+        .await?;
+
+        con.call(|c| -> tokio_rusqlite::Result<()> {
+            let t = c.transaction()?;
             assert!(has_column(&t, "operations", "id")?);
             assert!(has_column(&t, "operations", "data")?);
             assert!(has_column(&t, "operations", "uuid")?);
@@ -229,8 +250,11 @@ mod test {
             assert!(has_column(&t, "tasks", "data")?);
             assert!(has_column(&t, "working_set", "id")?);
             assert!(has_column(&t, "working_set", "uuid")?);
-        }
-        assert_eq!(get_db_version(&mut con)?, DbVersion(0, 1));
+            Ok(())
+        })
+        .await?;
+
+        assert_eq!(get_db_version(&mut con).await?, DbVersion(0, 1));
         Ok(())
     }
 }

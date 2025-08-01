@@ -26,6 +26,8 @@ pub use config::{AccessMode, StorageConfig};
 
 mod inmemory;
 
+pub(super) mod async_storage;
+
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
 pub use crate::Operation as ReplicaOp;
