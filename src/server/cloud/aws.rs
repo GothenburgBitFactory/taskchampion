@@ -13,7 +13,7 @@ use aws_sdk_s3::{
 use std::future::Future;
 use tokio::runtime::Runtime;
 
-/// A [`Service`] implementation based on the Google Cloud Storage service.
+/// A [`Service`] implementation based on the AWS Simple Storage Service.
 pub(in crate::server) struct AwsService {
     client: s3::Client,
     rt: Runtime,
@@ -63,9 +63,11 @@ pub enum AwsCredentials {
 
 impl AwsService {
     pub(in crate::server) fn new(
-        region: String,
+        region: Option<String>,
         bucket: String,
         creds: AwsCredentials,
+        endpoint_url: Option<String>,
+        force_path_style: bool,
     ) -> Result<Self> {
         let rt = Runtime::new()?;
 
@@ -92,13 +94,36 @@ impl AwsService {
                         // Just use the default.
                     }
                 }
-                config_provider
-                    .region(RegionProviderChain::first_try(Region::new(region)))
-                    .load()
-                    .await
+                // This will:
+                // 1. If a region is set, use it
+                // 2. if No region is set, follow the AWS default provider chain
+                //    (https://docs.aws.amazon.com/sdk-for-rust/latest/dg/region.html)
+                // 3. If no region is discovered, hardcode to "us-east-1"
+                //
+                // If there's a region specified we will always prefer that
+                // next, the default provider chain will look at things like AWS_REGION environment
+                // variables, the profile file, etc.
+                //
+                // we provide the hardcoded fallback because a region MUST be set
+                // but, a region being set does _not_ make sense if endpoint_url is set, because
+                // the endpoint URL would include a region.
+                // realistically, endpoint_url is more useful for S3-compatible services
+                // and would not use a separate region in addition to endpoint_url.
+                config_provider = config_provider.region(
+                    RegionProviderChain::first_try(region.map(Region::new))
+                        .or_default_provider()
+                        .or_else(Region::new("us-east-1")),
+                );
+                if let Some(url) = endpoint_url {
+                    config_provider = config_provider.endpoint_url(url)
+                };
+                config_provider.load().await
             });
 
-        let client = s3::client::Client::new(&config);
+        let s3_config = aws_sdk_s3::config::Builder::from(&config)
+            .force_path_style(force_path_style)
+            .build();
+        let client = aws_sdk_s3::Client::from_conf(s3_config);
         Ok(Self { client, rt, bucket })
     }
 
@@ -379,6 +404,14 @@ mod tests {
     ///  * `AWS_TEST_ACCESS_KEY_ID` / `AWS_TEST_SECRET_ACCESS_KEY` - credentials for access to the
     ///    bucket.
     ///
+    /// Additionally, the following environment variables are optional and control
+    /// the created S3 client
+    /// * `AWS_TEST_ENDPOINT_URL` - endpoint URL to use, potentially for an S3-compatible API,
+    ///    or potentially just to ensure this feature works with AWS (e.g. s3.us-east-1.amazonaws.com)
+    /// * `AWS_TEST_FORCE_PATH_STYLE` - if set to "1" or "true", uses "path-style" S3
+    ///   urls ($AWS_TEST_ENDPOINT_URL/$AWS_TEST_BUCKET vs $AWS_TEST_BUCKET.$AWS_TEST_ENDPOINT_URL)
+    ///
+    ///
     /// Set up the bucket with a lifecyle policy to delete objects with age > 1 day. While passing
     /// tests should correctly clean up after themselves, failing tests may leave objects in the
     /// bucket.
@@ -403,14 +436,22 @@ mod tests {
             return None;
         };
 
+        let endpoint_url = std::env::var("AWS_TEST_ENDPOINT_URL").ok();
+
+        let force_path_style = std::env::var("AWS_TEST_FORCE_PATH_STYLE")
+            .map(|f| f == "1" || f == "true")
+            .unwrap_or(false);
+
         Some(
             AwsService::new(
-                region,
+                Some(region),
                 bucket,
                 AwsCredentials::AccessKey {
                     access_key_id,
                     secret_access_key,
                 },
+                endpoint_url,
+                force_path_style,
             )
             .unwrap(),
         )
