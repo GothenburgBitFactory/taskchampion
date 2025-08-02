@@ -79,7 +79,7 @@ pub enum ServerConfig {
     #[cfg(feature = "server-aws")]
     Aws {
         /// Region in which the bucket is located.
-        region: String,
+        region: Option<String>,
         /// Bucket in which to store the task data.
         ///
         /// This bucket must not be used for any other purpose. No special bucket configuration is
@@ -90,6 +90,12 @@ pub enum ServerConfig {
         /// Private encryption secret used to encrypt all data sent to the server.  This can
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
+        // endpoint_url is an optional URL to specify the hostname of an s3-compatible service.
+        // When endpoint_url is used, region is ignored by the underlying S3 client.
+        endpoint_url: Option<String>,
+        // force_path_style is used to force the S3 client to use path-style URLs instead of
+        // virtual-hosted-style (subdomain) URLs for the bucket.
+        force_path_style: bool,
     },
 }
 
@@ -120,8 +126,10 @@ impl ServerConfig {
                 bucket,
                 credentials,
                 encryption_secret,
+                endpoint_url,
+                force_path_style,
             } => Box::new(CloudServer::new(
-                AwsService::new(region, bucket, credentials)?,
+                AwsService::new(region, bucket, credentials, endpoint_url, force_path_style)?,
                 encryption_secret,
             )?),
         })
