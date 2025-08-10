@@ -79,6 +79,17 @@ pub enum ServerConfig {
     #[cfg(feature = "server-aws")]
     Aws {
         /// Region in which the bucket is located.
+        /// If `None`, the default region is used.
+        /// The `default` region is based on the AWS SDK
+        /// - <https://docs.aws.amazon.com/sdk-for-rust/latest/dg/region.html>
+        ///
+        /// following, in order:
+        /// 1. `AWS_REGION` environment variable,
+        /// 2. `AWS_CONFIG_FILE` environment variable and the `region` in that file
+        /// 3. `AWS_PROFILE` variable and the region for that file in the config file
+        /// 4. The instance profile if running in an AWS compute environment
+        ///
+        /// Failing all of those, we will default to `us-east-1`.
         region: Option<String>,
         /// Bucket in which to store the task data.
         ///

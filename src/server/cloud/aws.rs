@@ -101,7 +101,7 @@ impl AwsService {
                 // 3. If no region is discovered, hardcode to "us-east-1"
                 //
                 // If there's a region specified we will always prefer that
-                // next, the default provider chain will look at things like AWS_REGION environment
+                // Next, the default provider chain will look at things like AWS_REGION environment
                 // variables, the profile file, etc.
                 //
                 // we provide the hardcoded fallback because a region MUST be set
