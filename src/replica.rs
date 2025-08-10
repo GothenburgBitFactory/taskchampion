@@ -306,7 +306,7 @@ impl Replica {
 
     /// Create a new task.
     ///
-    /// Use ['Uuid::new_v4`] to invent a new task ID, if necessary. If the task already
+    /// Use [Uuid::new_v4] to invent a new task ID, if necessary. If the task already
     /// exists, it is returned.
     pub fn create_task(&mut self, uuid: Uuid, ops: &mut Operations) -> Result<Task> {
         if let Some(task) = self.get_task(uuid)? {
