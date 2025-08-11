@@ -218,14 +218,14 @@ impl TaskDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StorageConfig;
+    use crate::storage::{InMemoryStorage, Storage};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
     #[test]
     fn commit_operations() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
@@ -239,43 +239,44 @@ mod tests {
             old_value: Some("old".into()),
         });
 
-        let mut txn = storage.txn()?;
-        db.commit_operations(txn.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, |_| false)?;
 
-        assert_eq!(
-            db.sorted_tasks(txn.as_mut()),
-            vec![(uuid, vec![("title".into(), "my task".into())])]
-        );
-        assert_eq!(
-            db.operations(txn.as_mut()),
-            vec![
-                Operation::Create { uuid },
-                Operation::Update {
-                    uuid,
-                    property: String::from("title"),
-                    value: Some("my task".into()),
-                    timestamp: now,
-                    old_value: Some("old".into()),
-                },
-            ]
-        );
-        Ok(())
+            assert_eq!(
+                db.sorted_tasks(txn),
+                vec![(uuid, vec![("title".into(), "my task".into())])]
+            );
+            assert_eq!(
+                db.operations(txn),
+                vec![
+                    Operation::Create { uuid },
+                    Operation::Update {
+                        uuid,
+                        property: String::from("title"),
+                        value: Some("my task".into()),
+                        timestamp: now,
+                        old_value: Some("old".into()),
+                    },
+                ]
+            );
+            Ok(())
+        })
     }
 
     #[test]
     fn commit_operations_update_working_set() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
         let mut uuids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
         uuids.sort();
         let [uuid1, uuid2, uuid3] = uuids;
 
         // uuid1 already exists in the working set.
-        {
-            let mut txn = storage.txn()?;
+
+        storage.txn(|txn| {
             txn.add_to_working_set(uuid1)?;
-            txn.commit()?;
-        }
+            txn.commit()
+        })?;
 
         let mut ops = Operations::new();
         ops.push(Operation::Create { uuid: uuid1 });
@@ -289,35 +290,33 @@ mod tests {
             Operation::Create { uuid } => *uuid == uuid1 || *uuid == uuid2,
             _ => false,
         };
-        let mut txn = storage.txn()?;
-        db.commit_operations(txn.as_mut(), ops, add_to_working_set)?;
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, add_to_working_set)?;
 
-        assert_eq!(
-            db.sorted_tasks(txn.as_mut()),
-            vec![(uuid1, vec![]), (uuid2, vec![]), (uuid3, vec![]),]
-        );
-        assert_eq!(
-            db.operations(txn.as_mut()),
-            vec![
-                Operation::Create { uuid: uuid1 },
-                Operation::Create { uuid: uuid2 },
-                Operation::Create { uuid: uuid3 },
-                Operation::Create { uuid: uuid2 },
-                Operation::Create { uuid: uuid3 },
-            ]
-        );
+            assert_eq!(
+                db.sorted_tasks(txn),
+                vec![(uuid1, vec![]), (uuid2, vec![]), (uuid3, vec![]),]
+            );
+            assert_eq!(
+                db.operations(txn),
+                vec![
+                    Operation::Create { uuid: uuid1 },
+                    Operation::Create { uuid: uuid2 },
+                    Operation::Create { uuid: uuid3 },
+                    Operation::Create { uuid: uuid2 },
+                    Operation::Create { uuid: uuid3 },
+                ]
+            );
 
-        // uuid2 was added to the working set, once, and uuid3 was not.
-        assert_eq!(
-            db.working_set(txn.as_mut())?,
-            vec![None, Some(uuid1), Some(uuid2)],
-        );
-        Ok(())
+            // uuid2 was added to the working set, once, and uuid3 was not.
+            assert_eq!(db.working_set(txn)?, vec![None, Some(uuid1), Some(uuid2)],);
+            Ok(())
+        })
     }
 
     #[test]
     fn test_num_operations() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
         let mut ops = Operations::new();
         ops.push(Operation::Create {
@@ -327,29 +326,30 @@ mod tests {
         ops.push(Operation::Create {
             uuid: Uuid::new_v4(),
         });
-        let mut txn = storage.txn()?;
-        db.commit_operations(txn.as_mut(), ops, |_| false).unwrap();
-        assert_eq!(db.num_operations(txn.as_mut()).unwrap(), 2);
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, |_| false).unwrap();
+            assert_eq!(db.num_operations(txn).unwrap(), 2);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     #[test]
     fn test_num_undo_points() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
-        let mut txn = storage.txn()?;
+        storage.txn(|txn| {
+            let mut ops = Operations::new();
+            ops.push(Operation::UndoPoint);
+            db.commit_operations(txn, ops, |_| false).unwrap();
+            assert_eq!(db.num_undo_points(txn).unwrap(), 1);
 
-        let mut ops = Operations::new();
-        ops.push(Operation::UndoPoint);
-        db.commit_operations(txn.as_mut(), ops, |_| false).unwrap();
-        assert_eq!(db.num_undo_points(txn.as_mut()).unwrap(), 1);
+            let mut ops = Operations::new();
+            ops.push(Operation::UndoPoint);
+            db.commit_operations(txn, ops, |_| false).unwrap();
+            assert_eq!(db.num_undo_points(txn).unwrap(), 2);
 
-        let mut ops = Operations::new();
-        ops.push(Operation::UndoPoint);
-        db.commit_operations(txn.as_mut(), ops, |_| false).unwrap();
-        assert_eq!(db.num_undo_points(txn.as_mut()).unwrap(), 2);
-
-        Ok(())
+            Ok(())
+        })
     }
 }

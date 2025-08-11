@@ -2,6 +2,8 @@ use crate::depmap::DependencyMap;
 use crate::errors::Result;
 use crate::operation::{Operation, Operations};
 use crate::server::Server;
+#[cfg(test)]
+use crate::storage::InMemoryStorage;
 use crate::storage::{Storage, StorageTxn, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
@@ -35,15 +37,15 @@ use uuid::Uuid;
 # #[cfg(feature = "storage-sqlite")]
 # {
 # use taskchampion::chrono::{TimeZone, Utc};
-# use taskchampion::{storage::AccessMode, Operations, Replica, Status, StorageConfig, Uuid};
+# use taskchampion::{storage::AccessMode, Operations, Replica, Status, Uuid, storage::SqliteStorage};
 # use tempfile::TempDir;
 # fn main() -> anyhow::Result<()> {
 # let tmp_dir = TempDir::new()?;
-# let mut replica = Replica::new(StorageConfig::OnDisk {
-#   taskdb_dir: tmp_dir.path().to_path_buf(),
-#   create_if_missing: true,
-#   access_mode: AccessMode::ReadWrite,
-# }.into_storage()?);
+# let mut replica: Replica<SqliteStorage> = Replica::new(SqliteStorage::new(
+#   tmp_dir.path().to_path_buf(),
+#   AccessMode::ReadWrite,
+#   true,
+# )?);
 // Create a new task, recording the required operations.
 let mut ops = Operations::new();
 let uuid = Uuid::new_v4();
@@ -69,8 +71,8 @@ replica.commit_operations(ops)?;
 /// specifically pending tasks.  These are indexed with small, easy-to-type integers.  Newly
 /// pending tasks are automatically added to the working set, and the working set can be
 /// "renumbered" when necessary.
-pub struct Replica {
-    storage: Box<dyn Storage>,
+pub struct Replica<S: Storage> {
+    storage: S,
 
     taskdb: TaskDb,
 
@@ -81,9 +83,9 @@ pub struct Replica {
     depmap: Option<Arc<DependencyMap>>,
 }
 
-impl Replica {
-    pub fn new(storage: Box<dyn Storage>) -> Replica {
-        Replica {
+impl<S: Storage> Replica<S> {
+    pub fn new(storage: S) -> Self {
+        Self {
             storage,
             taskdb: TaskDb::new(),
             added_undo_point: false,
@@ -92,10 +94,8 @@ impl Replica {
     }
 
     #[cfg(test)]
-    pub fn new_inmemory() -> Replica {
-        use crate::StorageConfig;
-
-        Replica::new(StorageConfig::InMemory.into_storage().unwrap())
+    pub(crate) fn new_inmemory() -> Replica<InMemoryStorage> {
+        Replica::new(InMemoryStorage::new())
     }
 
     /// Update an existing task.  If the value is Some, the property is added or updated.  If the
@@ -120,38 +120,40 @@ impl Replica {
         };
         task.update(property, value, &mut ops);
         self.commit_operations(ops)?;
-        let mut txn = self.storage.txn()?;
-        Ok(self
-            .taskdb
-            .get_task(txn.as_mut(), uuid)?
-            .expect("task should exist after an update"))
+        self.storage.txn(|txn| {
+            Ok(self
+                .taskdb
+                .get_task(txn, uuid)?
+                .expect("task should exist after an update"))
+        })
     }
 
     /// Get all tasks represented as a map keyed by UUID
     pub fn all_tasks(&mut self) -> Result<HashMap<Uuid, Task>> {
         let depmap = self.dependency_map(false)?;
-        let mut txn = self.storage.txn()?;
-        let mut res = HashMap::new();
-        for (uuid, tm) in self.taskdb.all_tasks(txn.as_mut())?.drain(..) {
-            res.insert(uuid, Task::new(TaskData::new(uuid, tm), depmap.clone()));
-        }
-        Ok(res)
+        self.storage.txn(|txn| {
+            let mut res = HashMap::new();
+            for (uuid, tm) in self.taskdb.all_tasks(txn)?.drain(..) {
+                res.insert(uuid, Task::new(TaskData::new(uuid, tm), depmap.clone()));
+            }
+            Ok(res)
+        })
     }
 
     /// Get all task represented as a map of [`TaskData`] keyed by UUID
     pub fn all_task_data(&mut self) -> Result<HashMap<Uuid, TaskData>> {
-        let mut txn = self.storage.txn()?;
-        let mut res = HashMap::new();
-        for (uuid, tm) in self.taskdb.all_tasks(txn.as_mut())?.drain(..) {
-            res.insert(uuid, TaskData::new(uuid, tm));
-        }
-        Ok(res)
+        self.storage.txn(|txn| {
+            let mut res = HashMap::new();
+            for (uuid, tm) in self.taskdb.all_tasks(txn)?.drain(..) {
+                res.insert(uuid, TaskData::new(uuid, tm));
+            }
+            Ok(res)
+        })
     }
 
     /// Get the UUIDs of all tasks
     pub fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
-        let mut txn = self.storage.txn()?;
-        self.taskdb.all_task_uuids(txn.as_mut())
+        self.storage.txn(|txn| self.taskdb.all_task_uuids(txn))
     }
 
     /// Get an array containing all pending tasks
@@ -167,22 +169,23 @@ impl Replica {
     }
 
     pub fn pending_task_data(&mut self) -> Result<Vec<TaskData>> {
-        let mut txn = self.storage.txn()?;
-        let res = self
-            .taskdb
-            .get_pending_tasks(txn.as_mut())?
-            .into_iter()
-            .map(|(uuid, taskmap)| TaskData::new(uuid, taskmap))
-            .collect::<Vec<_>>();
+        self.storage.txn(|txn| {
+            let res = self
+                .taskdb
+                .get_pending_tasks(txn)?
+                .into_iter()
+                .map(|(uuid, taskmap)| TaskData::new(uuid, taskmap))
+                .collect::<Vec<_>>();
 
-        Ok(res)
+            Ok(res)
+        })
     }
 
     /// Get the "working set" for this replica.  This is a snapshot of the current state,
     /// and it is up to the caller to decide how long to store this value.
     pub fn working_set(&mut self) -> Result<WorkingSet> {
-        let mut txn = self.storage.txn()?;
-        Replica::working_set_with_txn(&mut self.taskdb, txn.as_mut())
+        self.storage
+            .txn(|txn| Replica::<S>::working_set_with_txn(&mut self.taskdb, txn))
     }
 
     fn working_set_with_txn(taskdb: &mut TaskDb, txn: &mut dyn StorageTxn) -> Result<WorkingSet> {
@@ -204,82 +207,85 @@ impl Replica {
     /// Calculating this value requires a scan of the full working set and may not be performant.
     /// The [`TaskData`] API avoids generating this value.
     pub fn dependency_map(&mut self, force: bool) -> Result<Arc<DependencyMap>> {
-        let mut txn = self.storage.txn()?;
-        if force || self.depmap.is_none() {
-            // note: we can't use self.get_task here, as that depends on a
-            // DependencyMap
+        self.storage.txn(|txn| {
+            if force || self.depmap.is_none() {
+                // note: we can't use self.get_task here, as that depends on a
+                // DependencyMap
 
-            let mut dm = DependencyMap::new();
-            // temporary cache tracking whether tasks are considered Pending or not.
-            let mut is_pending_cache: HashMap<Uuid, bool> = HashMap::new();
-            let ws = Replica::working_set_with_txn(&mut self.taskdb, txn.as_mut())?;
-            // for each task in the working set
-            for i in 1..=ws.largest_index() {
-                // get the task UUID
-                if let Some(u) = ws.by_index(i) {
-                    // get the task
-                    if let Some(taskmap) = self.taskdb.get_task(txn.as_mut(), u)? {
-                        // search the task's keys
-                        for p in taskmap.keys() {
-                            // for one matching `dep_..`
-                            if let Some(dep_str) = p.strip_prefix("dep_") {
-                                // and extract the UUID from the key
-                                if let Ok(dep) = Uuid::parse_str(dep_str) {
-                                    // the dependency is pending if
-                                    let dep_pending = {
-                                        // we've determined this before and cached the result
-                                        if let Some(dep_pending) = is_pending_cache.get(&dep) {
-                                            *dep_pending
-                                        } else if let Some(dep_taskmap) =
-                                            // or if we get the task
-                                            self.taskdb.get_task(txn.as_mut(), dep)?
-                                        {
-                                            // and its status is "pending"
-                                            let dep_pending = matches!(
-                                                dep_taskmap
-                                                    .get("status")
-                                                    .map(|tm| Status::from_taskmap(tm)),
-                                                Some(Status::Pending)
-                                            );
-                                            is_pending_cache.insert(dep, dep_pending);
-                                            dep_pending
-                                        } else {
-                                            false
+                let mut dm = DependencyMap::new();
+                // temporary cache tracking whether tasks are considered Pending or not.
+                let mut is_pending_cache: HashMap<Uuid, bool> = HashMap::new();
+                let ws = Replica::<S>::working_set_with_txn(&mut self.taskdb, txn)?;
+                // for each task in the working set
+                for i in 1..=ws.largest_index() {
+                    // get the task UUID
+                    if let Some(u) = ws.by_index(i) {
+                        // get the task
+                        if let Some(taskmap) = self.taskdb.get_task(txn, u)? {
+                            // search the task's keys
+                            for p in taskmap.keys() {
+                                // for one matching `dep_..`
+                                if let Some(dep_str) = p.strip_prefix("dep_") {
+                                    // and extract the UUID from the key
+                                    if let Ok(dep) = Uuid::parse_str(dep_str) {
+                                        // the dependency is pending if
+                                        let dep_pending = {
+                                            // we've determined this before and cached the result
+                                            if let Some(dep_pending) = is_pending_cache.get(&dep) {
+                                                *dep_pending
+                                            } else if let Some(dep_taskmap) =
+                                                // or if we get the task
+                                                self.taskdb.get_task(txn, dep)?
+                                            {
+                                                // and its status is "pending"
+                                                let dep_pending = matches!(
+                                                    dep_taskmap
+                                                        .get("status")
+                                                        .map(|tm| Status::from_taskmap(tm)),
+                                                    Some(Status::Pending)
+                                                );
+                                                is_pending_cache.insert(dep, dep_pending);
+                                                dep_pending
+                                            } else {
+                                                false
+                                            }
+                                        };
+                                        if dep_pending {
+                                            dm.add_dependency(u, dep);
                                         }
-                                    };
-                                    if dep_pending {
-                                        dm.add_dependency(u, dep);
                                     }
                                 }
                             }
                         }
                     }
                 }
+                self.depmap = Some(Arc::new(dm));
             }
-            self.depmap = Some(Arc::new(dm));
-        }
 
-        // at this point self.depmap is guaranteed to be Some(_)
-        Ok(self.depmap.as_ref().unwrap().clone())
+            // at this point self.depmap is guaranteed to be Some(_)
+            Ok(self.depmap.as_ref().unwrap().clone())
+        })
     }
 
     /// Get an existing task by its UUID
     pub fn get_task(&mut self, uuid: Uuid) -> Result<Option<Task>> {
         let depmap = self.dependency_map(false)?;
-        let mut txn = self.storage.txn()?;
-        Ok(self
-            .taskdb
-            .get_task(txn.as_mut(), uuid)?
-            .map(move |tm| Task::new(TaskData::new(uuid, tm), depmap)))
+        self.storage.txn(|txn| {
+            Ok(self
+                .taskdb
+                .get_task(txn, uuid)?
+                .map(move |tm| Task::new(TaskData::new(uuid, tm), depmap)))
+        })
     }
 
     /// Get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
     pub fn get_task_data(&mut self, uuid: Uuid) -> Result<Option<TaskData>> {
-        let mut txn = self.storage.txn()?;
-        Ok(self
-            .taskdb
-            .get_task(txn.as_mut(), uuid)?
-            .map(move |tm| TaskData::new(uuid, tm)))
+        self.storage.txn(|txn| {
+            Ok(self
+                .taskdb
+                .get_task(txn, uuid)?
+                .map(move |tm| TaskData::new(uuid, tm)))
+        })
     }
 
     /// Get the operations that led to the given task.
@@ -293,8 +299,8 @@ impl Replica {
     /// those conflicts may not appear on all replicas. In practice, conflicts are rare and the
     /// results of this function will be the same on all replicas for most tasks.
     pub fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
-        let mut txn = self.storage.txn()?;
-        self.taskdb.get_task_operations(txn.as_mut(), uuid)
+        self.storage
+            .txn(|txn| self.taskdb.get_task_operations(txn, uuid))
     }
 
     /// Create a new task, setting `modified`, `description`, `status`, and `entry`.
@@ -370,39 +376,40 @@ impl Replica {
     /// All local state on the replica will be updated accordingly, including the working set and
     /// and temporarily cached data.
     pub fn commit_operations(&mut self, operations: Operations) -> Result<()> {
-        let mut txn = self.storage.txn()?;
-        if operations.is_empty() {
-            return Ok(());
-        }
-
-        // Add tasks to the working set when the status property is updated from anything other
-        // than pending or recurring to one of those two statuses.
-        let pending = Status::Pending.to_taskmap();
-        let recurring = Status::Recurring.to_taskmap();
-        let is_p_or_r = |val: &Option<String>| {
-            if let Some(val) = val {
-                val == pending || val == recurring
-            } else {
-                false
+        self.storage.txn(|txn| {
+            if operations.is_empty() {
+                return Ok(());
             }
-        };
-        let add_to_working_set = |op: &Operation| match op {
-            Operation::Update {
-                property,
-                value,
-                old_value,
-                ..
-            } => property == "status" && !is_p_or_r(old_value) && is_p_or_r(value),
-            _ => false,
-        };
-        self.taskdb
-            .commit_operations(txn.as_mut(), operations, add_to_working_set)?;
 
-        // The cached dependency map may now be invalid, do not retain it. Any existing Task values
-        // will continue to use the old map.
-        self.depmap = None;
+            // Add tasks to the working set when the status property is updated from anything other
+            // than pending or recurring to one of those two statuses.
+            let pending = Status::Pending.to_taskmap();
+            let recurring = Status::Recurring.to_taskmap();
+            let is_p_or_r = |val: &Option<String>| {
+                if let Some(val) = val {
+                    val == pending || val == recurring
+                } else {
+                    false
+                }
+            };
+            let add_to_working_set = |op: &Operation| match op {
+                Operation::Update {
+                    property,
+                    value,
+                    old_value,
+                    ..
+                } => property == "status" && !is_p_or_r(old_value) && is_p_or_r(value),
+                _ => false,
+            };
+            self.taskdb
+                .commit_operations(txn, operations, add_to_working_set)?;
 
-        Ok(())
+            // The cached dependency map may now be invalid, do not retain it. Any existing Task values
+            // will continue to use the old map.
+            self.depmap = None;
+
+            Ok(())
+        })
     }
 
     /// Synchronize this replica against the given server.  The working set is rebuilt after
@@ -416,9 +423,12 @@ impl Replica {
     /// Set this to true on systems more constrained in CPU, memory, or bandwidth than a typical desktop
     /// system
     pub fn sync(&mut self, server: &mut Box<dyn Server>, avoid_snapshots: bool) -> Result<()> {
-        self.taskdb
-            .sync(self.storage.txn()?.as_mut(), server, avoid_snapshots)
-            .context("Failed to synchronize with server")?;
+        self.storage.txn(|txn| {
+            self.taskdb
+                .sync(txn, server, avoid_snapshots)
+                .context("Failed to synchronize with server")?;
+            Ok(())
+        })?;
         self.rebuild_working_set(false)
             .context("Failed to rebuild working set after sync")?;
         Ok(())
@@ -430,8 +440,7 @@ impl Replica {
     /// The operations are returned in the order they were applied. Use
     /// [`Replica::commit_reversed_operations`] to "undo" them.
     pub fn get_undo_operations(&mut self) -> Result<Operations> {
-        let mut txn = self.storage.txn()?;
-        self.taskdb.get_undo_operations(txn.as_mut())
+        self.storage.txn(|txn| self.taskdb.get_undo_operations(txn))
     }
 
     /// Commit the reverse of the given operations, beginning with the last operation in the given
@@ -440,10 +449,10 @@ impl Replica {
     /// This method only supports reversing operations if they precisely match local operations
     /// that have not yet been synchronized, and will return `false` if this is not the case.
     pub fn commit_reversed_operations(&mut self, operations: Operations) -> Result<bool> {
-        if !self
-            .taskdb
-            .commit_reversed_operations(self.storage.txn()?.as_mut(), operations)?
-        {
+        let success = self
+            .storage
+            .txn(|txn| self.taskdb.commit_reversed_operations(txn, operations))?;
+        if !success {
             return Ok(false);
         }
 
@@ -460,21 +469,22 @@ impl Replica {
     /// case, on completion all pending and recurring tasks are in the working set and all tasks
     /// with other statuses are not.
     pub fn rebuild_working_set(&mut self, renumber: bool) -> Result<()> {
-        let mut txn = self.storage.txn()?;
-        let pending = String::from(Status::Pending.to_taskmap());
-        let recurring = String::from(Status::Recurring.to_taskmap());
-        self.taskdb.rebuild_working_set(
-            txn.as_mut(),
-            |t| {
-                if let Some(st) = t.get("status") {
-                    st == &pending || st == &recurring
-                } else {
-                    false
-                }
-            },
-            renumber,
-        )?;
-        Ok(())
+        self.storage.txn(|txn| {
+            let pending = String::from(Status::Pending.to_taskmap());
+            let recurring = String::from(Status::Recurring.to_taskmap());
+            self.taskdb.rebuild_working_set(
+                txn,
+                |t| {
+                    if let Some(st) = t.get("status") {
+                        st == &pending || st == &recurring
+                    } else {
+                        false
+                    }
+                },
+                renumber,
+            )?;
+            Ok(())
+        })
     }
 
     /// Expire old, deleted tasks.
@@ -532,14 +542,12 @@ impl Replica {
 
     /// Get the number of operations local to this replica and not yet synchronized to the server.
     pub fn num_local_operations(&mut self) -> Result<usize> {
-        let mut txn = self.storage.txn()?;
-        self.taskdb.num_operations(txn.as_mut())
+        self.storage.txn(|txn| self.taskdb.num_operations(txn))
     }
 
     /// Get the number of undo points available (number of times `undo` will succeed).
     pub fn num_undo_points(&mut self) -> Result<usize> {
-        let mut txn = self.storage.txn()?;
-        self.taskdb.num_undo_points(txn.as_mut())
+        self.storage.txn(|txn| self.taskdb.num_undo_points(txn))
     }
 }
 
@@ -586,7 +594,7 @@ mod tests {
 
     #[test]
     fn new_task() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         #[allow(deprecated)]
         let t = rep.new_task(Status::Pending, "a task".into()).unwrap();
@@ -597,7 +605,7 @@ mod tests {
 
     #[test]
     fn modify_task() -> Result<()> {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         // Further test the deprecated `new_task` method.
         #[allow(deprecated)]
@@ -622,13 +630,12 @@ mod tests {
         assert_eq!(t.get_description(), "past tense");
         assert_eq!(t.get_status(), Status::Completed);
 
-        {
-            let mut txn = rep.storage.txn()?;
+        rep.storage.txn(|txn| {
             // and check for the corresponding operations, cleaning out the timestamps
             // and modified properties as these are based on the current time
             assert_eq!(
                 rep.taskdb
-                    .operations(txn.as_mut())
+                    .operations(txn)
                     .drain(..)
                     .map(clean_op)
                     .collect::<Vec<_>>(),
@@ -693,7 +700,8 @@ mod tests {
                     },
                 ]
             );
-        }
+            Ok(())
+        })?;
 
         // num_local_operations includes all but the undo point
         assert_eq!(rep.num_local_operations().unwrap(), 9);
@@ -711,7 +719,7 @@ mod tests {
 
     #[test]
     fn delete_task() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -725,7 +733,7 @@ mod tests {
 
     #[test]
     fn all_tasks() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
         let mut ops = Operations::new();
@@ -753,7 +761,7 @@ mod tests {
 
     #[test]
     fn pending_tasks() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let (uuid1, uuid2, uuid3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let mut ops = Operations::new();
@@ -779,7 +787,7 @@ mod tests {
     fn commit_operations() -> Result<()> {
         // This mostly tests the working-set callback, as `TaskDB::commit_operations` has
         // tests for the remaining functionality.
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         // Generate the depmap so later assertions can verify it is reset.
         rep.dependency_map(true).unwrap();
@@ -902,7 +910,7 @@ mod tests {
         let uuid2 = Uuid::new_v4();
         let uuid3 = Uuid::new_v4();
 
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let mut ops = Operations::new();
         ops.push(Operation::UndoPoint);
@@ -929,7 +937,7 @@ mod tests {
 
     #[test]
     fn get_and_modify() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let mut ops = Operations::new();
         let uuid = Uuid::new_v4();
@@ -958,7 +966,7 @@ mod tests {
 
     #[test]
     fn get_task_data_and_operations() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
@@ -1004,7 +1012,7 @@ mod tests {
 
     #[test]
     fn rebuild_working_set_includes_recurring() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -1025,7 +1033,7 @@ mod tests {
 
     #[test]
     fn new_pending_adds_to_working_set() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -1044,7 +1052,7 @@ mod tests {
 
     #[test]
     fn new_recurring_adds_to_working_set() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -1063,14 +1071,14 @@ mod tests {
 
     #[test]
     fn get_does_not_exist() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
         let uuid = Uuid::new_v4();
         assert_eq!(rep.get_task(uuid).unwrap(), None);
     }
 
     #[test]
     fn expire() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
         let mut ops = Operations::new();
 
         // uuid1 is old but pending, so is not expired.
@@ -1116,7 +1124,7 @@ mod tests {
 
     #[test]
     fn dependency_map() {
-        let mut rep = Replica::new_inmemory();
+        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
 
         let mut tasks = vec![];
         let mut ops = Operations::new();

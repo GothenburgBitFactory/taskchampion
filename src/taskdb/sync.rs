@@ -220,10 +220,11 @@ fn apply_version(
 mod test {
     use super::*;
     use crate::server::test::TestServer;
-    use crate::storage::TaskMap;
+    use crate::storage::InMemoryStorage;
+    use crate::storage::{Storage, TaskMap};
     use crate::taskdb::snapshot::SnapshotTasks;
     use crate::taskdb::TaskDb;
-    use crate::{Operation, Operations, StorageConfig};
+    use crate::{Operation, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
@@ -239,11 +240,11 @@ mod test {
         let mut db = TaskDb::new();
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // make some changes in parallel to db1 and db2..
         let uuid1 = Uuid::new_v4();
@@ -267,16 +268,15 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         // now make updates to the same task on both sides
         let mut ops = Operations::new();
@@ -288,7 +288,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         let mut ops = Operations::new();
         let now3 = now2 + chrono::Duration::seconds(1);
@@ -299,21 +299,20 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         for (dbnum, storage) in [(1, &mut storage1), (2, &mut storage2)] {
             eprintln!("checking db{dbnum}");
             expect_operations(
-                db.get_task_operations(storage.txn()?.as_mut(), uuid1)?,
+                storage.txn(|txn| db.get_task_operations(txn, uuid1))?,
                 vec![
                     Operation::Create { uuid: uuid1 },
                     Operation::Update {
@@ -326,7 +325,7 @@ mod test {
                 ],
             );
             expect_operations(
-                db.get_task_operations(storage.txn()?.as_mut(), uuid2)?,
+                storage.txn(|txn| db.get_task_operations(txn, uuid2))?,
                 vec![
                     Operation::Create { uuid: uuid2 },
                     Operation::Update {
@@ -362,11 +361,11 @@ mod test {
         let mut db = TaskDb::new();
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // create and update a task..
         let uuid = Uuid::new_v4();
@@ -380,16 +379,15 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         // delete and re-create the task on db1
         let mut ops = Operations::new();
@@ -406,7 +404,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
@@ -418,20 +416,19 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        db.commit_operations(storage2.txn()?.as_mut(), ops, |_| false)?;
+        storage2.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         // This is a case where the task operations appear different on the replicas,
         // because the update to "project" on db2 loses to the delete.
         expect_operations(
-            db.get_task_operations(storage1.txn()?.as_mut(), uuid)?,
+            storage1.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Create { uuid },
@@ -456,7 +453,7 @@ mod test {
             ],
         );
         expect_operations(
-            db.get_task_operations(storage2.txn()?.as_mut(), uuid)?,
+            storage2.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Create { uuid },
@@ -497,11 +494,11 @@ mod test {
         let mut db = TaskDb::new();
         let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // create and update a task..
         let uuid = Uuid::new_v4();
@@ -515,16 +512,15 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         // add different updates on db1 and db2
         let mut ops = Operations::new();
@@ -536,7 +532,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
@@ -548,18 +544,17 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        db.commit_operations(storage2.txn()?.as_mut(), ops, |_| false)?;
+        storage2.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false).unwrap();
-        sync(&mut server, storage1.txn()?.as_mut(), false).unwrap();
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         expect_operations(
-            db.get_task_operations(storage1.txn()?.as_mut(), uuid)?,
+            storage1.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Update {
@@ -588,7 +583,7 @@ mod test {
             ],
         );
         expect_operations(
-            db.get_task_operations(storage2.txn()?.as_mut(), uuid)?,
+            storage2.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Update {
@@ -615,7 +610,7 @@ mod test {
         let mut test_server = TestServer::new();
 
         let mut server: Box<dyn Server> = test_server.server();
-        let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage1 = InMemoryStorage::new();
         let mut db = TaskDb::new();
 
         let uuid = Uuid::new_v4();
@@ -628,13 +623,13 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         test_server.set_snapshot_urgency(SnapshotUrgency::High);
-        sync(&mut server, storage1.txn()?.as_mut(), false)?;
+        storage1.txn(|txn| sync(&mut server, txn, false))?;
 
         // assert that a snapshot was added
-        let base_version = storage1.txn()?.base_version()?;
+        let base_version = storage1.txn(|txn| txn.base_version())?;
         let (v, s) = test_server
             .snapshot()
             .ok_or_else(|| anyhow::anyhow!("no snapshot"))?;
@@ -652,18 +647,18 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(storage1.txn()?.as_mut(), ops, |_| false)?;
-        sync(&mut server, storage1.txn()?.as_mut(), false)?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
+        storage1.txn(|txn| sync(&mut server, txn, false))?;
 
         // delete the first version, so that db2 *must* initialize from
         // the snapshot
         test_server.delete_version(Uuid::nil());
 
         // sync to a new DB and check that we got the expected results
-        let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
-        sync(&mut server, storage2.txn()?.as_mut(), false)?;
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false))?;
 
-        let task = db.get_task(storage2.txn()?.as_mut(), uuid)?.unwrap();
+        let task = storage2.txn(|txn| db.get_task(txn, uuid))?.unwrap();
         assert_eq!(task.get("title").unwrap(), "my first task, updated");
 
         Ok(())
@@ -671,7 +666,7 @@ mod test {
 
     #[test]
     fn test_sync_avoids_snapshot() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
 
         let test_server = TestServer::new();
@@ -680,10 +675,10 @@ mod test {
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
         ops.push(Operation::Create { uuid });
-        db.commit_operations(storage.txn()?.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         test_server.set_snapshot_urgency(SnapshotUrgency::Low);
-        sync(&mut server, storage.txn()?.as_mut(), true).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
 
         // assert that a snapshot was not added, because we indicated
         // we wanted to avoid snapshots and it was only low urgency
@@ -695,12 +690,12 @@ mod test {
     #[test]
     fn test_sync_batched() -> Result<()> {
         let test_server = TestServer::new();
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
 
         let mut server: Box<dyn Server> = test_server.server();
 
         let mut db = TaskDb::new();
-        sync(&mut server, storage.txn()?.as_mut(), false).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
@@ -713,9 +708,9 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(storage.txn()?.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        sync(&mut server, storage.txn()?.as_mut(), true).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
         assert_eq!(test_server.versions_len(), 1);
 
         // chars are four bytes, but they're only one when converted to a String
@@ -732,10 +727,10 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        db.commit_operations(storage.txn()?.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // this sync batches the operations into two versions.
-        sync(&mut server, storage.txn()?.as_mut(), true).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
         assert_eq!(test_server.versions_len(), 3);
 
         Ok(())
@@ -747,9 +742,9 @@ mod test {
 
         let mut server: Box<dyn Server> = test_server.server();
 
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let mut db = TaskDb::new();
-        sync(&mut server, storage.txn()?.as_mut(), false).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
@@ -762,9 +757,9 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(storage.txn()?.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        sync(&mut server, storage.txn()?.as_mut(), true).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
         assert_eq!(test_server.versions_len(), 1);
 
         // add an operation greater than the batch limit
@@ -777,9 +772,9 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(storage.txn()?.as_mut(), ops, |_| false)?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        sync(&mut server, storage.txn()?.as_mut(), true).unwrap();
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
         assert_eq!(test_server.versions_len(), 2);
 
         Ok(())
