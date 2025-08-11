@@ -36,7 +36,7 @@ Several server implementations are included, and users can define their own impl
 ```rust
 # #[cfg(feature = "storage-sqlite")]
 # {
-# use taskchampion::{storage::AccessMode, ServerConfig, Replica, StorageConfig};
+# use taskchampion::{storage::AccessMode, ServerConfig, Replica, StorageConfig, storage::InMemoryStorage};
 # use tempfile::TempDir;
 # fn main() -> anyhow::Result<()> {
 # let taskdb_dir = TempDir::new()?;
@@ -48,8 +48,8 @@ let storage = StorageConfig::OnDisk {
   taskdb_dir,
   create_if_missing: true,
   access_mode: AccessMode::ReadWrite,
-}.into_storage()?;
-let mut replica = Replica::new(storage);
+}.try_into()?;
+let mut replica: Replica<InMemoryStorage> = Replica::new(storage);
 
 // Set up a local, on-disk server.
 let server_config = ServerConfig::Local { server_dir };

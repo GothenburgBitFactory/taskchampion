@@ -22,9 +22,14 @@ mod config;
 #[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
+#[cfg(feature = "storage-sqlite")]
+pub use sqlite::SqliteStorage;
+
 pub use config::{AccessMode, StorageConfig};
 
 mod inmemory;
+
+pub use inmemory::InMemoryStorage;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
@@ -151,5 +156,7 @@ pub trait StorageTxn {
 /// [`crate::storage::StorageTxn`] trait.
 pub trait Storage {
     /// Begin a transaction
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>>;
+    fn txn<F, R>(&mut self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>;
 }
