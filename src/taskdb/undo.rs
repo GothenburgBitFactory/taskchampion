@@ -117,7 +117,7 @@ pub(crate) fn commit_reversed_operations(
 mod tests {
     use super::*;
     use crate::{storage::taskmap_with, taskdb::TaskDb};
-    use crate::{Operation, Operations};
+    use crate::{Operation, Operations, StorageConfig};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
@@ -125,7 +125,8 @@ mod tests {
     #[test]
     #[allow(clippy::vec_init_then_push)]
     fn test_apply_create() -> Result<()> {
-        let mut db = TaskDb::new_inmemory();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut db = TaskDb::new();
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         let timestamp = Utc::now();
@@ -156,9 +157,10 @@ mod tests {
             old_value: Some("v2".into()),
             timestamp,
         });
-        db.commit_operations(ops, |_| false)?;
+        let mut txn = storage.txn()?;
+        db.commit_operations(txn.as_mut(), ops, |_| false)?;
 
-        let db_state = db.sorted_tasks();
+        let db_state = db.sorted_tasks(txn.as_mut());
 
         let mut ops = Operations::new();
         ops.push(Operation::UndoPoint);
@@ -180,51 +182,67 @@ mod tests {
             old_value: Some("v3".into()),
             timestamp,
         });
-        db.commit_operations(ops, |_| false)?;
+        db.commit_operations(txn.as_mut(), ops, |_| false)?;
 
-        assert_eq!(db.operations().len(), 9, "{:#?}", db.operations());
+        assert_eq!(
+            db.operations(txn.as_mut()).len(),
+            9,
+            "{:#?}",
+            db.operations(txn.as_mut())
+        );
 
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(txn.as_mut())?;
         assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
-        assert_eq!(&undo_ops[..], &db.operations()[5..]);
+        assert_eq!(&undo_ops[..], &db.operations(txn.as_mut())[5..]);
 
         // Try committing the wrong set of ops.
         assert!(!commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
+            txn.as_mut(),
             undo_ops[1..=2].to_vec(),
         )?);
 
-        assert!(commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(commit_reversed_operations(txn.as_mut(), undo_ops)?);
 
         // Note that we've subtracted the length of undo_ops.
-        assert_eq!(db.operations().len(), 5, "{:#?}", db.operations());
-        assert_eq!(db.sorted_tasks(), db_state, "{:#?}", db.sorted_tasks());
+        assert_eq!(
+            db.operations(txn.as_mut()).len(),
+            5,
+            "{:#?}",
+            db.operations(txn.as_mut())
+        );
+        assert_eq!(
+            db.sorted_tasks(txn.as_mut()),
+            db_state,
+            "{:#?}",
+            db.sorted_tasks(txn.as_mut())
+        );
 
         // Note that the number of undo operations is equal to the number of operations in the
         // database here because there are no UndoPoints.
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(txn.as_mut())?;
         assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
 
-        assert!(commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(commit_reversed_operations(txn.as_mut(), undo_ops)?);
 
         // empty db
-        assert_eq!(db.operations().len(), 0, "{:#?}", db.operations());
-        assert_eq!(db.sorted_tasks(), vec![], "{:#?}", db.sorted_tasks());
+        assert_eq!(
+            db.operations(txn.as_mut()).len(),
+            0,
+            "{:#?}",
+            db.operations(txn.as_mut())
+        );
+        assert_eq!(
+            db.sorted_tasks(txn.as_mut()),
+            vec![],
+            "{:#?}",
+            db.sorted_tasks(txn.as_mut())
+        );
 
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(txn.as_mut())?;
         assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
 
         // nothing left to undo, so commit_undo_ops() returns false
-        assert!(!commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(!commit_reversed_operations(txn.as_mut(), undo_ops)?);
 
         Ok(())
     }
