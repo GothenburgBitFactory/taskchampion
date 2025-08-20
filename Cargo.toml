@@ -25,21 +25,21 @@ sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
-server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:tokio"]
+server-gcp = ["cloud", "encryption", "dep:google-cloud-storage"]
 # Support for sync to AWS
-server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:tokio"]
+server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types"]
 # Suppport for sync to another SQLite database on the same machine
 server-local = ["storage-sqlite"]
 # Support for all task storage backends
 storage = ["storage-sqlite"]
 # Support for SQLite task storage
-storage-sqlite = ["dep:rusqlite"]
+storage-sqlite = ["dep:rusqlite", "dep:tokio-rusqlite"]
 # (private) Support for sync protocol encryption
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
 # static bundling of dependencies
-bundled = ["rusqlite/bundled"]
+bundled = ["rusqlite/bundled", "tokio-rusqlite/bundled"]
 # use native CA roots, instead of bundled
 tls-native-roots = ["ureq/native-certs"]
 
@@ -57,16 +57,18 @@ flate2 = "1"
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
 log = "^0.4.17"
 ring = { version = "0.17", optional = true }
-rusqlite = { version = "0.37", optional = true}
+rusqlite = { version = "0.32", optional = true}
 serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.27"
 strum_macros = "0.27"
-tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2.0"
 ureq = { version = "^2.12.1", features = ["tls"], optional = true }
 uuid = { version = "^1.16.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
+async-trait = "0.1.89"
+tokio-rusqlite = { version = "0.6.0", optional = true }
 
 [dev-dependencies]
 proptest = "^1.7.0"
