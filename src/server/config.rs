@@ -12,7 +12,10 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
 
@@ -95,35 +98,41 @@ pub enum ServerConfig {
 
 impl ServerConfig {
     /// Get a server based on this configuration
-    pub fn into_server(self) -> Result<Box<dyn Server>> {
+    pub fn into_server(self) -> Result<Arc<Mutex<dyn Server + Send>>> {
         Ok(match self {
             #[cfg(feature = "server-local")]
-            ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
+            ServerConfig::Local { server_dir } => {
+                Arc::new(Mutex::new(LocalServer::new(server_dir)?))
+            }
             #[cfg(feature = "server-sync")]
             ServerConfig::Remote {
                 url,
                 client_id,
                 encryption_secret,
-            } => Box::new(SyncServer::new(url, client_id, encryption_secret)?),
+            } => Arc::new(Mutex::new(SyncServer::new(
+                url,
+                client_id,
+                encryption_secret,
+            )?)),
             #[cfg(feature = "server-gcp")]
             ServerConfig::Gcp {
                 bucket,
                 credential_path,
                 encryption_secret,
-            } => Box::new(CloudServer::new(
+            } => Arc::new(Mutex::new(CloudServer::new(
                 GcpService::new(bucket, credential_path)?,
                 encryption_secret,
-            )?),
+            )?)),
             #[cfg(feature = "server-aws")]
             ServerConfig::Aws {
                 region,
                 bucket,
                 credentials,
                 encryption_secret,
-            } => Box::new(CloudServer::new(
+            } => Arc::new(Mutex::new(CloudServer::new(
                 AwsService::new(region, bucket, credentials)?,
                 encryption_secret,
-            )?),
+            )?)),
         })
     }
 }
