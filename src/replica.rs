@@ -2,7 +2,7 @@ use crate::depmap::DependencyMap;
 use crate::errors::Result;
 use crate::operation::{Operation, Operations};
 use crate::server::Server;
-use crate::storage::{Storage, TaskMap};
+use crate::storage::{Storage, StorageTxn, TaskMap};
 use crate::task::{Status, Task};
 use crate::taskdb::TaskDb;
 use crate::workingset::WorkingSet;
@@ -70,6 +70,8 @@ replica.commit_operations(ops)?;
 /// pending tasks are automatically added to the working set, and the working set can be
 /// "renumbered" when necessary.
 pub struct Replica {
+    storage: Box<dyn Storage>,
+
     taskdb: TaskDb,
 
     /// If true, this replica has already added an undo point.
@@ -82,7 +84,8 @@ pub struct Replica {
 impl Replica {
     pub fn new(storage: Box<dyn Storage>) -> Replica {
         Replica {
-            taskdb: TaskDb::new(storage),
+            storage,
+            taskdb: TaskDb::new(),
             added_undo_point: false,
             depmap: None,
         }
@@ -117,17 +120,19 @@ impl Replica {
         };
         task.update(property, value, &mut ops);
         self.commit_operations(ops)?;
+        let mut txn = self.storage.txn()?;
         Ok(self
             .taskdb
-            .get_task(uuid)?
+            .get_task(txn.as_mut(), uuid)?
             .expect("task should exist after an update"))
     }
 
     /// Get all tasks represented as a map keyed by UUID
     pub fn all_tasks(&mut self) -> Result<HashMap<Uuid, Task>> {
         let depmap = self.dependency_map(false)?;
+        let mut txn = self.storage.txn()?;
         let mut res = HashMap::new();
-        for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
+        for (uuid, tm) in self.taskdb.all_tasks(txn.as_mut())?.drain(..) {
             res.insert(uuid, Task::new(TaskData::new(uuid, tm), depmap.clone()));
         }
         Ok(res)
@@ -135,8 +140,9 @@ impl Replica {
 
     /// Get all task represented as a map of [`TaskData`] keyed by UUID
     pub fn all_task_data(&mut self) -> Result<HashMap<Uuid, TaskData>> {
+        let mut txn = self.storage.txn()?;
         let mut res = HashMap::new();
-        for (uuid, tm) in self.taskdb.all_tasks()?.drain(..) {
+        for (uuid, tm) in self.taskdb.all_tasks(txn.as_mut())?.drain(..) {
             res.insert(uuid, TaskData::new(uuid, tm));
         }
         Ok(res)
@@ -144,7 +150,8 @@ impl Replica {
 
     /// Get the UUIDs of all tasks
     pub fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
-        self.taskdb.all_task_uuids()
+        let mut txn = self.storage.txn()?;
+        self.taskdb.all_task_uuids(txn.as_mut())
     }
 
     /// Get an array containing all pending tasks
@@ -160,9 +167,10 @@ impl Replica {
     }
 
     pub fn pending_task_data(&mut self) -> Result<Vec<TaskData>> {
+        let mut txn = self.storage.txn()?;
         let res = self
             .taskdb
-            .get_pending_tasks()?
+            .get_pending_tasks(txn.as_mut())?
             .into_iter()
             .map(|(uuid, taskmap)| TaskData::new(uuid, taskmap))
             .collect::<Vec<_>>();
@@ -173,7 +181,12 @@ impl Replica {
     /// Get the "working set" for this replica.  This is a snapshot of the current state,
     /// and it is up to the caller to decide how long to store this value.
     pub fn working_set(&mut self) -> Result<WorkingSet> {
-        Ok(WorkingSet::new(self.taskdb.working_set()?))
+        let mut txn = self.storage.txn()?;
+        Replica::working_set_with_txn(&mut self.taskdb, txn.as_mut())
+    }
+
+    fn working_set_with_txn(taskdb: &mut TaskDb, txn: &mut dyn StorageTxn) -> Result<WorkingSet> {
+        Ok(WorkingSet::new(taskdb.working_set(txn)?))
     }
 
     /// Get the dependency map for all pending tasks.
@@ -191,6 +204,7 @@ impl Replica {
     /// Calculating this value requires a scan of the full working set and may not be performant.
     /// The [`TaskData`] API avoids generating this value.
     pub fn dependency_map(&mut self, force: bool) -> Result<Arc<DependencyMap>> {
+        let mut txn = self.storage.txn()?;
         if force || self.depmap.is_none() {
             // note: we can't use self.get_task here, as that depends on a
             // DependencyMap
@@ -198,13 +212,13 @@ impl Replica {
             let mut dm = DependencyMap::new();
             // temporary cache tracking whether tasks are considered Pending or not.
             let mut is_pending_cache: HashMap<Uuid, bool> = HashMap::new();
-            let ws = self.working_set()?;
+            let ws = Replica::working_set_with_txn(&mut self.taskdb, txn.as_mut())?;
             // for each task in the working set
             for i in 1..=ws.largest_index() {
                 // get the task UUID
                 if let Some(u) = ws.by_index(i) {
                     // get the task
-                    if let Some(taskmap) = self.taskdb.get_task(u)? {
+                    if let Some(taskmap) = self.taskdb.get_task(txn.as_mut(), u)? {
                         // search the task's keys
                         for p in taskmap.keys() {
                             // for one matching `dep_..`
@@ -218,7 +232,7 @@ impl Replica {
                                             *dep_pending
                                         } else if let Some(dep_taskmap) =
                                             // or if we get the task
-                                            self.taskdb.get_task(dep)?
+                                            self.taskdb.get_task(txn.as_mut(), dep)?
                                         {
                                             // and its status is "pending"
                                             let dep_pending = matches!(
@@ -252,17 +266,19 @@ impl Replica {
     /// Get an existing task by its UUID
     pub fn get_task(&mut self, uuid: Uuid) -> Result<Option<Task>> {
         let depmap = self.dependency_map(false)?;
+        let mut txn = self.storage.txn()?;
         Ok(self
             .taskdb
-            .get_task(uuid)?
+            .get_task(txn.as_mut(), uuid)?
             .map(move |tm| Task::new(TaskData::new(uuid, tm), depmap)))
     }
 
     /// Get an existing task by its UUID, as a [`TaskData`](crate::TaskData).
     pub fn get_task_data(&mut self, uuid: Uuid) -> Result<Option<TaskData>> {
+        let mut txn = self.storage.txn()?;
         Ok(self
             .taskdb
-            .get_task(uuid)?
+            .get_task(txn.as_mut(), uuid)?
             .map(move |tm| TaskData::new(uuid, tm)))
     }
 
@@ -277,7 +293,8 @@ impl Replica {
     /// those conflicts may not appear on all replicas. In practice, conflicts are rare and the
     /// results of this function will be the same on all replicas for most tasks.
     pub fn get_task_operations(&mut self, uuid: Uuid) -> Result<Operations> {
-        self.taskdb.get_task_operations(uuid)
+        let mut txn = self.storage.txn()?;
+        self.taskdb.get_task_operations(txn.as_mut(), uuid)
     }
 
     /// Create a new task, setting `modified`, `description`, `status`, and `entry`.
@@ -353,6 +370,7 @@ impl Replica {
     /// All local state on the replica will be updated accordingly, including the working set and
     /// and temporarily cached data.
     pub fn commit_operations(&mut self, operations: Operations) -> Result<()> {
+        let mut txn = self.storage.txn()?;
         if operations.is_empty() {
             return Ok(());
         }
@@ -378,7 +396,7 @@ impl Replica {
             _ => false,
         };
         self.taskdb
-            .commit_operations(operations, add_to_working_set)?;
+            .commit_operations(txn.as_mut(), operations, add_to_working_set)?;
 
         // The cached dependency map may now be invalid, do not retain it. Any existing Task values
         // will continue to use the old map.
@@ -399,7 +417,7 @@ impl Replica {
     /// system
     pub fn sync(&mut self, server: &mut Box<dyn Server>, avoid_snapshots: bool) -> Result<()> {
         self.taskdb
-            .sync(server, avoid_snapshots)
+            .sync(self.storage.txn()?.as_mut(), server, avoid_snapshots)
             .context("Failed to synchronize with server")?;
         self.rebuild_working_set(false)
             .context("Failed to rebuild working set after sync")?;
@@ -412,7 +430,8 @@ impl Replica {
     /// The operations are returned in the order they were applied. Use
     /// [`Replica::commit_reversed_operations`] to "undo" them.
     pub fn get_undo_operations(&mut self) -> Result<Operations> {
-        self.taskdb.get_undo_operations()
+        let mut txn = self.storage.txn()?;
+        self.taskdb.get_undo_operations(txn.as_mut())
     }
 
     /// Commit the reverse of the given operations, beginning with the last operation in the given
@@ -421,7 +440,10 @@ impl Replica {
     /// This method only supports reversing operations if they precisely match local operations
     /// that have not yet been synchronized, and will return `false` if this is not the case.
     pub fn commit_reversed_operations(&mut self, operations: Operations) -> Result<bool> {
-        if !self.taskdb.commit_reversed_operations(operations)? {
+        if !self
+            .taskdb
+            .commit_reversed_operations(self.storage.txn()?.as_mut(), operations)?
+        {
             return Ok(false);
         }
 
@@ -438,9 +460,11 @@ impl Replica {
     /// case, on completion all pending and recurring tasks are in the working set and all tasks
     /// with other statuses are not.
     pub fn rebuild_working_set(&mut self, renumber: bool) -> Result<()> {
+        let mut txn = self.storage.txn()?;
         let pending = String::from(Status::Pending.to_taskmap());
         let recurring = String::from(Status::Recurring.to_taskmap());
         self.taskdb.rebuild_working_set(
+            txn.as_mut(),
             |t| {
                 if let Some(st) = t.get("status") {
                     st == &pending || st == &recurring
@@ -477,6 +501,7 @@ impl Replica {
             .for_each(|(_, mut t)| t.delete(&mut ops));
         self.commit_operations(ops)
     }
+
     /// Add an UndoPoint, if one has not already been added by this Replica.  This occurs
     /// automatically when a change is made.  The `force` flag allows forcing a new UndoPoint
     /// even if one has already been created by this Replica, and may be useful when a Replica
@@ -507,19 +532,21 @@ impl Replica {
 
     /// Get the number of operations local to this replica and not yet synchronized to the server.
     pub fn num_local_operations(&mut self) -> Result<usize> {
-        self.taskdb.num_operations()
+        let mut txn = self.storage.txn()?;
+        self.taskdb.num_operations(txn.as_mut())
     }
 
     /// Get the number of undo points available (number of times `undo` will succeed).
     pub fn num_undo_points(&mut self) -> Result<usize> {
-        self.taskdb.num_undo_points()
+        let mut txn = self.storage.txn()?;
+        self.taskdb.num_undo_points(txn.as_mut())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::Status;
+    use crate::{storage::TaskMap, task::Status};
     use chrono::{DateTime, TimeZone};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
@@ -569,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn modify_task() {
+    fn modify_task() -> Result<()> {
         let mut rep = Replica::new_inmemory();
 
         // Further test the deprecated `new_task` method.
@@ -595,75 +622,78 @@ mod tests {
         assert_eq!(t.get_description(), "past tense");
         assert_eq!(t.get_status(), Status::Completed);
 
-        // and check for the corresponding operations, cleaning out the timestamps
-        // and modified properties as these are based on the current time
-        assert_eq!(
-            rep.taskdb
-                .operations()
-                .drain(..)
-                .map(clean_op)
-                .collect::<Vec<_>>(),
-            vec![
-                Operation::UndoPoint,
-                Operation::Create { uuid: t.get_uuid() },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "modified".into(),
-                    old_value: None,
-                    value: Some("just-now".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "description".into(),
-                    old_value: None,
-                    value: Some("a task".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "status".into(),
-                    old_value: None,
-                    value: Some("pending".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "entry".into(),
-                    old_value: None,
-                    value: Some("just-now".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "modified".into(),
-                    old_value: Some("just-now".into()),
-                    value: Some("just-now".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "description".into(),
-                    old_value: Some("a task".into()),
-                    value: Some("past tense".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "end".into(),
-                    old_value: None,
-                    value: Some("just-now".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-                Operation::Update {
-                    uuid: t.get_uuid(),
-                    property: "status".into(),
-                    old_value: Some("pending".into()),
-                    value: Some("completed".into()),
-                    timestamp: JUST_NOW.unwrap(),
-                },
-            ]
-        );
+        {
+            let mut txn = rep.storage.txn()?;
+            // and check for the corresponding operations, cleaning out the timestamps
+            // and modified properties as these are based on the current time
+            assert_eq!(
+                rep.taskdb
+                    .operations(txn.as_mut())
+                    .drain(..)
+                    .map(clean_op)
+                    .collect::<Vec<_>>(),
+                vec![
+                    Operation::UndoPoint,
+                    Operation::Create { uuid: t.get_uuid() },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "modified".into(),
+                        old_value: None,
+                        value: Some("just-now".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "description".into(),
+                        old_value: None,
+                        value: Some("a task".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "status".into(),
+                        old_value: None,
+                        value: Some("pending".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "entry".into(),
+                        old_value: None,
+                        value: Some("just-now".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "modified".into(),
+                        old_value: Some("just-now".into()),
+                        value: Some("just-now".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "description".into(),
+                        old_value: Some("a task".into()),
+                        value: Some("past tense".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "end".into(),
+                        old_value: None,
+                        value: Some("just-now".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                    Operation::Update {
+                        uuid: t.get_uuid(),
+                        property: "status".into(),
+                        old_value: Some("pending".into()),
+                        value: Some("completed".into()),
+                        timestamp: JUST_NOW.unwrap(),
+                    },
+                ]
+            );
+        }
 
         // num_local_operations includes all but the undo point
         assert_eq!(rep.num_local_operations().unwrap(), 9);
@@ -675,6 +705,8 @@ mod tests {
         let ops = vec![Operation::UndoPoint];
         rep.commit_operations(ops).unwrap();
         assert_eq!(rep.num_undo_points().unwrap(), 2);
+
+        Ok(())
     }
 
     #[test]

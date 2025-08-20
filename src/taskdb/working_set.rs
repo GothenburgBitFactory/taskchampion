@@ -83,7 +83,7 @@ where
 mod test {
     use super::*;
     use crate::taskdb::TaskDb;
-    use crate::{Operation, Operations};
+    use crate::{Operation, Operations, StorageConfig};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -98,7 +98,8 @@ mod test {
     }
 
     fn rebuild_working_set(renumber: bool) -> Result<()> {
-        let mut db = TaskDb::new_inmemory();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut db = TaskDb::new();
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
         println!("uuids[0]: {:?} - pending, not in working set", uuids[0]);
@@ -125,11 +126,11 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        db.commit_operations(ops, |_| false)?;
+        let mut txn = storage.txn()?;
+        db.commit_operations(txn.as_mut(), ops, |_| false)?;
 
         // set the existing working_set as we want it
         {
-            let mut txn = db.storage.txn()?;
             txn.clear_working_set()?;
 
             for i in &[1usize, 3, 4] {
@@ -140,12 +141,12 @@ mod test {
         }
 
         assert_eq!(
-            db.working_set()?,
+            db.working_set(txn.as_mut())?,
             vec![None, Some(uuids[1]), Some(uuids[3]), Some(uuids[4])]
         );
 
         rebuild(
-            db.storage.txn()?.as_mut(),
+            txn.as_mut(),
             |t| {
                 if let Some(status) = t.get("status") {
                     status == "pending"
@@ -166,14 +167,15 @@ mod test {
             vec![None, Some(uuids[1]), None, Some(uuids[4]), Some(uuids[0])]
         };
 
-        assert_eq!(db.working_set()?, exp);
+        assert_eq!(db.working_set(txn.as_mut())?, exp);
 
         Ok(())
     }
 
     #[test]
     fn rebuild_working_set_no_change() -> Result<()> {
-        let mut db = TaskDb::new_inmemory();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut db = TaskDb::new();
 
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
@@ -195,11 +197,11 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        db.commit_operations(ops, |_| false)?;
+        let mut txn = storage.txn()?;
+        db.commit_operations(txn.as_mut(), ops, |_| false)?;
 
         // set the existing working_set as we want it, containing UUIDs 0 and 1.
         {
-            let mut txn = db.storage.txn()?;
             txn.clear_working_set()?;
 
             for i in &[0, 1] {
@@ -209,7 +211,7 @@ mod test {
             txn.commit()?;
         }
         rebuild(
-            db.storage.txn()?.as_mut(),
+            txn.as_mut(),
             |t| {
                 if let Some(status) = t.get("status") {
                     status == "pending"
@@ -221,7 +223,7 @@ mod test {
         )?;
 
         assert_eq!(
-            db.working_set()?,
+            db.working_set(txn.as_mut())?,
             vec![None, Some(uuids[0]), Some(uuids[1]), Some(uuids[2])]
         );
         Ok(())
@@ -229,7 +231,8 @@ mod test {
 
     #[test]
     fn rebuild_working_set_shrinks() -> Result<()> {
-        let mut db = TaskDb::new_inmemory();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut db = TaskDb::new();
 
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
@@ -251,11 +254,11 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        db.commit_operations(ops, |_| false)?;
+        let mut txn = storage.txn()?;
+        db.commit_operations(txn.as_mut(), ops, |_| false)?;
 
         // set the existing working_set as we want it, containing all three UUIDs.
         {
-            let mut txn = db.storage.txn()?;
             txn.clear_working_set()?;
 
             for uuid in &uuids {
@@ -265,7 +268,7 @@ mod test {
             txn.commit()?;
         }
         rebuild(
-            db.storage.txn()?.as_mut(),
+            txn.as_mut(),
             |t| {
                 if let Some(status) = t.get("status") {
                     status == "pending"
@@ -276,7 +279,7 @@ mod test {
             true,
         )?;
 
-        assert_eq!(db.working_set()?, vec![None, Some(uuids[0])]);
+        assert_eq!(db.working_set(txn.as_mut())?, vec![None, Some(uuids[0])]);
         Ok(())
     }
 }
