@@ -1,7 +1,10 @@
+use anyhow::anyhow;
+
 #[cfg(feature = "storage-sqlite")]
 use super::sqlite::SqliteStorage;
 use super::{inmemory::InMemoryStorage, Storage};
 use crate::errors::Result;
+use crate::{errors, Replica};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,20 +33,48 @@ pub enum StorageConfig {
     InMemory,
 }
 
-impl StorageConfig {
-    pub fn into_storage(self) -> Result<Box<dyn Storage>> {
-        Ok(match self {
+#[cfg(feature = "storage-sqlite")]
+impl TryFrom<StorageConfig> for SqliteStorage {
+    type Error = errors::Error;
+
+    fn try_from(config: StorageConfig) -> Result<Self> {
+        match config {
             #[cfg(feature = "storage-sqlite")]
             StorageConfig::OnDisk {
                 taskdb_dir,
                 create_if_missing,
                 access_mode,
-            } => Box::new(SqliteStorage::new(
-                taskdb_dir,
-                access_mode,
-                create_if_missing,
-            )?),
-            StorageConfig::InMemory => Box::new(InMemoryStorage::new()),
-        })
+            } => SqliteStorage::new(taskdb_dir, access_mode, create_if_missing),
+            StorageConfig::InMemory => Err(errors::Error::Other(anyhow!(
+                "Cannot create SqliteStorage from InMemory config"
+            ))),
+        }
+    }
+}
+
+impl TryFrom<StorageConfig> for InMemoryStorage {
+    type Error = errors::Error;
+
+    fn try_from(config: StorageConfig) -> Result<Self> {
+        match config {
+            StorageConfig::InMemory => Ok(InMemoryStorage::new()),
+            #[cfg(feature = "storage-sqlite")]
+            StorageConfig::OnDisk { .. } => Err(errors::Error::Other(anyhow!(
+                "Cannot create InMemoryStorage from OnDisk config"
+            ))),
+        }
+    }
+}
+
+impl<S> TryFrom<StorageConfig> for Replica<S>
+where
+    S: Storage + TryFrom<StorageConfig>,
+    errors::Error: From<S::Error>,
+{
+    type Error = errors::Error;
+
+    fn try_from(config: StorageConfig) -> Result<Self> {
+        let storage = config.try_into()?;
+        Ok(Replica::new(storage))
     }
 }

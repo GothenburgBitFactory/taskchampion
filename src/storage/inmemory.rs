@@ -233,7 +233,7 @@ impl StorageTxn for Txn<'_> {
 /// InMemoryStorage is a simple in-memory task storage implementation.  It is not useful for
 /// production data, but is useful for testing purposes.
 #[derive(PartialEq, Debug, Clone)]
-pub(super) struct InMemoryStorage {
+pub struct InMemoryStorage {
     data: Data,
 }
 
@@ -251,11 +251,14 @@ impl InMemoryStorage {
 }
 
 impl Storage for InMemoryStorage {
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
-        Ok(Box::new(Txn {
+    fn txn<F, R>(&mut self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>,
+    {
+        f(&mut Txn {
             storage: self,
             new_data: None,
-        }))
+        })
     }
 }
 
