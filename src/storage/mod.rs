@@ -11,6 +11,7 @@ traits defined here and pass the result to [`Replica`](crate::Replica).
 
 use crate::errors::Result;
 use crate::operation::Operation;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -22,9 +23,14 @@ mod config;
 #[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
+#[cfg(feature = "storage-sqlite")]
+pub use sqlite::SqliteStorage;
+
 pub use config::{AccessMode, StorageConfig};
 
 mod inmemory;
+
+pub use inmemory::InMemoryStorage;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
@@ -149,7 +155,11 @@ pub trait StorageTxn {
 
 /// A trait for objects able to act as task storage.  Most of the interesting behavior is in the
 /// [`crate::storage::StorageTxn`] trait.
-pub trait Storage {
-    /// Begin a transaction
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>>;
+#[async_trait]
+pub trait Storage: Send + Sync {
+    /// Begin an async transaction
+    async fn txn<F, R>(&self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
+        R: Send + 'static;
 }

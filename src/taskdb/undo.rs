@@ -116,17 +116,18 @@ pub(crate) fn commit_reversed_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::InMemoryStorage;
+    use crate::storage::Storage;
     use crate::{storage::taskmap_with, taskdb::TaskDb};
     use crate::{Operation, Operations, StorageConfig};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
-    #[test]
+    #[tokio::test]
     #[allow(clippy::vec_init_then_push)]
-    fn test_apply_create() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
-        let mut db = TaskDb::new();
+    async fn test_apply_create() -> Result<()> {
+        let storage: InMemoryStorage = StorageConfig::InMemory.try_into().unwrap();
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         let timestamp = Utc::now();
@@ -157,94 +158,94 @@ mod tests {
             old_value: Some("v2".into()),
             timestamp,
         });
-        let mut txn = storage.txn()?;
-        db.commit_operations(txn.as_mut(), ops, |_| false)?;
+        storage
+            .txn(move |txn| {
+                TaskDb::commit_operations(txn, ops, |_| false)?;
 
-        let db_state = db.sorted_tasks(txn.as_mut());
+                let db_state = TaskDb::sorted_tasks(txn);
 
-        let mut ops = Operations::new();
-        ops.push(Operation::UndoPoint);
-        ops.push(Operation::Delete {
-            uuid: uuid1,
-            old_task: [("prop".to_string(), "v1".to_string())].into(),
-        });
-        ops.push(Operation::Update {
-            uuid: uuid2,
-            property: "prop".into(),
-            value: None,
-            old_value: Some("v2".into()),
-            timestamp,
-        });
-        ops.push(Operation::Update {
-            uuid: uuid2,
-            property: "prop2".into(),
-            value: Some("new-value".into()),
-            old_value: Some("v3".into()),
-            timestamp,
-        });
-        db.commit_operations(txn.as_mut(), ops, |_| false)?;
+                let mut ops = Operations::new();
+                ops.push(Operation::UndoPoint);
+                ops.push(Operation::Delete {
+                    uuid: uuid1,
+                    old_task: [("prop".to_string(), "v1".to_string())].into(),
+                });
+                ops.push(Operation::Update {
+                    uuid: uuid2,
+                    property: "prop".into(),
+                    value: None,
+                    old_value: Some("v2".into()),
+                    timestamp,
+                });
+                ops.push(Operation::Update {
+                    uuid: uuid2,
+                    property: "prop2".into(),
+                    value: Some("new-value".into()),
+                    old_value: Some("v3".into()),
+                    timestamp,
+                });
+                TaskDb::commit_operations(txn, ops, |_| false)?;
 
-        assert_eq!(
-            db.operations(txn.as_mut()).len(),
-            9,
-            "{:#?}",
-            db.operations(txn.as_mut())
-        );
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    9,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
 
-        let undo_ops = get_undo_operations(txn.as_mut())?;
-        assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
-        assert_eq!(&undo_ops[..], &db.operations(txn.as_mut())[5..]);
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
+                assert_eq!(&undo_ops[..], &TaskDb::operations(txn)[5..]);
 
-        // Try committing the wrong set of ops.
-        assert!(!commit_reversed_operations(
-            txn.as_mut(),
-            undo_ops[1..=2].to_vec(),
-        )?);
+                // Try committing the wrong set of ops.
+                assert!(!commit_reversed_operations(txn, undo_ops[1..=2].to_vec(),)?);
 
-        assert!(commit_reversed_operations(txn.as_mut(), undo_ops)?);
+                assert!(commit_reversed_operations(txn, undo_ops)?);
 
-        // Note that we've subtracted the length of undo_ops.
-        assert_eq!(
-            db.operations(txn.as_mut()).len(),
-            5,
-            "{:#?}",
-            db.operations(txn.as_mut())
-        );
-        assert_eq!(
-            db.sorted_tasks(txn.as_mut()),
-            db_state,
-            "{:#?}",
-            db.sorted_tasks(txn.as_mut())
-        );
+                // Note that we've subtracted the length of undo_ops.
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    5,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
+                assert_eq!(
+                    TaskDb::sorted_tasks(txn),
+                    db_state,
+                    "{:#?}",
+                    TaskDb::sorted_tasks(txn)
+                );
 
-        // Note that the number of undo operations is equal to the number of operations in the
-        // database here because there are no UndoPoints.
-        let undo_ops = get_undo_operations(txn.as_mut())?;
-        assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
+                // Note that the number of undo operations is equal to the number of operations in the
+                // database here because there are no UndoPoints.
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
 
-        assert!(commit_reversed_operations(txn.as_mut(), undo_ops)?);
+                assert!(commit_reversed_operations(txn, undo_ops)?);
 
-        // empty db
-        assert_eq!(
-            db.operations(txn.as_mut()).len(),
-            0,
-            "{:#?}",
-            db.operations(txn.as_mut())
-        );
-        assert_eq!(
-            db.sorted_tasks(txn.as_mut()),
-            vec![],
-            "{:#?}",
-            db.sorted_tasks(txn.as_mut())
-        );
+                // empty db
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    0,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
+                assert_eq!(
+                    TaskDb::sorted_tasks(txn),
+                    vec![],
+                    "{:#?}",
+                    TaskDb::sorted_tasks(txn)
+                );
 
-        let undo_ops = get_undo_operations(txn.as_mut())?;
-        assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
 
-        // nothing left to undo, so commit_undo_ops() returns false
-        assert!(!commit_reversed_operations(txn.as_mut(), undo_ops)?);
+                // nothing left to undo, so commit_undo_ops() returns false
+                assert!(!commit_reversed_operations(txn, undo_ops)?);
 
-        Ok(())
+                Ok(())
+            })
+            .await
     }
 
     #[test]
