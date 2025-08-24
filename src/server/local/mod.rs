@@ -23,7 +23,7 @@ pub(crate) struct LocalServer {
 }
 
 impl LocalServer {
-    fn txn(&mut self) -> Result<rusqlite::Transaction> {
+    fn txn(&'_ mut self) -> Result<rusqlite::Transaction<'_>> {
         let txn = self.con.transaction()?;
         Ok(txn)
     }
