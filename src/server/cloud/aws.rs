@@ -387,19 +387,32 @@ mod tests {
     /// Note that the Rust test runner will still show "ok" for the test, as there is no way to
     /// indicate anything else.
     fn make_service() -> Option<AwsService> {
+        let fail_if_not_set = std::env::var("AWS_FAIL_IF_NOT_SET").is_ok();
         let Ok(region) = std::env::var("AWS_TEST_REGION") else {
+            if fail_if_not_set {
+                panic!("AWS_TEST_REGION not set");
+            }
             return None;
         };
 
         let Ok(bucket) = std::env::var("AWS_TEST_BUCKET") else {
+            if fail_if_not_set {
+                panic!("AWS_TEST_BUCKET not set");
+            }
             return None;
         };
 
         let Ok(access_key_id) = std::env::var("AWS_TEST_ACCESS_KEY_ID") else {
+            if fail_if_not_set {
+                panic!("AWS_TEST_ACCESS_KEY_ID not set");
+            }
             return None;
         };
 
         let Ok(secret_access_key) = std::env::var("AWS_TEST_SECRET_ACCESS_KEY") else {
+            if fail_if_not_set {
+                panic!("AWS_TEST_SECRET_ACCESS_KEY not set");
+            }
             return None;
         };
 
