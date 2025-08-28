@@ -19,6 +19,7 @@ jobs:
           - "server-gcp"
           - "server-aws"
           - "tls-native-roots"
+          - "bundled"
 
     name: "taskchampion ${{ matrix.features == '' && 'with no features' || format('with features {0}', matrix.features) }}"
     runs-on: ubuntu-latest
