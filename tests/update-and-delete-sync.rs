@@ -1,5 +1,5 @@
 use taskchampion::chrono::{TimeZone, Utc};
-use taskchampion::{Operations, Replica, ServerConfig, Status, StorageConfig, Uuid};
+use taskchampion::{storage::InMemoryStorage, Operations, Replica, ServerConfig, Status, Uuid};
 use tempfile::TempDir;
 
 #[test]
@@ -20,8 +20,8 @@ fn update_and_delete_sync_update_first() -> anyhow::Result<()> {
 #[cfg(feature = "server-local")]
 fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     // set up two replicas, and demonstrate replication between them
-    let mut rep1 = Replica::new(StorageConfig::InMemory.into_storage()?);
-    let mut rep2 = Replica::new(StorageConfig::InMemory.into_storage()?);
+    let mut rep1 = Replica::new(InMemoryStorage::new());
+    let mut rep2 = Replica::new(InMemoryStorage::new());
 
     let tmp_dir = TempDir::new().expect("TempDir failed");
     let mut server = ServerConfig::Local {

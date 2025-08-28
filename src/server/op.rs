@@ -177,9 +177,10 @@ impl SyncOp {
 mod test {
     use super::*;
     use crate::errors::Result;
-    use crate::storage::TaskMap;
+    use crate::storage::InMemoryStorage;
+    use crate::storage::{Storage, TaskMap};
     use crate::taskdb::TaskDb;
-    use crate::{Operations, StorageConfig};
+    use crate::Operations;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
@@ -268,7 +269,7 @@ mod test {
 
         // check that the two operation sequences have the same effect, enforcing the invariant of
         // the transform function.
-        let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage1 = InMemoryStorage::new();
         let mut db = TaskDb::new();
         let mut ops1 = Operations::new();
         if let Some(o) = setup.clone() {
@@ -278,10 +279,11 @@ mod test {
         if let Some(o) = o2p {
             ops1.push(o.into_op());
         }
-        db.commit_operations(storage1.txn()?.as_mut(), ops1, |_| false)
+        storage1
+            .txn(|txn| db.commit_operations(txn, ops1, |_| false))
             .unwrap();
 
-        let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage2 = InMemoryStorage::new();
         let mut ops2 = Operations::new();
         if let Some(o) = setup {
             ops2.push(o.into_op());
@@ -290,13 +292,13 @@ mod test {
         if let Some(o) = o1p {
             ops2.push(o.into_op());
         }
-        db.commit_operations(storage2.txn()?.as_mut(), ops2, |_| false)
+        storage2
+            .txn(|txn| db.commit_operations(txn, ops2, |_| false))
             .unwrap();
 
-        assert_eq!(
-            db.sorted_tasks(storage1.txn()?.as_mut()),
-            db.sorted_tasks(storage2.txn()?.as_mut())
-        );
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        assert_eq!(tasks1, tasks2);
 
         Ok(())
     }
@@ -444,8 +446,8 @@ mod test {
 
             let mut ops1 = Operations::new();
             let mut ops2 = Operations::new();
-            let mut storage1 = StorageConfig::InMemory.into_storage().unwrap();
-            let mut storage2 = StorageConfig::InMemory.into_storage().unwrap();
+            let mut storage1 = InMemoryStorage::new();
+            let mut storage2 = InMemoryStorage::new();
             let mut db = TaskDb::new();
 
             // Ensure that any expected tasks already exist
@@ -469,10 +471,12 @@ mod test {
                 ops2.push(o1p.into_op());
             }
 
-            db.commit_operations(storage1.txn()?.as_mut(), ops1, |_| false).unwrap();
-            db.commit_operations(storage2.txn()?.as_mut(), ops2, |_| false).unwrap();
+            storage1.txn(|txn| db.commit_operations(txn, ops1, |_| false)).unwrap();
+            storage2.txn(|txn| db.commit_operations(txn, ops2, |_| false)).unwrap();
 
-            assert_eq!(db.sorted_tasks(storage1.txn()?.as_mut()), db.sorted_tasks(storage2.txn()?.as_mut()));
+            let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn))).unwrap();
+            let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn))).unwrap();
+            assert_eq!(tasks1, tasks2);
         }
     }
 

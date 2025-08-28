@@ -18,7 +18,6 @@ Replicas are accessed using the [`Replica`] type.
 # Task Storage
 
 Replicas access the task database via a [storage object](crate::storage::Storage).
-Create a storage object with [`StorageConfig`].
 
 The [`storage`] module supports pluggable storage for a replica's data.
 An implementation is provided, but users of this crate can provide their own implementation as well.
@@ -36,7 +35,7 @@ Several server implementations are included, and users can define their own impl
 ```rust
 # #[cfg(feature = "storage-sqlite")]
 # {
-# use taskchampion::{storage::AccessMode, ServerConfig, Replica, StorageConfig};
+# use taskchampion::{storage::AccessMode, ServerConfig, Replica, storage::InMemoryStorage};
 # use tempfile::TempDir;
 # fn main() -> anyhow::Result<()> {
 # let taskdb_dir = TempDir::new()?;
@@ -44,12 +43,8 @@ Several server implementations are included, and users can define their own impl
 # let server_dir = TempDir::new()?;
 # let server_dir = server_dir.path().to_path_buf();
 // Create a new Replica, storing data on disk.
-let storage = StorageConfig::OnDisk {
-  taskdb_dir,
-  create_if_missing: true,
-  access_mode: AccessMode::ReadWrite,
-}.into_storage()?;
-let mut replica = Replica::new(storage);
+let storage = InMemoryStorage::new();
+let mut replica: Replica<InMemoryStorage> = Replica::new(storage);
 
 // Set up a local, on-disk server.
 let server_config = ServerConfig::Local { server_dir };

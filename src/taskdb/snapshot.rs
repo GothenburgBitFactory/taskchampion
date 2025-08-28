@@ -111,7 +111,7 @@ pub(super) fn apply_snapshot(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{storage::TaskMap, StorageConfig};
+    use crate::storage::{InMemoryStorage, Storage, TaskMap};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -137,7 +137,7 @@ mod test {
 
     #[test]
     fn test_round_trip() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         let version = Uuid::new_v4();
 
         let task1 = (
@@ -153,36 +153,30 @@ mod test {
                 .collect::<TaskMap>(),
         );
 
-        {
-            let mut txn = storage.txn()?;
+        storage.txn(|txn| {
             txn.set_task(task1.0, task1.1.clone())?;
             txn.set_task(task2.0, task2.1.clone())?;
-            txn.commit()?;
-        }
+            txn.commit()
+        })?;
 
-        let snap = {
-            let mut txn = storage.txn()?;
-            make_snapshot(txn.as_mut())?
-        };
+        let snap = storage.txn(|txn| make_snapshot(txn))?;
 
         // apply that snapshot to a fresh bit of fake
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
-        {
-            let mut txn = storage.txn()?;
-            apply_snapshot(txn.as_mut(), version, &snap)?;
-            txn.commit()?
-        }
+        let mut storage = InMemoryStorage::new();
 
-        {
-            let mut txn = storage.txn()?;
+        storage.txn(|txn| {
+            apply_snapshot(txn, version, &snap)?;
+            txn.commit()
+        })?;
+
+        storage.txn(|txn| {
             assert_eq!(txn.get_task(task1.0)?, Some(task1.1));
             assert_eq!(txn.get_task(task2.0)?, Some(task2.1));
             assert_eq!(txn.all_tasks()?.len(), 2);
             assert_eq!(txn.base_version()?, version);
             assert_eq!(txn.unsynced_operations()?.len(), 0);
             assert_eq!(txn.get_working_set()?.len(), 1);
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 }
