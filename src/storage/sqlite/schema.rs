@@ -23,7 +23,10 @@ type UpgradeFn = fn(&Transaction) -> Result<()>;
 ///
 /// Add new vesions here, in order. Prefer minor version bumps for better compatibility, using
 /// techniques like virtual columns where possible.
-const VERSIONS: &[(DbVersion, UpgradeFn)] = &[(DbVersion(0, 1), upgrade_to_0_1)];
+const VERSIONS: &[(DbVersion, UpgradeFn)] = &[
+    (DbVersion(0, 1), upgrade_to_0_1),
+    (DbVersion(0, 2), upgrade_to_0_2),
+];
 pub(super) const LATEST_VERSION: DbVersion = VERSIONS[VERSIONS.len() - 1].0;
 
 pub(super) fn upgrade_db(con: &mut Connection) -> Result<()> {
@@ -99,6 +102,34 @@ fn upgrade_to_0_1(t: &Transaction) -> Result<()> {
     create_version_table(t)?;
 
     set_db_version(t, DbVersion(0, 1))?;
+
+    Ok(())
+}
+
+/// Update to DbVersion(0, 2).
+///
+/// This fixes some bad syntax in the schema in DbVersion(0, 1) -- use of double quotes in the
+/// JSON paths passed to `json_extract`. This syntax works with SQLite 3.45.1 but not 3.50.4, but
+/// is invalid per the grammar in both versions.
+fn upgrade_to_0_2(t: &Transaction) -> Result<()> {
+    // Fix the `operations.uuid` column. Note that this column is virtual and
+    // thus contains no data, so dropping it is not a lossy operation.
+    t.execute(r#"DROP INDEX operations_by_uuid"#, [])
+        .context("Dropping index operatoins_by_uuid")?;
+    t.execute(r#"ALTER TABLE operations DROP COLUMN uuid"#, [])
+        .context("Removing incorrect operations.uuid")?;
+    t.execute(
+        r#"ALTER TABLE operations ADD COLUMN uuid GENERATED ALWAYS AS (
+                coalesce(json_extract(data, '$.Update.uuid'),
+                         json_extract(data, '$.Create.uuid'),
+                         json_extract(data, '$.Delete.uuid'))) VIRTUAL"#,
+        [],
+    )
+    .context("Creating correct operations.uuid")?;
+    t.execute("CREATE INDEX operations_by_uuid ON operations (uuid)", [])
+        .context("Creating index operations_by_uuid")?;
+
+    set_db_version(t, DbVersion(0, 2))?;
 
     Ok(())
 }
@@ -231,6 +262,31 @@ mod test {
             assert!(has_column(&t, "working_set", "uuid")?);
         }
         assert_eq!(get_db_version(&mut con)?, DbVersion(0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_upgrade_to_0_2() -> Result<()> {
+        let mut con = Connection::open_in_memory()?;
+        {
+            let t = con.transaction()?;
+            upgrade_to_0_1(&t)?;
+            upgrade_to_0_2(&t)?;
+            t.commit()?;
+        }
+        {
+            let t = con.transaction()?;
+            assert!(has_column(&t, "operations", "id")?);
+            assert!(has_column(&t, "operations", "data")?);
+            assert!(has_column(&t, "operations", "uuid")?);
+            assert!(has_column(&t, "sync_meta", "key")?);
+            assert!(has_column(&t, "sync_meta", "value")?);
+            assert!(has_column(&t, "tasks", "uuid")?);
+            assert!(has_column(&t, "tasks", "data")?);
+            assert!(has_column(&t, "working_set", "id")?);
+            assert!(has_column(&t, "working_set", "uuid")?);
+        }
+        assert_eq!(get_db_version(&mut con)?, DbVersion(0, 2));
         Ok(())
     }
 }
