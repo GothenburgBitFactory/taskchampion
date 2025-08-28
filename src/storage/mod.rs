@@ -10,6 +10,7 @@ traits defined here and pass the result to [`Replica`](crate::Replica).
 
 use crate::errors::Result;
 use crate::operation::Operation;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -153,9 +154,11 @@ pub trait StorageTxn {
 
 /// A trait for objects able to act as task storage.  Most of the interesting behavior is in the
 /// [`crate::storage::StorageTxn`] trait.
-pub trait Storage {
-    /// Begin a transaction
-    fn txn<F, R>(&mut self, f: F) -> Result<R>
+#[async_trait]
+pub trait Storage: Send + Sync {
+    /// Begin an async transaction
+    async fn txn<F, R>(&self, f: F) -> Result<R>
     where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>;
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
+        R: Send + 'static;
 }
