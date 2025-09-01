@@ -546,16 +546,11 @@ impl Task {
         self.set_value(key, None, ops)
     }
 
-    // -- utility functions
-
-    fn is_known_key(key: &str) -> bool {
-        Prop::from_str(key).is_ok()
-            || key.starts_with("tag_")
-            || key.starts_with("annotation_")
-            || key.starts_with("dep_")
-    }
-
-    fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
+    /// Get the given timestamp property.
+    ///
+    /// This will return `None` if the property is not set, or if it is not a valid
+    /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
+    pub fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
         if let Some(ts) = self.data.get(property) {
             if let Ok(ts) = ts.parse() {
                 return Some(utc_timestamp(ts));
@@ -565,13 +560,23 @@ impl Task {
         None
     }
 
-    fn set_timestamp(
+    /// Set the given timestamp property, mapping the value correctly.
+    pub fn set_timestamp(
         &mut self,
         property: &str,
         value: Option<Timestamp>,
         ops: &mut Operations,
     ) -> Result<()> {
         self.set_value(property, value.map(|v| v.timestamp().to_string()), ops)
+    }
+
+    // -- utility functions
+
+    fn is_known_key(key: &str) -> bool {
+        Prop::from_str(key).is_ok()
+            || key.starts_with("tag_")
+            || key.starts_with("annotation_")
+            || key.starts_with("dep_")
     }
 }
 
