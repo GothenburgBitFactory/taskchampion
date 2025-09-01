@@ -546,6 +546,10 @@ impl Task {
         self.set_value(key, None, ops)
     }
 
+    /// Get the given timestamp property.
+    ///
+    /// This will return `None` if the property is not set, or if it is not a valid
+    /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
     pub fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
         if let Some(ts) = self.data.get(property) {
             if let Ok(ts) = ts.parse() {
@@ -556,6 +560,7 @@ impl Task {
         None
     }
 
+    /// Set the given timestamp property, mapping the value correctly.
     pub fn set_timestamp(
         &mut self,
         property: &str,
