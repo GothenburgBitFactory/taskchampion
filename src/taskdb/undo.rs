@@ -124,11 +124,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
-    #[test]
+    #[tokio::test]
     #[allow(clippy::vec_init_then_push)]
-    fn test_apply_create() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
-        let mut db = TaskDb::new();
+    async fn test_apply_create() -> Result<()> {
+        let storage = InMemoryStorage::new();
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         let timestamp = Utc::now();
@@ -159,72 +158,94 @@ mod tests {
             old_value: Some("v2".into()),
             timestamp,
         });
-        storage.txn(|txn| {
-            db.commit_operations(txn, ops, |_| false)?;
+        storage
+            .txn(move |txn| {
+                TaskDb::commit_operations(txn, ops, |_| false)?;
 
-            let db_state = db.sorted_tasks(txn);
+                let db_state = TaskDb::sorted_tasks(txn);
 
-            let mut ops = Operations::new();
-            ops.push(Operation::UndoPoint);
-            ops.push(Operation::Delete {
-                uuid: uuid1,
-                old_task: [("prop".to_string(), "v1".to_string())].into(),
-            });
-            ops.push(Operation::Update {
-                uuid: uuid2,
-                property: "prop".into(),
-                value: None,
-                old_value: Some("v2".into()),
-                timestamp,
-            });
-            ops.push(Operation::Update {
-                uuid: uuid2,
-                property: "prop2".into(),
-                value: Some("new-value".into()),
-                old_value: Some("v3".into()),
-                timestamp,
-            });
-            db.commit_operations(txn, ops, |_| false)?;
+                let mut ops = Operations::new();
+                ops.push(Operation::UndoPoint);
+                ops.push(Operation::Delete {
+                    uuid: uuid1,
+                    old_task: [("prop".to_string(), "v1".to_string())].into(),
+                });
+                ops.push(Operation::Update {
+                    uuid: uuid2,
+                    property: "prop".into(),
+                    value: None,
+                    old_value: Some("v2".into()),
+                    timestamp,
+                });
+                ops.push(Operation::Update {
+                    uuid: uuid2,
+                    property: "prop2".into(),
+                    value: Some("new-value".into()),
+                    old_value: Some("v3".into()),
+                    timestamp,
+                });
+                TaskDb::commit_operations(txn, ops, |_| false)?;
 
-            assert_eq!(db.operations(txn).len(), 9, "{:#?}", db.operations(txn));
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    9,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
 
-            let undo_ops = get_undo_operations(txn)?;
-            assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
-            assert_eq!(&undo_ops[..], &db.operations(txn)[5..]);
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
+                assert_eq!(&undo_ops[..], &TaskDb::operations(txn)[5..]);
 
-            // Try committing the wrong set of ops.
-            assert!(!commit_reversed_operations(txn, undo_ops[1..=2].to_vec(),)?);
+                // Try committing the wrong set of ops.
+                assert!(!commit_reversed_operations(txn, undo_ops[1..=2].to_vec(),)?);
 
-            assert!(commit_reversed_operations(txn, undo_ops)?);
+                assert!(commit_reversed_operations(txn, undo_ops)?);
 
-            // Note that we've subtracted the length of undo_ops.
-            assert_eq!(db.operations(txn).len(), 5, "{:#?}", db.operations(txn));
-            assert_eq!(
-                db.sorted_tasks(txn),
-                db_state,
-                "{:#?}",
-                db.sorted_tasks(txn)
-            );
+                // Note that we've subtracted the length of undo_ops.
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    5,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
+                assert_eq!(
+                    TaskDb::sorted_tasks(txn),
+                    db_state,
+                    "{:#?}",
+                    TaskDb::sorted_tasks(txn)
+                );
 
-            // Note that the number of undo operations is equal to the number of operations in the
-            // database here because there are no UndoPoints.
-            let undo_ops = get_undo_operations(txn)?;
-            assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
+                // Note that the number of undo operations is equal to the number of operations in the
+                // database here because there are no UndoPoints.
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
 
-            assert!(commit_reversed_operations(txn, undo_ops)?);
+                assert!(commit_reversed_operations(txn, undo_ops)?);
 
-            // empty db
-            assert_eq!(db.operations(txn).len(), 0, "{:#?}", db.operations(txn));
-            assert_eq!(db.sorted_tasks(txn), vec![], "{:#?}", db.sorted_tasks(txn));
+                // empty db
+                assert_eq!(
+                    TaskDb::operations(txn).len(),
+                    0,
+                    "{:#?}",
+                    TaskDb::operations(txn)
+                );
+                assert_eq!(
+                    TaskDb::sorted_tasks(txn),
+                    vec![],
+                    "{:#?}",
+                    TaskDb::sorted_tasks(txn)
+                );
 
-            let undo_ops = get_undo_operations(txn)?;
-            assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
+                let undo_ops = get_undo_operations(txn)?;
+                assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
 
-            // nothing left to undo, so commit_undo_ops() returns false
-            assert!(!commit_reversed_operations(txn, undo_ops)?);
+                // nothing left to undo, so commit_undo_ops() returns false
+                assert!(!commit_reversed_operations(txn, undo_ops)?);
 
-            Ok(())
-        })
+                Ok(())
+            })
+            .await
     }
 
     #[test]

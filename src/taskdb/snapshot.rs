@@ -135,9 +135,9 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_round_trip() -> Result<()> {
-        let mut storage = InMemoryStorage::new();
+    #[tokio::test]
+    async fn test_round_trip() -> Result<()> {
+        let storage = InMemoryStorage::new();
         let version = Uuid::new_v4();
 
         let task1 = (
@@ -153,30 +153,40 @@ mod test {
                 .collect::<TaskMap>(),
         );
 
-        storage.txn(|txn| {
-            txn.set_task(task1.0, task1.1.clone())?;
-            txn.set_task(task2.0, task2.1.clone())?;
-            txn.commit()
-        })?;
+        let task1_clone = task1.clone();
+        let task2_clone = task2.clone();
+        storage
+            .txn(move |txn| {
+                txn.set_task(task1_clone.0, task1_clone.1.clone())?;
+                txn.set_task(task2_clone.0, task2_clone.1.clone())?;
+                txn.commit()
+            })
+            .await?;
 
-        let snap = storage.txn(|txn| make_snapshot(txn))?;
+        let snap = storage.txn(|txn| make_snapshot(txn)).await?;
 
         // apply that snapshot to a fresh bit of fake
-        let mut storage = InMemoryStorage::new();
+        let storage = InMemoryStorage::new();
 
-        storage.txn(|txn| {
-            apply_snapshot(txn, version, &snap)?;
-            txn.commit()
-        })?;
+        storage
+            .txn(move |txn| {
+                apply_snapshot(txn, version, &snap)?;
+                txn.commit()
+            })
+            .await?;
 
-        storage.txn(|txn| {
-            assert_eq!(txn.get_task(task1.0)?, Some(task1.1));
-            assert_eq!(txn.get_task(task2.0)?, Some(task2.1));
-            assert_eq!(txn.all_tasks()?.len(), 2);
-            assert_eq!(txn.base_version()?, version);
-            assert_eq!(txn.unsynced_operations()?.len(), 0);
-            assert_eq!(txn.get_working_set()?.len(), 1);
-            Ok(())
-        })
+        let task1_clone = task1.clone();
+        let task2_clone = task2.clone();
+        storage
+            .txn(move |txn| {
+                assert_eq!(txn.get_task(task1_clone.0)?, Some(task1_clone.1));
+                assert_eq!(txn.get_task(task2_clone.0)?, Some(task2_clone.1));
+                assert_eq!(txn.all_tasks()?.len(), 2);
+                assert_eq!(txn.base_version()?, version);
+                assert_eq!(txn.unsynced_operations()?.len(), 0);
+                assert_eq!(txn.get_working_set()?.len(), 1);
+                Ok(())
+            })
+            .await
     }
 }
