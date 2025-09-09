@@ -88,3 +88,18 @@ jobs:
 
       - name: test
         run: cargo test
+
+  build-wasm:
+    name: Build for WASM
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Build for wasm32
+      run: cargo build --target wasm32-unknown-unknown --no-default-features --features "storage-inmemory"

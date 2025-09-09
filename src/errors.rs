@@ -74,11 +74,10 @@ impl From<ureq::Error> for Error {
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server-sync"))]
 mod test {
     use super::*;
 
-    #[cfg(feature = "server-sync")]
     #[test]
     fn ureq_error_status() {
         let err = ureq::Error::Status(
