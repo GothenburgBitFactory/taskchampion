@@ -19,7 +19,9 @@ pub use depmap::DependencyMap;
 pub use errors::Error;
 pub use operation::{Operation, Operations};
 pub use replica::Replica;
-pub use server::{Server, ServerConfig};
+pub use server::Server;
+#[cfg(feature = "sync-api")]
+pub use server::ServerConfig;
 pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
 pub use workingset::WorkingSet;
 

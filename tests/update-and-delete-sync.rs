@@ -1,15 +1,15 @@
+#![cfg(feature = "server-local")]
+
 use taskchampion::chrono::{TimeZone, Utc};
 use taskchampion::{storage::InMemoryStorage, Operations, Replica, ServerConfig, Status, Uuid};
 use tempfile::TempDir;
 
 #[tokio::test]
-#[cfg(feature = "server-local")]
 async fn update_and_delete_sync_delete_first() -> anyhow::Result<()> {
     update_and_delete_sync(true).await
 }
 
 #[tokio::test]
-#[cfg(feature = "server-local")]
 async fn update_and_delete_sync_update_first() -> anyhow::Result<()> {
     update_and_delete_sync(false).await
 }
@@ -17,7 +17,6 @@ async fn update_and_delete_sync_update_first() -> anyhow::Result<()> {
 /// Test what happens when an update is sync'd into a repo after a task is deleted.
 /// If delete_first, then the deletion is sync'd to the server first; otherwise
 /// the update is sync'd first.  Either way, the task is gone.
-#[cfg(feature = "server-local")]
 async fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     // set up two replicas, and demonstrate replication between them
     let mut rep1 = Replica::new(InMemoryStorage::new());
