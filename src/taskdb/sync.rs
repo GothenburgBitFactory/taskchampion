@@ -14,7 +14,7 @@ struct Version {
 
 /// Sync to the given server, pulling remote changes and pushing local changes.
 pub(super) fn sync(
-    server: &mut dyn Server,
+    server: &mut Box<dyn Server>,
     txn: &mut dyn StorageTxn,
     avoid_snapshots: bool,
 ) -> Result<()> {
@@ -235,33 +235,16 @@ mod test {
         assert_eq!(got, exp);
     }
 
-    #[tokio::test]
-    async fn test_sync() -> Result<()> {
-        let server = TestServer::new();
+    #[test]
+    fn test_sync() -> Result<()> {
+        let mut db = TaskDb::new();
+        let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let storage1 = InMemoryStorage::new();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let storage2 = InMemoryStorage::new();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // make some changes in parallel to db1 and db2..
         let uuid1 = Uuid::new_v4();
@@ -285,47 +268,14 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
         // now make updates to the same task on both sides
@@ -338,9 +288,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         let mut ops = Operations::new();
         let now3 = now2 + chrono::Duration::seconds(1);
@@ -351,55 +299,20 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
-        for (dbnum, storage) in [(1, &storage1), (2, &storage2)] {
+        for (dbnum, storage) in [(1, &mut storage1), (2, &mut storage2)] {
             eprintln!("checking db{dbnum}");
             expect_operations(
-                storage
-                    .txn(move |txn| TaskDb::get_task_operations(txn, uuid1))
-                    .await?,
+                storage.txn(|txn| db.get_task_operations(txn, uuid1))?,
                 vec![
                     Operation::Create { uuid: uuid1 },
                     Operation::Update {
@@ -412,9 +325,7 @@ mod test {
                 ],
             );
             expect_operations(
-                storage
-                    .txn(move |txn| TaskDb::get_task_operations(txn, uuid2))
-                    .await?,
+                storage.txn(|txn| db.get_task_operations(txn, uuid2))?,
                 vec![
                     Operation::Create { uuid: uuid2 },
                     Operation::Update {
@@ -445,33 +356,16 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_create_delete() -> Result<()> {
-        let server = TestServer::new();
+    #[test]
+    fn test_sync_create_delete() -> Result<()> {
+        let mut db = TaskDb::new();
+        let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let storage1 = InMemoryStorage::new();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let storage2 = InMemoryStorage::new();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // create and update a task..
         let uuid = Uuid::new_v4();
@@ -485,47 +379,14 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
         // delete and re-create the task on db1
@@ -543,9 +404,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
@@ -557,54 +416,19 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        storage2
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage2.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
         // This is a case where the task operations appear different on the replicas,
         // because the update to "project" on db2 loses to the delete.
         expect_operations(
-            storage1
-                .txn(move |txn| TaskDb::get_task_operations(txn, uuid))
-                .await?,
+            storage1.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Create { uuid },
@@ -629,9 +453,7 @@ mod test {
             ],
         );
         expect_operations(
-            storage2
-                .txn(move |txn| TaskDb::get_task_operations(txn, uuid))
-                .await?,
+            storage2.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Create { uuid },
@@ -667,33 +489,16 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_conflicting_updates() -> Result<()> {
-        let server = TestServer::new();
+    #[test]
+    fn test_sync_conflicting_updates() -> Result<()> {
+        let mut db = TaskDb::new();
+        let mut server: Box<dyn Server> = TestServer::new().server();
 
-        let storage1 = InMemoryStorage::new();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage1 = InMemoryStorage::new();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
-        let storage2 = InMemoryStorage::new();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // create and update a task..
         let uuid = Uuid::new_v4();
@@ -707,47 +512,14 @@ mod test {
             old_value: None,
             timestamp: now1,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and synchronize those around
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
         // add different updates on db1 and db2
@@ -760,9 +532,7 @@ mod test {
             old_value: None,
             timestamp: now2,
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // and on db2, update a property of the task
         let mut ops = Operations::new();
@@ -774,52 +544,17 @@ mod test {
             old_value: None,
             timestamp: now3,
         });
-        storage2
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage2.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
-        let tasks1 = storage1
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
-        let tasks2 = storage2
-            .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-            .await?;
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage2.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        storage1.txn(|txn| sync(&mut server, txn, false)).unwrap();
+        let tasks1 = storage1.txn(|txn| Ok(db.sorted_tasks(txn)))?;
+        let tasks2 = storage2.txn(|txn| Ok(db.sorted_tasks(txn)))?;
         assert_eq!(tasks1, tasks2);
 
         expect_operations(
-            storage1
-                .txn(move |txn| TaskDb::get_task_operations(txn, uuid))
-                .await?,
+            storage1.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Update {
@@ -848,9 +583,7 @@ mod test {
             ],
         );
         expect_operations(
-            storage2
-                .txn(move |txn| TaskDb::get_task_operations(txn, uuid))
-                .await?,
+            storage2.txn(|txn| db.get_task_operations(txn, uuid))?,
             vec![
                 Operation::Create { uuid },
                 Operation::Update {
@@ -872,10 +605,13 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_add_snapshot_start_with_snapshot() -> Result<()> {
-        let server = TestServer::new();
-        let storage1 = InMemoryStorage::new();
+    #[test]
+    fn test_sync_add_snapshot_start_with_snapshot() -> Result<()> {
+        let mut test_server = TestServer::new();
+
+        let mut server: Box<dyn Server> = test_server.server();
+        let mut storage1 = InMemoryStorage::new();
+        let mut db = TaskDb::new();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
@@ -887,29 +623,14 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        server
-            .lock()
-            .unwrap()
-            .set_snapshot_urgency(SnapshotUrgency::High);
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await?;
+        test_server.set_snapshot_urgency(SnapshotUrgency::High);
+        storage1.txn(|txn| sync(&mut server, txn, false))?;
 
         // assert that a snapshot was added
-        let base_version = storage1.txn(move |txn| txn.base_version()).await?;
-        let (v, s) = server
-            .lock()
-            .unwrap()
+        let base_version = storage1.txn(|txn| txn.base_version())?;
+        let (v, s) = test_server
             .snapshot()
             .ok_or_else(|| anyhow::anyhow!("no snapshot"))?;
         assert_eq!(v, base_version);
@@ -926,93 +647,55 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage1
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
-        storage1
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await?;
+        storage1.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
+        storage1.txn(|txn| sync(&mut server, txn, false))?;
 
         // delete the first version, so that db2 *must* initialize from
         // the snapshot
-        server.lock().unwrap().delete_version(Uuid::nil());
+        test_server.delete_version(Uuid::nil());
 
         // sync to a new DB and check that we got the expected results
-        let storage2 = InMemoryStorage::new();
-        storage2
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await?;
+        let mut storage2 = InMemoryStorage::new();
+        storage2.txn(|txn| sync(&mut server, txn, false))?;
 
-        let task = storage2
-            .txn(move |txn| TaskDb::get_task(txn, uuid))
-            .await?
-            .unwrap();
+        let task = storage2.txn(|txn| db.get_task(txn, uuid))?.unwrap();
         assert_eq!(task.get("title").unwrap(), "my first task, updated");
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_avoids_snapshot() -> Result<()> {
-        let storage = InMemoryStorage::new();
-        let server = TestServer::new();
+    #[test]
+    fn test_sync_avoids_snapshot() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
+
+        let test_server = TestServer::new();
+        let mut server: Box<dyn Server> = test_server.server();
 
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
         ops.push(Operation::Create { uuid });
-        storage
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        server
-            .lock()
-            .unwrap()
-            .set_snapshot_urgency(SnapshotUrgency::Low);
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, true)
-                }
-            })
-            .await
-            .unwrap();
+        test_server.set_snapshot_urgency(SnapshotUrgency::Low);
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
 
         // assert that a snapshot was not added, because we indicated
         // we wanted to avoid snapshots and it was only low urgency
-        assert_eq!(server.lock().unwrap().snapshot(), None);
+        assert_eq!(test_server.snapshot(), None);
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_batched() -> Result<()> {
-        let server = TestServer::new();
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_sync_batched() -> Result<()> {
+        let test_server = TestServer::new();
+        let mut storage = InMemoryStorage::new();
 
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+        let mut server: Box<dyn Server> = test_server.server();
+
+        let mut db = TaskDb::new();
+        storage.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
@@ -1025,21 +708,10 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, true)
-                }
-            })
-            .await
-            .unwrap();
-        assert_eq!(server.lock().unwrap().versions_len(), 1);
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
+        assert_eq!(test_server.versions_len(), 1);
 
         // chars are four bytes, but they're only one when converted to a String
         let data = vec!['a'; 400000];
@@ -1055,40 +727,24 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        storage
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
         // this sync batches the operations into two versions.
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, true)
-                }
-            })
-            .await
-            .unwrap();
-        assert_eq!(server.lock().unwrap().versions_len(), 3);
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
+        assert_eq!(test_server.versions_len(), 3);
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sync_batches_at_least_one_op() -> Result<()> {
-        let server = TestServer::new();
-        let storage = InMemoryStorage::new();
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, false)
-                }
-            })
-            .await
-            .unwrap();
+    #[test]
+    fn test_sync_batches_at_least_one_op() -> Result<()> {
+        let test_server = TestServer::new();
+
+        let mut server: Box<dyn Server> = test_server.server();
+
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
+        storage.txn(|txn| sync(&mut server, txn, false)).unwrap();
 
         // add a task to db
         let uuid1 = Uuid::new_v4();
@@ -1101,21 +757,10 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, true)
-                }
-            })
-            .await
-            .unwrap();
-        assert_eq!(server.lock().unwrap().versions_len(), 1);
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
+        assert_eq!(test_server.versions_len(), 1);
 
         // add an operation greater than the batch limit
         let data = vec!['a'; 1000001];
@@ -1127,21 +772,10 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage
-            .txn(move |txn| TaskDb::commit_operations(txn, ops, |_| false))
-            .await?;
+        storage.txn(|txn| db.commit_operations(txn, ops, |_| false))?;
 
-        storage
-            .txn({
-                let server = server.clone();
-                move |txn| {
-                    let mut server_guard = server.lock().unwrap();
-                    sync(&mut *server_guard, txn, true)
-                }
-            })
-            .await
-            .unwrap();
-        assert_eq!(server.lock().unwrap().versions_len(), 2);
+        storage.txn(|txn| sync(&mut server, txn, true)).unwrap();
+        assert_eq!(test_server.versions_len(), 2);
 
         Ok(())
     }

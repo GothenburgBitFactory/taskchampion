@@ -89,18 +89,19 @@ mod test {
     use chrono::Utc;
     use uuid::Uuid;
 
-    #[tokio::test]
-    async fn rebuild_working_set_renumber() -> Result<()> {
-        rebuild_working_set(true).await
+    #[test]
+    fn rebuild_working_set_renumber() -> Result<()> {
+        rebuild_working_set(true)
     }
 
-    #[tokio::test]
-    async fn rebuild_working_set_no_renumber() -> Result<()> {
-        rebuild_working_set(false).await
+    #[test]
+    fn rebuild_working_set_no_renumber() -> Result<()> {
+        rebuild_working_set(false)
     }
 
-    async fn rebuild_working_set(renumber: bool) -> Result<()> {
-        let storage = InMemoryStorage::new();
+    fn rebuild_working_set(renumber: bool) -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
         println!("uuids[0]: {:?} - pending, not in working set", uuids[0]);
@@ -127,58 +128,57 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        storage
-            .txn(move |txn| {
-                TaskDb::commit_operations(txn, ops, |_| false)?;
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, |_| false)?;
 
-                // set the existing working_set as we want it
-                {
-                    txn.clear_working_set()?;
+            // set the existing working_set as we want it
+            {
+                txn.clear_working_set()?;
 
-                    for i in &[1usize, 3, 4] {
-                        txn.add_to_working_set(uuids[*i])?;
-                    }
-
-                    txn.commit()?;
+                for i in &[1usize, 3, 4] {
+                    txn.add_to_working_set(uuids[*i])?;
                 }
 
-                assert_eq!(
-                    TaskDb::working_set(txn)?,
-                    vec![None, Some(uuids[1]), Some(uuids[3]), Some(uuids[4])]
-                );
+                txn.commit()?;
+            }
 
-                rebuild(
-                    txn,
-                    |t| {
-                        if let Some(status) = t.get("status") {
-                            status == "pending"
-                        } else {
-                            false
-                        }
-                    },
-                    renumber,
-                )?;
+            assert_eq!(
+                db.working_set(txn)?,
+                vec![None, Some(uuids[1]), Some(uuids[3]), Some(uuids[4])]
+            );
 
-                let exp = if renumber {
-                    // uuids[1] and uuids[4] are already in the working set, so are compressed
-                    // to the top, and then uuids[0] is added.
-                    vec![None, Some(uuids[1]), Some(uuids[4]), Some(uuids[0])]
-                } else {
-                    // uuids[1] and uuids[4] are already in the working set, at indexes 1 and 3,
-                    // and then uuids[0] is added.
-                    vec![None, Some(uuids[1]), None, Some(uuids[4]), Some(uuids[0])]
-                };
+            rebuild(
+                txn,
+                |t| {
+                    if let Some(status) = t.get("status") {
+                        status == "pending"
+                    } else {
+                        false
+                    }
+                },
+                renumber,
+            )?;
 
-                assert_eq!(TaskDb::working_set(txn)?, exp);
+            let exp = if renumber {
+                // uuids[1] and uuids[4] are already in the working set, so are compressed
+                // to the top, and then uuids[0] is added.
+                vec![None, Some(uuids[1]), Some(uuids[4]), Some(uuids[0])]
+            } else {
+                // uuids[1] and uuids[4] are already in the working set, at indexes 1 and 3,
+                // and then uuids[0] is added.
+                vec![None, Some(uuids[1]), None, Some(uuids[4]), Some(uuids[0])]
+            };
 
-                Ok(())
-            })
-            .await
+            assert_eq!(db.working_set(txn)?, exp);
+
+            Ok(())
+        })
     }
 
-    #[tokio::test]
-    async fn rebuild_working_set_no_change() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn rebuild_working_set_no_change() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
 
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
@@ -200,44 +200,43 @@ mod test {
                 timestamp: Utc::now(),
             });
         }
-        storage
-            .txn(move |txn| {
-                TaskDb::commit_operations(txn, ops, |_| false)?;
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, |_| false)?;
 
-                // set the existing working_set as we want it, containing UUIDs 0 and 1.
-                {
-                    txn.clear_working_set()?;
+            // set the existing working_set as we want it, containing UUIDs 0 and 1.
+            {
+                txn.clear_working_set()?;
 
-                    for i in &[0, 1] {
-                        txn.add_to_working_set(uuids[*i])?;
-                    }
-
-                    txn.commit()?;
+                for i in &[0, 1] {
+                    txn.add_to_working_set(uuids[*i])?;
                 }
-                rebuild(
-                    txn,
-                    |t| {
-                        if let Some(status) = t.get("status") {
-                            status == "pending"
-                        } else {
-                            false
-                        }
-                    },
-                    true,
-                )?;
 
-                assert_eq!(
-                    TaskDb::working_set(txn)?,
-                    vec![None, Some(uuids[0]), Some(uuids[1]), Some(uuids[2])]
-                );
-                Ok(())
-            })
-            .await
+                txn.commit()?;
+            }
+            rebuild(
+                txn,
+                |t| {
+                    if let Some(status) = t.get("status") {
+                        status == "pending"
+                    } else {
+                        false
+                    }
+                },
+                true,
+            )?;
+
+            assert_eq!(
+                db.working_set(txn)?,
+                vec![None, Some(uuids[0]), Some(uuids[1]), Some(uuids[2])]
+            );
+            Ok(())
+        })
     }
 
-    #[tokio::test]
-    async fn rebuild_working_set_shrinks() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn rebuild_working_set_shrinks() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
 
         let mut uuids = vec![];
         uuids.push(Uuid::new_v4());
@@ -259,35 +258,33 @@ mod test {
             old_value: None,
             timestamp: Utc::now(),
         });
-        storage
-            .txn(move |txn| {
-                TaskDb::commit_operations(txn, ops, |_| false)?;
+        storage.txn(|txn| {
+            db.commit_operations(txn, ops, |_| false)?;
 
-                // set the existing working_set as we want it, containing all three UUIDs.
-                {
-                    txn.clear_working_set()?;
+            // set the existing working_set as we want it, containing all three UUIDs.
+            {
+                txn.clear_working_set()?;
 
-                    for uuid in &uuids {
-                        txn.add_to_working_set(*uuid)?;
-                    }
-
-                    txn.commit()?;
+                for uuid in &uuids {
+                    txn.add_to_working_set(*uuid)?;
                 }
-                rebuild(
-                    txn,
-                    |t| {
-                        if let Some(status) = t.get("status") {
-                            status == "pending"
-                        } else {
-                            false
-                        }
-                    },
-                    true,
-                )?;
 
-                assert_eq!(TaskDb::working_set(txn)?, vec![None, Some(uuids[0])]);
-                Ok(())
-            })
-            .await
+                txn.commit()?;
+            }
+            rebuild(
+                txn,
+                |t| {
+                    if let Some(status) = t.get("status") {
+                        status == "pending"
+                    } else {
+                        false
+                    }
+                },
+                true,
+            )?;
+
+            assert_eq!(db.working_set(txn)?, vec![None, Some(uuids[0])]);
+            Ok(())
+        })
     }
 }

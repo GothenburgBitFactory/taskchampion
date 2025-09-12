@@ -3,10 +3,8 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
-use async_trait::async_trait;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -18,14 +16,14 @@ struct Data {
 }
 
 struct Txn<'t> {
-    storage: &'t mut Data,
+    storage: &'t mut InMemoryStorage,
     new_data: Option<Data>,
 }
 
 impl Txn<'_> {
     fn mut_data_ref(&mut self) -> &mut Data {
         if self.new_data.is_none() {
-            self.new_data = Some(self.storage.clone());
+            self.new_data = Some(self.storage.data.clone());
         }
         if let Some(ref mut data) = self.new_data {
             data
@@ -38,7 +36,7 @@ impl Txn<'_> {
         if let Some(ref data) = self.new_data {
             data
         } else {
-            self.storage
+            &self.storage.data
         }
     }
 
@@ -226,7 +224,7 @@ impl StorageTxn for Txn<'_> {
     fn commit(&mut self) -> Result<()> {
         // copy the new_data back into storage to commit the transaction
         if let Some(data) = self.new_data.take() {
-            *self.storage = data;
+            self.storage.data = data;
         }
         Ok(())
     }
@@ -234,39 +232,33 @@ impl StorageTxn for Txn<'_> {
 
 /// InMemoryStorage is a simple in-memory task storage implementation.  It is not useful for
 /// production data, but is useful for testing purposes.
-#[derive(Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct InMemoryStorage {
-    data: Mutex<Data>,
+    data: Data,
 }
 
 impl InMemoryStorage {
     pub fn new() -> InMemoryStorage {
         InMemoryStorage {
-            data: Mutex::new(Data {
+            data: Data {
                 tasks: HashMap::new(),
                 base_version: DEFAULT_BASE_VERSION,
                 operations: vec![],
                 working_set: vec![None],
-            }),
+            },
         }
     }
 }
 
-#[async_trait]
 impl Storage for InMemoryStorage {
-    async fn txn<F, R>(&self, f: F) -> Result<R>
+    fn txn<F, R>(&mut self, f: F) -> Result<R>
     where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
-        R: Send + 'static,
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>,
     {
-        let mut guard = self.data.lock().unwrap();
-
-        let mut txn = Txn {
-            storage: &mut guard,
+        f(&mut Txn {
+            storage: self,
             new_data: None,
-        };
-
-        f(&mut txn)
+        })
     }
 }
 

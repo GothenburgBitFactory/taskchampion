@@ -14,7 +14,10 @@ struct Version {
 }
 
 /// TestServer implements the Server trait with a test implementation.
-pub(crate) struct TestServer {
+#[derive(Clone)]
+pub(crate) struct TestServer(Arc<Mutex<Inner>>);
+
+pub(crate) struct Inner {
     latest_version_id: VersionId,
     // NOTE: indexed by parent_version_id!
     versions: HashMap<VersionId, Version>,
@@ -24,37 +27,41 @@ pub(crate) struct TestServer {
 
 impl TestServer {
     /// A test server has no notion of clients, signatures, encryption, etc.
-    pub(crate) fn new() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
+    pub(crate) fn new() -> TestServer {
+        TestServer(Arc::new(Mutex::new(Inner {
             latest_version_id: NIL_VERSION_ID,
             versions: HashMap::new(),
             snapshot_urgency: SnapshotUrgency::None,
             snapshot: None,
-        }))
+        })))
     }
     // feel free to add any test utility functions here
 
-    // Get a boxed Server implementation referring to this TestServer
-    // pub(crate) fn server(&self) -> Arc<Mutex<dyn Server + Send>> {
-    //     Arc::new(Mutex::new(self.clone()))
-    // }
+    /// Get a boxed Server implementation referring to this TestServer
+    pub(crate) fn server(&self) -> Box<dyn Server> {
+        Box::new(self.clone())
+    }
 
-    pub(crate) fn set_snapshot_urgency(&mut self, urgency: SnapshotUrgency) {
-        self.snapshot_urgency = urgency;
+    pub(crate) fn set_snapshot_urgency(&self, urgency: SnapshotUrgency) {
+        let mut inner = self.0.lock().unwrap();
+        inner.snapshot_urgency = urgency;
     }
 
     /// Get the latest snapshot added to this server
     pub(crate) fn snapshot(&self) -> Option<(VersionId, Snapshot)> {
-        self.snapshot.as_ref().cloned()
+        let inner = self.0.lock().unwrap();
+        inner.snapshot.as_ref().cloned()
     }
 
     /// Delete a version from storage
     pub(crate) fn delete_version(&mut self, parent_version_id: VersionId) {
-        self.versions.remove(&parent_version_id);
+        let mut inner = self.0.lock().unwrap();
+        inner.versions.remove(&parent_version_id);
     }
 
     pub(crate) fn versions_len(&self) -> usize {
-        self.versions.len()
+        let inner = self.0.lock().unwrap();
+        inner.versions.len()
     }
 }
 
@@ -66,13 +73,16 @@ impl Server for TestServer {
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
+        let mut inner = self.0.lock().unwrap();
+
         // no client lookup
         // no signature validation
 
         // check the parent_version_id for linearity
-        if self.latest_version_id != NIL_VERSION_ID && parent_version_id != self.latest_version_id {
+        if inner.latest_version_id != NIL_VERSION_ID && parent_version_id != inner.latest_version_id
+        {
             return Ok((
-                AddVersionResult::ExpectedParentVersion(self.latest_version_id),
+                AddVersionResult::ExpectedParentVersion(inner.latest_version_id),
                 SnapshotUrgency::None,
             ));
         }
@@ -80,7 +90,7 @@ impl Server for TestServer {
         // invent a new ID for this version
         let version_id = Uuid::new_v4();
 
-        self.versions.insert(
+        inner.versions.insert(
             parent_version_id,
             Version {
                 version_id,
@@ -88,17 +98,19 @@ impl Server for TestServer {
                 history_segment,
             },
         );
-        self.latest_version_id = version_id;
+        inner.latest_version_id = version_id;
 
         // reply with the configured urgency and reset it to None
-        let urgency = self.snapshot_urgency;
-        self.snapshot_urgency = SnapshotUrgency::None;
+        let urgency = inner.snapshot_urgency;
+        inner.snapshot_urgency = SnapshotUrgency::None;
         Ok((AddVersionResult::Ok(version_id), urgency))
     }
 
     /// Get a vector of all versions after `since_version`
     fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
-        if let Some(version) = self.versions.get(&parent_version_id) {
+        let inner = self.0.lock().unwrap();
+
+        if let Some(version) = inner.versions.get(&parent_version_id) {
             Ok(GetVersionResult::Version {
                 version_id: version.version_id,
                 parent_version_id: version.parent_version_id,
@@ -110,12 +122,15 @@ impl Server for TestServer {
     }
 
     fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+        let mut inner = self.0.lock().unwrap();
+
         // test implementation -- does not perform any validation
-        self.snapshot = Some((version_id, snapshot));
+        inner.snapshot = Some((version_id, snapshot));
         Ok(())
     }
 
     fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
-        Ok(self.snapshot.clone())
+        let inner = self.0.lock().unwrap();
+        Ok(inner.snapshot.clone())
     }
 }

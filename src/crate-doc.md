@@ -37,8 +37,7 @@ Several server implementations are included, and users can define their own impl
 # {
 # use taskchampion::{storage::AccessMode, ServerConfig, Replica, storage::InMemoryStorage};
 # use tempfile::TempDir;
-# #[tokio::main]
-# async fn main() -> anyhow::Result<()> {
+# fn main() -> anyhow::Result<()> {
 # let taskdb_dir = TempDir::new()?;
 # let taskdb_dir = taskdb_dir.path().to_path_buf();
 # let server_dir = TempDir::new()?;
@@ -52,7 +51,7 @@ let server_config = ServerConfig::Local { server_dir };
 let mut server = server_config.into_server()?;
 
 // Sync to that server.
-replica.sync(server, true).await?;
+replica.sync(&mut server, true)?;
 #
 # Ok(())
 # }

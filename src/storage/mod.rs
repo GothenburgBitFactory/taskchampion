@@ -10,7 +10,6 @@ traits defined here and pass the result to [`Replica`](crate::Replica).
 
 use crate::errors::Result;
 use crate::operation::Operation;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -154,23 +153,9 @@ pub trait StorageTxn {
 
 /// A trait for objects able to act as task storage.  Most of the interesting behavior is in the
 /// [`crate::storage::StorageTxn`] trait.
-///
-/// ## Concurrency
-///
-/// The [`Storage::txn`] method is `async` but takes a **synchronous** closure `f`. This allows
-/// the use of database drivers with blocking APIs (like `rusqlite`) without stalling
-/// the async runtime.
-///
-/// Implementations of this trait must execute the closure on a separate thread, for
-/// example by using `tokio::task::spawn_blocking`.
-#[async_trait]
-pub trait Storage: Send + Sync {
-    /// Begins an async transaction.
-    ///
-    /// The provided closure `f` is synchronous and will be executed by the storage
-    /// backend on a blocking-safe thread.
-    async fn txn<F, R>(&self, f: F) -> Result<R>
+pub trait Storage {
+    /// Begin a transaction
+    fn txn<F, R>(&mut self, f: F) -> Result<R>
     where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
-        R: Send + 'static;
+        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>;
 }

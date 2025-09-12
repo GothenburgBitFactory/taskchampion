@@ -139,73 +139,64 @@ mod tests {
     use std::collections::HashMap;
     use uuid::Uuid;
 
-    #[tokio::test]
-    async fn apply_operations_create() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
         ops.push(Operation::Create { uuid });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![]),]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_create_exists() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create_exists() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
-        storage
-            .txn(move |txn| {
-                txn.create_task(uuid)?;
-                txn.set_task(uuid, taskmap_with(vec![("foo".into(), "bar".into())]))?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            txn.create_task(uuid)?;
+            txn.set_task(uuid, taskmap_with(vec![("foo".into(), "bar".into())]))?;
+            txn.commit()
+        })?;
 
         {
             let mut ops = Operations::new();
             ops.push(Operation::Create { uuid });
-            storage
-                .txn(move |txn| {
-                    apply_operations(txn, &ops)?;
-                    txn.commit()
-                })
-                .await?;
+            storage.txn(|txn| {
+                apply_operations(txn, &ops)?;
+                txn.commit()
+            })?;
         }
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("foo".into(), "bar".into())])]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_create_exists_update() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create_exists_update() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let now = Utc::now();
         let uuid = Uuid::new_v4();
-        storage
-            .txn(move |txn| {
-                txn.create_task(uuid)?;
-                txn.set_task(uuid, taskmap_with(vec![("foo".into(), "bar".into())]))?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            txn.create_task(uuid)?;
+            txn.set_task(uuid, taskmap_with(vec![("foo".into(), "bar".into())]))?;
+            txn.commit()
+        })?;
 
         {
             let mut ops = Operations::new();
@@ -217,18 +208,14 @@ mod tests {
                 timestamp: now,
                 old_value: None,
             });
-            storage
-                .txn(move |txn| {
-                    apply_operations(txn, &ops)?;
-                    txn.commit()
-                })
-                .await?;
+            storage.txn(|txn| {
+                apply_operations(txn, &ops)?;
+                txn.commit()
+            })?;
         }
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(
                 uuid,
                 vec![
@@ -240,9 +227,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_create_update() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create_update() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
@@ -255,25 +243,22 @@ mod tests {
             old_value: None,
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("title".into(), "my task".into())])]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_create_update_delete_prop() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create_update_delete_prop() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
@@ -300,25 +285,22 @@ mod tests {
             old_value: Some("my task".into()),
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("priority".into(), "H".into())])]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_update_does_not_exist() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_update_does_not_exist() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
@@ -330,25 +312,19 @@ mod tests {
             old_value: None,
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
-        assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
-            vec![]
-        );
+        assert_eq!(storage.txn(|txn| Ok(db.sorted_tasks(txn)))?, vec![]);
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_delete_then_update() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_delete_then_update() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
@@ -372,25 +348,19 @@ mod tests {
             old_value: None,
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
-        assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
-            vec![]
-        );
+        assert_eq!(storage.txn(|txn| Ok(db.sorted_tasks(txn)))?, vec![]);
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_several_tasks() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_several_tasks() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let mut uuids = [Uuid::new_v4(), Uuid::new_v4()];
         uuids.sort();
         let now = Utc::now();
@@ -412,17 +382,13 @@ mod tests {
             old_value: None,
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![
                 (uuids[0], vec![("p".into(), "1".into())]),
                 (uuids[1], vec![("p".into(), "2".into())])
@@ -431,9 +397,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_create_delete() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_create_delete() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let mut ops = Operations::new();
@@ -450,25 +417,19 @@ mod tests {
             old_task: taskmap_with(vec![]),
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
-        assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
-            vec![]
-        );
+        assert_eq!(storage.txn(|txn| Ok(db.sorted_tasks(txn)))?, vec![]);
         Ok(())
     }
 
-    #[tokio::test]
-    async fn apply_operations_delete_not_present() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn apply_operations_delete_not_present() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let mut ops = Operations::new();
         ops.push(Operation::Delete {
@@ -476,89 +437,73 @@ mod tests {
             old_task: taskmap_with(vec![]),
         });
 
-        storage
-            .txn(move |txn| {
-                apply_operations(txn, &ops)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_operations(txn, &ops)?;
+            txn.commit()
+        })?;
 
-        assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
-            vec![]
-        );
+        assert_eq!(storage.txn(|txn| Ok(db.sorted_tasks(txn)))?, vec![]);
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_create() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_create() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let op = SyncOp::Create { uuid };
 
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![]),]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_create_exists() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_create_exists() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
-        storage
-            .txn(move |txn| {
-                txn.create_task(uuid)?;
-                let mut taskmap = TaskMap::new();
-                taskmap.insert("foo".into(), "bar".into());
-                txn.set_task(uuid, taskmap)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            txn.create_task(uuid)?;
+            let mut taskmap = TaskMap::new();
+            taskmap.insert("foo".into(), "bar".into());
+            txn.set_task(uuid, taskmap)?;
+            txn.commit()
+        })?;
 
         let op = SyncOp::Create { uuid };
-        storage
-            .txn(move |txn| {
-                assert!(apply_op(txn, &op).is_err());
-                Ok(())
-            })
-            .await?;
+        storage.txn(|txn| {
+            assert!(apply_op(txn, &op).is_err());
+            Ok(())
+        })?;
 
         // create did not delete the old task..
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("foo".into(), "bar".into())])]
         );
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_create_update() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_create_update() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let op1 = SyncOp::Create { uuid };
 
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op1)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op1)?;
+            txn.commit()
+        })?;
 
         let op2 = SyncOp::Update {
             uuid,
@@ -566,35 +511,30 @@ mod tests {
             value: Some("my task".into()),
             timestamp: now,
         };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op2)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op2)?;
+            txn.commit()
+        })?;
 
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("title".into(), "my task".into())])]
         );
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_create_update_delete_prop() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_create_update_delete_prop() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
         let op1 = SyncOp::Create { uuid };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op1)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op1)?;
+            txn.commit()
+        })?;
 
         let op2 = SyncOp::Update {
             uuid,
@@ -602,12 +542,10 @@ mod tests {
             value: Some("my task".into()),
             timestamp: now,
         };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op2)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op2)?;
+            txn.commit()
+        })?;
 
         let op3 = SyncOp::Update {
             uuid,
@@ -615,12 +553,10 @@ mod tests {
             value: Some("H".into()),
             timestamp: now,
         };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op3)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op3)?;
+            txn.commit()
+        })?;
 
         let op4 = SyncOp::Update {
             uuid,
@@ -628,30 +564,26 @@ mod tests {
             value: None,
             timestamp: now,
         };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op4)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op4)?;
+            txn.commit()
+        })?;
 
         let mut exp = HashMap::new();
         let mut task = HashMap::new();
         task.insert(String::from("priority"), String::from("H"));
         exp.insert(uuid, task);
         assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
+            storage.txn(|txn| Ok(db.sorted_tasks(txn)))?,
             vec![(uuid, vec![("priority".into(), "H".into())])]
         );
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_update_does_not_exist() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_update_does_not_exist() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
         let uuid = Uuid::new_v4();
         let op = SyncOp::Update {
             uuid,
@@ -659,32 +591,29 @@ mod tests {
             value: Some("my task".into()),
             timestamp: Utc::now(),
         };
-        storage
-            .txn(move |txn| {
-                assert_eq!(
-                    apply_op(txn, &op).err().unwrap().to_string(),
-                    format!("Task Database Error: Task {} does not exist", uuid)
-                );
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            assert_eq!(
+                apply_op(txn, &op).err().unwrap().to_string(),
+                format!("Task Database Error: Task {} does not exist", uuid)
+            );
+            txn.commit()
+        })?;
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_create_delete() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_create_delete() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
+        let mut db = TaskDb::new();
         let uuid = Uuid::new_v4();
         let now = Utc::now();
 
         let op1 = SyncOp::Create { uuid };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op1)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op1)?;
+            txn.commit()
+        })?;
 
         let op2 = SyncOp::Update {
             uuid,
@@ -692,44 +621,33 @@ mod tests {
             value: Some("H".into()),
             timestamp: now,
         };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op2)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op2)?;
+            txn.commit()
+        })?;
 
         let op3 = SyncOp::Delete { uuid };
-        storage
-            .txn(move |txn| {
-                apply_op(txn, &op3)?;
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            apply_op(txn, &op3)?;
+            txn.commit()
+        })?;
 
-        assert_eq!(
-            storage
-                .txn(move |txn| Ok(TaskDb::sorted_tasks(txn)))
-                .await?,
-            vec![]
-        );
+        assert_eq!(storage.txn(|txn| Ok(db.sorted_tasks(txn)))?, vec![]);
         let mut old_task = TaskMap::new();
         old_task.insert("priority".into(), "H".into());
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_apply_delete_not_present() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_apply_delete_not_present() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
         let uuid = Uuid::new_v4();
         let op = SyncOp::Delete { uuid };
-        storage
-            .txn(move |txn| {
-                assert!(apply_op(txn, &op).is_err());
-                txn.commit()
-            })
-            .await?;
+        storage.txn(|txn| {
+            assert!(apply_op(txn, &op).is_err());
+            txn.commit()
+        })?;
 
         Ok(())
     }
