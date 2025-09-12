@@ -4,8 +4,7 @@
 use super::{Storage, TaskMap};
 use crate::errors::Result;
 use crate::storage::{taskmap_with, DEFAULT_BASE_VERSION};
-use crate::{Error, Operation};
-use anyhow::anyhow;
+use crate::Operation;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use uuid::Uuid;
@@ -112,165 +111,184 @@ macro_rules! storage_tests {
 pub(crate) use storage_tests;
 
 pub(super) fn get_working_set_empty(mut storage: impl Storage) -> Result<()> {
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None]);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn add_to_working_set(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.add_to_working_set(uuid1)?;
         txn.add_to_working_set(uuid2)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn clear_working_set(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.add_to_working_set(uuid1)?;
         txn.add_to_working_set(uuid2)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.clear_working_set()?;
         txn.add_to_working_set(uuid2)?;
         txn.add_to_working_set(uuid1)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, Some(uuid2), Some(uuid1)]);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn drop_transaction(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid1)?);
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    let result: Result<()> = storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid2)?);
-        Err(Error::Other(anyhow!("Intentional error")))
-    });
+        std::mem::drop(txn); // Unnecessary explicit drop of transaction
+    }
 
-    assert!(result.is_err());
-
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let uuids = txn.all_task_uuids()?;
+
         assert_eq!(uuids, [uuid1]);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn create(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid)?);
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         let task = txn.get_task(uuid)?;
         assert_eq!(task, Some(taskmap_with(vec![])));
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn create_exists(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid)?);
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         assert!(!txn.create_task(uuid)?);
-        txn.commit()
-    })
+        txn.commit()?;
+    }
+    Ok(())
 }
 
 pub(super) fn get_missing(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let task = txn.get_task(uuid)?;
         assert_eq!(task, None);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn set_task(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.set_task(uuid, taskmap_with(vec![("k".to_string(), "v".to_string())]))?;
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         let task = txn.get_task(uuid)?;
         assert_eq!(
             task,
             Some(taskmap_with(vec![("k".to_string(), "v".to_string())]))
         );
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn delete_task_missing(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(!txn.delete_task(uuid)?);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn delete_task_exists(mut storage: impl Storage) -> Result<()> {
     let uuid = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid)?);
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.delete_task(uuid)?);
-        txn.commit()
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn all_tasks_empty(mut storage: impl Storage) -> Result<()> {
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let tasks = txn.all_tasks()?;
         assert_eq!(tasks, vec![]);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn all_tasks_and_uuids(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn.create_task(uuid1)?);
         txn.set_task(
             uuid1,
@@ -281,10 +299,10 @@ pub(super) fn all_tasks_and_uuids(mut storage: impl Storage) -> Result<()> {
             uuid2,
             taskmap_with(vec![("num".to_string(), "2".to_string())]),
         )?;
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         let mut tasks = txn.all_tasks()?;
 
         // order is nondeterministic, so sort by uuid
@@ -303,10 +321,9 @@ pub(super) fn all_tasks_and_uuids(mut storage: impl Storage) -> Result<()> {
         exp.sort_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(tasks, exp);
-        Ok(())
-    })?;
-
-    storage.txn(|txn| {
+    }
+    {
+        let mut txn = storage.txn()?;
         let mut uuids = txn.all_task_uuids()?;
         uuids.sort();
 
@@ -314,28 +331,30 @@ pub(super) fn all_tasks_and_uuids(mut storage: impl Storage) -> Result<()> {
         exp.sort();
 
         assert_eq!(uuids, exp);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn base_version_default(mut storage: impl Storage) -> Result<()> {
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert_eq!(txn.base_version()?, DEFAULT_BASE_VERSION);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn base_version_setting(mut storage: impl Storage) -> Result<()> {
     let u = Uuid::new_v4();
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.set_base_version(u)?;
-        txn.commit()
-    })?;
-
-    storage.txn(|txn| {
+        txn.commit()?;
+    }
+    {
+        let mut txn = storage.txn()?;
         assert_eq!(txn.base_version()?, u);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn unsynced_operations(mut storage: impl Storage) -> Result<()> {
@@ -344,14 +363,16 @@ pub(super) fn unsynced_operations(mut storage: impl Storage) -> Result<()> {
     let uuid3 = Uuid::new_v4();
 
     // create some operations
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
         txn.add_operation(Operation::Create { uuid: uuid2 })?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // read them back
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ops = txn.unsynced_operations()?;
         assert_eq!(
             ops,
@@ -362,27 +383,29 @@ pub(super) fn unsynced_operations(mut storage: impl Storage) -> Result<()> {
         );
 
         assert_eq!(txn.num_unsynced_operations()?, 2);
-        Ok(())
-    })?;
+    }
 
     // Sync them.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.sync_complete()?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // create some more operations (to test adding operations after sync)
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.add_operation(Operation::Create { uuid: uuid3 })?;
         txn.add_operation(Operation::Delete {
             uuid: uuid3,
             old_task: TaskMap::new(),
         })?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // read them back
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ops = txn.unsynced_operations()?;
         assert_eq!(
             ops,
@@ -395,25 +418,26 @@ pub(super) fn unsynced_operations(mut storage: impl Storage) -> Result<()> {
             ]
         );
         assert_eq!(txn.num_unsynced_operations()?, 2);
-        Ok(())
-    })?;
+    }
 
     // Remove the right one
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.remove_operation(Operation::Delete {
             uuid: uuid3,
             old_task: TaskMap::new(),
         })?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // read the remaining op back
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ops = txn.unsynced_operations()?;
         assert_eq!(ops, vec![Operation::Create { uuid: uuid3 },]);
         assert_eq!(txn.num_unsynced_operations()?, 1);
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn remove_operations(mut storage: impl Storage) -> Result<()> {
@@ -423,7 +447,9 @@ pub(super) fn remove_operations(mut storage: impl Storage) -> Result<()> {
     let uuid4 = Uuid::new_v4();
 
     // Create some tasks and operations.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.create_task(uuid1)?;
         txn.create_task(uuid2)?;
         txn.create_task(uuid3)?;
@@ -431,45 +457,49 @@ pub(super) fn remove_operations(mut storage: impl Storage) -> Result<()> {
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
         txn.add_operation(Operation::Create { uuid: uuid2 })?;
         txn.add_operation(Operation::Create { uuid: uuid3 })?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // Remove the uuid3 operation.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.remove_operation(Operation::Create { uuid: uuid3 })?;
         assert_eq!(txn.num_unsynced_operations()?, 2);
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // Remove a nonexistent operation
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn
             .remove_operation(Operation::Create { uuid: uuid4 })
             .is_err());
-        Ok(())
-    })?;
+    }
 
     // Remove an operation that is not most recent.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn
             .remove_operation(Operation::Create { uuid: uuid1 })
             .is_err());
-        Ok(())
-    })?;
+    }
 
     // Mark operations as synced.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.sync_complete()?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // Try to remove the synced operation.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         assert!(txn
             .remove_operation(Operation::Create { uuid: uuid2 })
             .is_err());
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
@@ -479,7 +509,9 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
     let now = Utc::now();
 
     // Create some tasks and operations.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.create_task(uuid1)?;
         txn.create_task(uuid2)?;
         txn.create_task(uuid3)?;
@@ -504,20 +536,22 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
             old_task: TaskMap::new(),
         })?;
 
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // remove the last operation to verify it doesn't appear
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.remove_operation(Operation::Delete {
             uuid: uuid3,
             old_task: TaskMap::new(),
         })?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // read them back
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ops = txn.get_task_operations(uuid1)?;
         assert_eq!(
             ops,
@@ -545,11 +579,12 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
                 timestamp: now,
             }]
         );
-        Ok(())
-    })?;
+    }
 
     // Sync and verify the task operations still exist.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.sync_complete()?;
 
         let ops = txn.get_task_operations(uuid1)?;
@@ -558,8 +593,9 @@ pub(super) fn task_operations(mut storage: impl Storage) -> Result<()> {
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid3)?;
         assert_eq!(ops.len(), 1);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn sync_complete(mut storage: impl Storage) -> Result<()> {
@@ -567,101 +603,115 @@ pub(super) fn sync_complete(mut storage: impl Storage) -> Result<()> {
     let uuid2 = Uuid::new_v4();
 
     // Create some tasks and operations.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.create_task(uuid1)?;
         txn.create_task(uuid2)?;
 
         txn.add_operation(Operation::Create { uuid: uuid1 })?;
         txn.add_operation(Operation::Create { uuid: uuid2 })?;
 
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // Sync and verify the task operations still exist.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.sync_complete()?;
 
         let ops = txn.get_task_operations(uuid1)?;
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid2)?;
         assert_eq!(ops.len(), 1);
-        Ok(())
-    })?;
+    }
 
     // Delete uuid2.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.delete_task(uuid2)?;
         txn.add_operation(Operation::Delete {
             uuid: uuid2,
             old_task: TaskMap::new(),
         })?;
 
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
     // Sync and verify that uuid1's operations still exist, but uuid2's do not.
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
+
         txn.sync_complete()?;
 
         let ops = txn.get_task_operations(uuid1)?;
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid2)?;
         assert_eq!(ops.len(), 0);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }
 
 pub(super) fn set_working_set_item(mut storage: impl Storage) -> Result<()> {
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.add_to_working_set(uuid1)?;
         txn.add_to_working_set(uuid2)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, Some(uuid1), Some(uuid2)]);
-        Ok(())
-    })?;
+    }
 
     // Clear one item
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.set_working_set_item(1, None)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, None, Some(uuid2)]);
-        Ok(())
-    })?;
+    }
 
     // Override item
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.set_working_set_item(2, Some(uuid1))?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         assert_eq!(ws, vec![None, None, Some(uuid1)]);
-        Ok(())
-    })?;
+    }
 
     // Set the last item to None
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         txn.set_working_set_item(1, Some(uuid1))?;
         txn.set_working_set_item(2, None)?;
-        txn.commit()
-    })?;
+        txn.commit()?;
+    }
 
-    storage.txn(|txn| {
+    {
+        let mut txn = storage.txn()?;
         let ws = txn.get_working_set()?;
         // Note no trailing `None`.
         assert_eq!(ws, vec![None, Some(uuid1)]);
-        Ok(())
-    })
+    }
+
+    Ok(())
 }

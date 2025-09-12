@@ -78,13 +78,13 @@ impl ToSql for Operation {
 }
 
 /// SqliteStorage is an on-disk storage backed by SQLite3.
-pub struct SqliteStorage {
+pub(super) struct SqliteStorage {
     con: Connection,
     access_mode: AccessMode,
 }
 
 impl SqliteStorage {
-    pub fn new<P: AsRef<Path>>(
+    pub(super) fn new<P: AsRef<Path>>(
         directory: P,
         access_mode: AccessMode,
         create_if_missing: bool,
@@ -149,13 +149,13 @@ impl<'t> Txn<'t> {
         }
     }
 
-    fn get_txn(&mut self) -> std::result::Result<&mut rusqlite::Transaction<'t>, SqliteError> {
+    fn get_txn(&self) -> std::result::Result<&rusqlite::Transaction<'t>, SqliteError> {
         self.txn
-            .as_mut()
+            .as_ref()
             .ok_or(SqliteError::TransactionAlreadyCommitted)
     }
 
-    fn get_next_working_set_number(&mut self) -> Result<usize> {
+    fn get_next_working_set_number(&self) -> Result<usize> {
         let t = self.get_txn()?;
         let next_id: Option<usize> = t
             .query_row(
@@ -171,17 +171,14 @@ impl<'t> Txn<'t> {
 }
 
 impl Storage for SqliteStorage {
-    fn txn<F, R>(&mut self, f: F) -> Result<R>
-    where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>,
-    {
+    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
         let txn = self
             .con
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        f(&mut Txn {
+        Ok(Box::new(Txn {
             txn: Some(txn),
             access_mode: self.access_mode,
-        })
+        }))
     }
 }
 
@@ -418,21 +415,18 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
-        let rows = {
-            let t = self.get_txn()?;
-            let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
-            let query_result = q
-                .query_map([], |r| {
-                    let id: usize = r.get("id")?;
-                    let uuid: StoredUuid = r.get("uuid")?;
-                    Ok((id, uuid.0))
-                })
-                .context("Get working set query")?;
+        let t = self.get_txn()?;
 
-            query_result
-                .map(|row_result| row_result.map_err(Into::into))
-                .collect::<Result<Vec<_>>>()?
-        };
+        let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
+        let rows = q
+            .query_map([], |r| {
+                let id: usize = r.get("id")?;
+                let uuid: StoredUuid = r.get("uuid")?;
+                Ok((id, uuid.0))
+            })
+            .context("Get working set query")?;
+
+        let rows: Vec<std::result::Result<(usize, Uuid), _>> = rows.collect();
         let mut res = Vec::with_capacity(rows.len());
         for _ in 0..self
             .get_next_working_set_number()
@@ -440,7 +434,8 @@ impl StorageTxn for Txn<'_> {
         {
             res.push(None);
         }
-        for (id, uuid) in rows {
+        for r in rows {
+            let (id, uuid) = r?;
             res[id] = Some(uuid);
         }
 
@@ -449,9 +444,10 @@ impl StorageTxn for Txn<'_> {
 
     fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         self.check_write_access()?;
+        let t = self.get_txn()?;
+
         let next_working_id = self.get_next_working_set_number()?;
 
-        let t = self.get_txn()?;
         t.execute(
             "INSERT INTO working_set (id, uuid) VALUES (?, ?)",
             params![next_working_id, &StoredUuid(uuid)],
@@ -623,28 +619,24 @@ mod test {
         let non_existant = tmp_dir.path().join("subdir");
         let mut storage = SqliteStorage::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
         let uuid = Uuid::new_v4();
-
-        storage.txn(|txn| {
+        {
+            let mut txn = storage.txn()?;
             assert!(txn.create_task(uuid)?);
             txn.commit()?;
-            Ok(())
-        })?;
-
-        storage.txn(|txn| {
+        }
+        {
+            let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
             assert_eq!(task, Some(taskmap_with(vec![])));
-            Ok(())
-        })?;
+        }
 
         // Re-open the DB.
         let mut storage = SqliteStorage::new(non_existant, AccessMode::ReadWrite, true)?;
-
-        storage.txn(|txn| {
+        {
+            let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
             assert_eq!(task, Some(taskmap_with(vec![])));
-            Ok(())
-        })?;
-
+        }
         Ok(())
     }
 
@@ -662,8 +654,9 @@ mod test {
         );
         let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
         let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
+        {
+            let mut txn = storage.txn()?;
 
-        storage.txn(|txn| {
             let mut task_one = txn.get_task(one)?.unwrap();
             assert_eq!(task_one.get("description").unwrap(), "one");
 
@@ -684,18 +677,16 @@ mod test {
                 timestamp: Utc::now(),
             })?;
             txn.commit()?;
-            Ok(())
-        })?;
+        }
 
         // Read back the modification.
-
-        storage.txn(|txn| {
+        {
+            let mut txn = storage.txn()?;
             let task_one = txn.get_task(one)?.unwrap();
             assert_eq!(task_one.get("description").unwrap(), "updated");
             let ops = txn.unsynced_operations()?;
             assert_eq!(ops.len(), 15);
-            Ok(())
-        })?;
+        }
 
         // Check the UUID fields on the operations directly in the DB.
         {
@@ -735,14 +726,10 @@ mod test {
                 let mut storage =
                     SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
-                storage
-                    .txn(|txn| {
-                        txn.set_base_version(u).unwrap();
-                        thread::sleep(Duration::from_millis(100));
-                        txn.commit().unwrap();
-                        Ok(())
-                    })
-                    .unwrap();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                thread::sleep(Duration::from_millis(100));
+                txn.commit().unwrap();
             });
             // Second thread waits 50ms, and begins a transaction. This
             // should wait for the first to complete, but the regression would be a SQLITE_BUSY
@@ -752,13 +739,9 @@ mod test {
                 let mut storage =
                     SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
-                storage
-                    .txn(|txn| {
-                        txn.set_base_version(u).unwrap();
-                        txn.commit().unwrap();
-                        Ok(())
-                    })
-                    .unwrap();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                txn.commit().unwrap();
             });
         });
         Ok(())
@@ -782,34 +765,32 @@ mod test {
             &res.unwrap_err().to_string() == "Task storage was opened in read-only mode"
         }
 
-        storage.txn(|txn| {
-            let taskmap = TaskMap::new();
-            let op = Operation::UndoPoint;
+        let mut txn = storage.txn()?;
+        let taskmap = TaskMap::new();
+        let op = Operation::UndoPoint;
 
-            // Mutating things fail.
-            assert!(is_read_only_err(txn.create_task(Uuid::new_v4())));
-            assert!(is_read_only_err(txn.set_task(Uuid::new_v4(), taskmap)));
-            assert!(is_read_only_err(txn.delete_task(Uuid::new_v4())));
-            assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4())));
-            assert!(is_read_only_err(txn.add_operation(op.clone())));
-            assert!(is_read_only_err(txn.remove_operation(op)));
-            assert!(is_read_only_err(txn.sync_complete()));
-            assert!(is_read_only_err(txn.add_to_working_set(Uuid::new_v4())));
-            assert!(is_read_only_err(txn.set_working_set_item(1, None)));
-            assert!(is_read_only_err(txn.clear_working_set()));
-            assert!(is_read_only_err(txn.commit()));
+        // Mutating things fail.
+        assert!(is_read_only_err(txn.create_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_task(Uuid::new_v4(), taskmap)));
+        assert!(is_read_only_err(txn.delete_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.add_operation(op.clone())));
+        assert!(is_read_only_err(txn.remove_operation(op)));
+        assert!(is_read_only_err(txn.sync_complete()));
+        assert!(is_read_only_err(txn.add_to_working_set(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_working_set_item(1, None)));
+        assert!(is_read_only_err(txn.clear_working_set()));
+        assert!(is_read_only_err(txn.commit()));
 
-            // Read-only things succeed.
-            assert_eq!(txn.get_task(Uuid::new_v4())?, None);
-            assert_eq!(txn.get_pending_tasks()?.len(), 0);
-            assert_eq!(txn.all_tasks()?.len(), 0);
-            assert_eq!(txn.base_version()?, Uuid::nil());
-            assert_eq!(txn.get_task_operations(Uuid::new_v4())?.len(), 0);
-            assert_eq!(txn.unsynced_operations()?.len(), 0);
-            assert_eq!(txn.num_unsynced_operations()?, 0);
-            assert_eq!(txn.get_working_set()?.len(), 1);
-            Ok(())
-        })?;
+        // Read-only things succeed.
+        assert_eq!(txn.get_task(Uuid::new_v4())?, None);
+        assert_eq!(txn.get_pending_tasks()?.len(), 0);
+        assert_eq!(txn.all_tasks()?.len(), 0);
+        assert_eq!(txn.base_version()?, Uuid::nil());
+        assert_eq!(txn.get_task_operations(Uuid::new_v4())?.len(), 0);
+        assert_eq!(txn.unsynced_operations()?.len(), 0);
+        assert_eq!(txn.num_unsynced_operations()?, 0);
+        assert_eq!(txn.get_working_set()?.len(), 1);
 
         Ok(())
     }

@@ -584,7 +584,7 @@ impl Task {
 #[allow(deprecated)]
 mod test {
     use super::*;
-    use crate::{storage::InMemoryStorage, Replica};
+    use crate::Replica;
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -599,7 +599,7 @@ mod test {
         modify: MODIFY,
         assert: ASSERT,
     ) {
-        let mut replica = Replica::<InMemoryStorage>::new_inmemory();
+        let mut replica = Replica::new_inmemory();
         let mut ops = Operations::new();
         let uuid = Uuid::new_v4();
         let mut task = replica.create_task(uuid, &mut ops).unwrap();
@@ -1465,7 +1465,7 @@ mod test {
 
     #[test]
     fn dependencies_tags() {
-        let mut rep = Replica::<InMemoryStorage>::new_inmemory();
+        let mut rep = Replica::new_inmemory();
         let mut ops = Operations::new();
         let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
 

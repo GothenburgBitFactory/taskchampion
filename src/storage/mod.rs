@@ -4,7 +4,8 @@ This module defines the backend storage used by [`Replica`](crate::Replica).
 It defines a [trait](crate::storage::Storage) for storage implementations, and provides a default
 on-disk implementation as well as an in-memory implementation for testing.
 
-Users who wish to implement their own storage backends can implement the
+Typical uses of this crate do not interact directly with this module; [`StorageConfig`] is
+sufficient. However, users who wish to implement their own storage backends can implement the
 traits defined here and pass the result to [`Replica`](crate::Replica).
 */
 
@@ -21,14 +22,9 @@ mod config;
 #[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
-#[cfg(feature = "storage-sqlite")]
-pub use sqlite::SqliteStorage;
-
-pub use config::AccessMode;
+pub use config::{AccessMode, StorageConfig};
 
 mod inmemory;
-
-pub use inmemory::InMemoryStorage;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
@@ -155,7 +151,5 @@ pub trait StorageTxn {
 /// [`crate::storage::StorageTxn`] trait.
 pub trait Storage {
     /// Begin a transaction
-    fn txn<F, R>(&mut self, f: F) -> Result<R>
-    where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R>;
+    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>>;
 }

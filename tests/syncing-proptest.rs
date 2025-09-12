@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 #[cfg(feature = "storage-sqlite")]
-use taskchampion::{storage::InMemoryStorage, Operations, Replica, ServerConfig, TaskData, Uuid};
+use taskchampion::{Operations, Replica, ServerConfig, StorageConfig, TaskData, Uuid};
 use tempfile::TempDir;
 
 #[derive(Debug, Clone)]
@@ -39,10 +39,10 @@ fn multi_replica_sync(action_sequence in actions()) {
         server_dir: tmp_dir.path().to_path_buf(),
     };
     let mut server = server_config.into_server()?;
-    let mut replicas: [Replica<InMemoryStorage>; 3] = [
-        Replica::new(InMemoryStorage::new()),
-        Replica::new(InMemoryStorage::new()),
-        Replica::new(InMemoryStorage::new()),
+    let mut replicas = [
+        Replica::new(StorageConfig::InMemory.into_storage().unwrap()),
+        Replica::new(StorageConfig::InMemory.into_storage().unwrap()),
+        Replica::new(StorageConfig::InMemory.into_storage().unwrap()),
     ];
 
     for (action, rep) in action_sequence {
