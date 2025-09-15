@@ -3,6 +3,7 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use async_trait::async_trait;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -49,17 +50,19 @@ impl Txn<'_> {
     }
 }
 
+#[async_trait]
 impl StorageTxn for Txn<'_> {
-    fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
+    async fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         match self.data_ref().tasks.get(&uuid) {
             None => Ok(None),
             Some(t) => Ok(Some(t.clone())),
         }
     }
 
-    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+    async fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let res = self
-            .get_working_set()?
+            .get_working_set()
+            .await?
             .iter()
             .filter_map(|uuid| {
                 // Since uuid is wrapped in an Option and get(&inner_uuid)
@@ -79,7 +82,7 @@ impl StorageTxn for Txn<'_> {
         Ok(res)
     }
 
-    fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
+    async fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         if let ent @ Entry::Vacant(_) = self.mut_data_ref().tasks.entry(uuid) {
             ent.or_insert_with(TaskMap::new);
             Ok(true)
@@ -88,16 +91,16 @@ impl StorageTxn for Txn<'_> {
         }
     }
 
-    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
+    async fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
         self.mut_data_ref().tasks.insert(uuid, task);
         Ok(())
     }
 
-    fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
+    async fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
         Ok(self.mut_data_ref().tasks.remove(&uuid).is_some())
     }
 
-    fn all_tasks<'a>(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+    async fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         Ok(self
             .data_ref()
             .tasks
@@ -106,20 +109,20 @@ impl StorageTxn for Txn<'_> {
             .collect())
     }
 
-    fn all_task_uuids<'a>(&mut self) -> Result<Vec<Uuid>> {
+    async fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
         Ok(self.data_ref().tasks.keys().copied().collect())
     }
 
-    fn base_version(&mut self) -> Result<VersionId> {
+    async fn base_version(&mut self) -> Result<VersionId> {
         Ok(self.data_ref().base_version)
     }
 
-    fn set_base_version(&mut self, version: VersionId) -> Result<()> {
+    async fn set_base_version(&mut self, version: VersionId) -> Result<()> {
         self.mut_data_ref().base_version = version;
         Ok(())
     }
 
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
+    async fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
         Ok(self
             .data_ref()
             .operations
@@ -129,7 +132,7 @@ impl StorageTxn for Txn<'_> {
             .collect())
     }
 
-    fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
+    async fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
         Ok(self
             .data_ref()
             .operations
@@ -139,7 +142,7 @@ impl StorageTxn for Txn<'_> {
             .collect())
     }
 
-    fn num_unsynced_operations(&mut self) -> Result<usize> {
+    async fn num_unsynced_operations(&mut self) -> Result<usize> {
         Ok(self
             .data_ref()
             .operations
@@ -148,12 +151,12 @@ impl StorageTxn for Txn<'_> {
             .count())
     }
 
-    fn add_operation(&mut self, op: Operation) -> Result<()> {
+    async fn add_operation(&mut self, op: Operation) -> Result<()> {
         self.mut_data_ref().operations.push((false, op));
         Ok(())
     }
 
-    fn remove_operation(&mut self, op: Operation) -> Result<()> {
+    async fn remove_operation(&mut self, op: Operation) -> Result<()> {
         if let Some((synced, last_op)) = self.data_ref().operations.last() {
             if *synced {
                 return Err(Error::Database(
@@ -170,7 +173,7 @@ impl StorageTxn for Txn<'_> {
         ))
     }
 
-    fn sync_complete(&mut self) -> Result<()> {
+    async fn sync_complete(&mut self) -> Result<()> {
         let data = self.data_ref();
 
         // Mark all operations as synced, but drop operations which no longer have a
@@ -192,17 +195,17 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
+    async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
         Ok(self.data_ref().working_set.clone())
     }
 
-    fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
+    async fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         let working_set = &mut self.mut_data_ref().working_set;
         working_set.push(Some(uuid));
         Ok(working_set.len())
     }
 
-    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
+    async fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
         let working_set = &mut self.mut_data_ref().working_set;
         if index >= working_set.len() {
             return Err(Error::Database(format!(
@@ -216,12 +219,12 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn clear_working_set(&mut self) -> Result<()> {
+    async fn clear_working_set(&mut self) -> Result<()> {
         self.mut_data_ref().working_set = vec![None];
         Ok(())
     }
 
-    fn commit(&mut self) -> Result<()> {
+    async fn commit(&mut self) -> Result<()> {
         // copy the new_data back into storage to commit the transaction
         if let Some(data) = self.new_data.take() {
             self.storage.data = data;
@@ -233,12 +236,12 @@ impl StorageTxn for Txn<'_> {
 /// InMemoryStorage is a simple in-memory task storage implementation.  It is not useful for
 /// production data, but is useful for testing purposes.
 #[derive(PartialEq, Debug, Clone)]
-pub(super) struct InMemoryStorage {
+pub struct InMemoryStorage {
     data: Data,
 }
 
 impl InMemoryStorage {
-    pub(super) fn new() -> InMemoryStorage {
+    pub fn new() -> InMemoryStorage {
         InMemoryStorage {
             data: Data {
                 tasks: HashMap::new(),
@@ -250,8 +253,9 @@ impl InMemoryStorage {
     }
 }
 
+#[async_trait]
 impl Storage for InMemoryStorage {
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
+    async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + Send + 'a>> {
         Ok(Box::new(Txn {
             storage: self,
             new_data: None,
@@ -263,9 +267,9 @@ impl Storage for InMemoryStorage {
 mod test {
     use super::*;
 
-    fn storage() -> InMemoryStorage {
+    async fn storage() -> InMemoryStorage {
         InMemoryStorage::new()
     }
 
-    crate::storage::test::storage_tests!(storage());
+    crate::storage::test::storage_tests!(storage().await);
 }

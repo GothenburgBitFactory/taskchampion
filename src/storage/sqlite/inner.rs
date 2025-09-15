@@ -1,42 +1,13 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::config::AccessMode;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::sqlite::{schema, SqliteError, StoredUuid};
+use crate::storage::{TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use uuid::Uuid;
-
-mod schema;
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(crate) enum SqliteError {
-    #[error("SQLite transaction already committted")]
-    TransactionAlreadyCommitted,
-    #[error("Task storage was opened in read-only mode")]
-    ReadOnlyStorage,
-}
-
-/// Newtype to allow implementing `FromSql` for foreign `uuid::Uuid`
-pub(crate) struct StoredUuid(pub(crate) Uuid);
-
-/// Conversion from Uuid stored as a string (rusqlite's uuid feature stores as binary blob)
-impl FromSql for StoredUuid {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let u = Uuid::parse_str(value.as_str()?)
-            .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
-        Ok(StoredUuid(u))
-    }
-}
-
-/// Store Uuid as string in database
-impl ToSql for StoredUuid {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        let s = self.0.to_string();
-        Ok(s.into())
-    }
-}
 
 /// Wraps [`TaskMap`] (type alias for HashMap) so we can implement rusqlite conversion traits for it
 struct StoredTaskMap(TaskMap);
@@ -78,17 +49,17 @@ impl ToSql for Operation {
 }
 
 /// SqliteStorage is an on-disk storage backed by SQLite3.
-pub(super) struct SqliteStorage {
+pub(super) struct SqliteStorageInner {
     con: Connection,
     access_mode: AccessMode,
 }
 
-impl SqliteStorage {
+impl SqliteStorageInner {
     pub(super) fn new<P: AsRef<Path>>(
         directory: P,
         access_mode: AccessMode,
         create_if_missing: bool,
-    ) -> Result<SqliteStorage> {
+    ) -> Result<SqliteStorageInner> {
         let directory = directory.as_ref();
         if create_if_missing {
             // Ensure parent folder exists
@@ -133,9 +104,19 @@ impl SqliteStorage {
 
         Ok(Self { access_mode, con })
     }
+
+    pub(super) fn txn(&'_ mut self) -> Result<Txn<'_>> {
+        let txn = self
+            .con
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Ok(Txn {
+            txn: Some(txn),
+            access_mode: self.access_mode,
+        })
+    }
 }
 
-struct Txn<'t> {
+pub(super) struct Txn<'t> {
     txn: Option<rusqlite::Transaction<'t>>,
     access_mode: AccessMode,
 }
@@ -168,22 +149,8 @@ impl<'t> Txn<'t> {
 
         Ok(next_id.unwrap_or(0))
     }
-}
 
-impl Storage for SqliteStorage {
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
-        let txn = self
-            .con
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Ok(Box::new(Txn {
-            txn: Some(txn),
-            access_mode: self.access_mode,
-        }))
-    }
-}
-
-impl StorageTxn for Txn<'_> {
-    fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
+    pub(super) fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         let t = self.get_txn()?;
         let result: Option<StoredTaskMap> = t
             .query_row(
@@ -197,7 +164,7 @@ impl StorageTxn for Txn<'_> {
         Ok(result.map(|t| t.0))
     }
 
-    fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+    pub(super) fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare(
@@ -217,7 +184,7 @@ impl StorageTxn for Txn<'_> {
         Ok(res)
     }
 
-    fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
+    pub(super) fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         let count: usize = t.query_row(
@@ -238,7 +205,7 @@ impl StorageTxn for Txn<'_> {
         Ok(true)
     }
 
-    fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
+    pub(super) fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
@@ -249,7 +216,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
+    pub(super) fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         let changed = t
@@ -258,7 +225,7 @@ impl StorageTxn for Txn<'_> {
         Ok(changed > 0)
     }
 
-    fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
+    pub(super) fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT uuid, data FROM tasks")?;
@@ -275,7 +242,7 @@ impl StorageTxn for Txn<'_> {
         Ok(ret)
     }
 
-    fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
+    pub(super) fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT uuid FROM tasks")?;
@@ -291,7 +258,7 @@ impl StorageTxn for Txn<'_> {
         Ok(ret)
     }
 
-    fn base_version(&mut self) -> Result<VersionId> {
+    pub(super) fn base_version(&mut self) -> Result<VersionId> {
         let t = self.get_txn()?;
 
         let version: Option<StoredUuid> = t
@@ -304,7 +271,7 @@ impl StorageTxn for Txn<'_> {
         Ok(version.map(|u| u.0).unwrap_or(DEFAULT_BASE_VERSION))
     }
 
-    fn set_base_version(&mut self, version: VersionId) -> Result<()> {
+    pub(super) fn set_base_version(&mut self, version: VersionId) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
@@ -315,7 +282,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
+    pub(super) fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT data FROM operations where uuid=? ORDER BY id ASC")?;
@@ -331,7 +298,7 @@ impl StorageTxn for Txn<'_> {
         Ok(ret)
     }
 
-    fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
+    pub(super) fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT data FROM operations WHERE NOT synced ORDER BY id ASC")?;
@@ -347,7 +314,7 @@ impl StorageTxn for Txn<'_> {
         Ok(ret)
     }
 
-    fn num_unsynced_operations(&mut self) -> Result<usize> {
+    pub(super) fn num_unsynced_operations(&mut self) -> Result<usize> {
         let t = self.get_txn()?;
         let count: usize = t.query_row(
             "SELECT count(*) FROM operations WHERE NOT synced",
@@ -357,7 +324,7 @@ impl StorageTxn for Txn<'_> {
         Ok(count)
     }
 
-    fn add_operation(&mut self, op: Operation) -> Result<()> {
+    pub(super) fn add_operation(&mut self, op: Operation) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
 
@@ -366,7 +333,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn remove_operation(&mut self, op: Operation) -> Result<()> {
+    pub(super) fn remove_operation(&mut self, op: Operation) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         let last: Option<(u32, Operation)> = t
@@ -392,7 +359,7 @@ impl StorageTxn for Txn<'_> {
         ))
     }
 
-    fn sync_complete(&mut self) -> Result<()> {
+    pub(super) fn sync_complete(&mut self) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute(
@@ -414,7 +381,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
+    pub(super) fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
         let t = self.get_txn()?;
 
         let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
@@ -442,7 +409,7 @@ impl StorageTxn for Txn<'_> {
         Ok(res)
     }
 
-    fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
+    pub(super) fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         self.check_write_access()?;
         let t = self.get_txn()?;
 
@@ -457,7 +424,7 @@ impl StorageTxn for Txn<'_> {
         Ok(next_working_id)
     }
 
-    fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
+    pub(super) fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         match uuid {
@@ -473,7 +440,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn clear_working_set(&mut self) -> Result<()> {
+    pub(super) fn clear_working_set(&mut self) -> Result<()> {
         self.check_write_access()?;
         let t = self.get_txn()?;
         t.execute("DELETE FROM working_set", [])
@@ -481,7 +448,7 @@ impl StorageTxn for Txn<'_> {
         Ok(())
     }
 
-    fn commit(&mut self) -> Result<()> {
+    pub(super) fn commit(&mut self) -> Result<()> {
         self.check_write_access()?;
         let t = self
             .txn
@@ -495,6 +462,7 @@ impl StorageTxn for Txn<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::storage::sqlite::SqliteStorage;
     use crate::storage::taskmap_with;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -505,7 +473,9 @@ mod test {
 
     fn storage() -> Result<SqliteStorage> {
         let tmp_dir = TempDir::new()?;
-        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)
+        let actor = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        std::mem::forget(tmp_dir);
+        Ok(actor)
     }
 
     crate::storage::test::storage_tests!(storage()?);
@@ -617,7 +587,8 @@ mod test {
     fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
-        let mut storage = SqliteStorage::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
+        let mut storage =
+            SqliteStorageInner::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
         let uuid = Uuid::new_v4();
         {
             let mut txn = storage.txn()?;
@@ -631,7 +602,7 @@ mod test {
         }
 
         // Re-open the DB.
-        let mut storage = SqliteStorage::new(non_existant, AccessMode::ReadWrite, true)?;
+        let mut storage = SqliteStorageInner::new(non_existant, AccessMode::ReadWrite, true)?;
         {
             let mut txn = storage.txn()?;
             let task = txn.get_task(uuid)?;
@@ -647,7 +618,7 @@ mod test {
     fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         create_0_8_0_db(tmp_dir.path())?;
-        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        let mut storage = SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
         assert_eq!(
             schema::get_db_version(&mut storage.con)?,
             schema::LATEST_VERSION,
@@ -718,13 +689,13 @@ mod test {
         let tmp_dir = TempDir::new()?;
 
         // Initialize the DB once, as schema modifications are not isolated by transactions.
-        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
+        SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
 
         thread::scope(|scope| {
             // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
             scope.spawn(|| {
                 let mut storage =
-                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
+                    SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
                 let mut txn = storage.txn().unwrap();
                 txn.set_base_version(u).unwrap();
@@ -737,7 +708,7 @@ mod test {
             scope.spawn(|| {
                 thread::sleep(Duration::from_millis(50));
                 let mut storage =
-                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
+                    SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
                 let u = Uuid::new_v4();
                 let mut txn = storage.txn().unwrap();
                 txn.set_base_version(u).unwrap();
@@ -757,9 +728,9 @@ mod test {
         let tmp_dir = TempDir::new()?;
         // If the DB should already exist, create it.
         if exists {
-            SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+            SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
         }
-        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadOnly, create)?;
+        let mut storage = SqliteStorageInner::new(tmp_dir.path(), AccessMode::ReadOnly, create)?;
 
         fn is_read_only_err<T: std::fmt::Debug>(res: Result<T>) -> bool {
             &res.unwrap_err().to_string() == "Task storage was opened in read-only mode"
