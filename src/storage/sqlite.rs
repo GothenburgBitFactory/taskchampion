@@ -3,7 +3,6 @@ use crate::operation::Operation;
 use crate::storage::config::AccessMode;
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
-use async_trait::async_trait;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::path::Path;
@@ -79,13 +78,13 @@ impl ToSql for Operation {
 }
 
 /// SqliteStorage is an on-disk storage backed by SQLite3.
-pub struct SqliteStorage {
-    con: tokio_rusqlite::Connection,
+pub(super) struct SqliteStorage {
+    con: Connection,
     access_mode: AccessMode,
 }
 
 impl SqliteStorage {
-    pub fn new<P: AsRef<Path>>(
+    pub(super) fn new<P: AsRef<Path>>(
         directory: P,
         access_mode: AccessMode,
         create_if_missing: bool,
@@ -132,10 +131,7 @@ impl SqliteStorage {
             schema::upgrade_db(&mut con)?;
         }
 
-        Ok(Self {
-            access_mode,
-            con: con.into(),
-        })
+        Ok(Self { access_mode, con })
     }
 }
 
@@ -153,13 +149,13 @@ impl<'t> Txn<'t> {
         }
     }
 
-    fn get_txn(&mut self) -> std::result::Result<&mut rusqlite::Transaction<'t>, SqliteError> {
+    fn get_txn(&self) -> std::result::Result<&rusqlite::Transaction<'t>, SqliteError> {
         self.txn
-            .as_mut()
+            .as_ref()
             .ok_or(SqliteError::TransactionAlreadyCommitted)
     }
 
-    fn get_next_working_set_number(&mut self) -> Result<usize> {
+    fn get_next_working_set_number(&self) -> Result<usize> {
         let t = self.get_txn()?;
         let next_id: Option<usize> = t
             .query_row(
@@ -174,27 +170,15 @@ impl<'t> Txn<'t> {
     }
 }
 
-#[async_trait]
 impl Storage for SqliteStorage {
-    async fn txn<F, R>(&self, f: F) -> Result<R>
-    where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
-        R: Send + 'static,
-    {
-        let access_mode = self.access_mode;
-        self.con
-            .call(move |con| {
-                let txn = con.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-                let mut txn_wrapper = Txn {
-                    txn: Some(txn),
-                    access_mode,
-                };
-
-                f(&mut txn_wrapper).map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))
-            })
-            .await
-            .map_err(Into::into)
+    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
+        let txn = self
+            .con
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Ok(Box::new(Txn {
+            txn: Some(txn),
+            access_mode: self.access_mode,
+        }))
     }
 }
 
@@ -431,21 +415,18 @@ impl StorageTxn for Txn<'_> {
     }
 
     fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
-        let rows = {
-            let t = self.get_txn()?;
-            let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
-            let query_result = q
-                .query_map([], |r| {
-                    let id: usize = r.get("id")?;
-                    let uuid: StoredUuid = r.get("uuid")?;
-                    Ok((id, uuid.0))
-                })
-                .context("Get working set query")?;
+        let t = self.get_txn()?;
 
-            query_result
-                .map(|row_result| row_result.map_err(Into::into))
-                .collect::<Result<Vec<_>>>()?
-        };
+        let mut q = t.prepare("SELECT id, uuid FROM working_set ORDER BY id ASC")?;
+        let rows = q
+            .query_map([], |r| {
+                let id: usize = r.get("id")?;
+                let uuid: StoredUuid = r.get("uuid")?;
+                Ok((id, uuid.0))
+            })
+            .context("Get working set query")?;
+
+        let rows: Vec<std::result::Result<(usize, Uuid), _>> = rows.collect();
         let mut res = Vec::with_capacity(rows.len());
         for _ in 0..self
             .get_next_working_set_number()
@@ -453,7 +434,8 @@ impl StorageTxn for Txn<'_> {
         {
             res.push(None);
         }
-        for (id, uuid) in rows {
+        for r in rows {
+            let (id, uuid) = r?;
             res[id] = Some(uuid);
         }
 
@@ -462,9 +444,10 @@ impl StorageTxn for Txn<'_> {
 
     fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
         self.check_write_access()?;
+        let t = self.get_txn()?;
+
         let next_working_id = self.get_next_working_set_number()?;
 
-        let t = self.get_txn()?;
         t.execute(
             "INSERT INTO working_set (id, uuid) VALUES (?, ?)",
             params![next_working_id, &StoredUuid(uuid)],
@@ -512,7 +495,7 @@ impl StorageTxn for Txn<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{errors, storage::taskmap_with};
+    use crate::storage::taskmap_with;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
@@ -630,175 +613,137 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_empty_dir() -> Result<()> {
+    #[test]
+    fn test_empty_dir() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let non_existant = tmp_dir.path().join("subdir");
-        let storage = SqliteStorage::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
+        let mut storage = SqliteStorage::new(non_existant.clone(), AccessMode::ReadWrite, true)?;
         let uuid = Uuid::new_v4();
-
-        storage
-            .txn(move |txn| {
-                assert!(txn.create_task(uuid)?);
-                txn.commit()?;
-                Ok(())
-            })
-            .await?;
-
-        storage
-            .txn(move |txn| {
-                let task = txn.get_task(uuid)?;
-                assert_eq!(task, Some(taskmap_with(vec![])));
-                Ok(())
-            })
-            .await?;
+        {
+            let mut txn = storage.txn()?;
+            assert!(txn.create_task(uuid)?);
+            txn.commit()?;
+        }
+        {
+            let mut txn = storage.txn()?;
+            let task = txn.get_task(uuid)?;
+            assert_eq!(task, Some(taskmap_with(vec![])));
+        }
 
         // Re-open the DB.
-        let storage = SqliteStorage::new(non_existant, AccessMode::ReadWrite, true)?;
-
-        storage
-            .txn(move |txn| {
-                let task = txn.get_task(uuid)?;
-                assert_eq!(task, Some(taskmap_with(vec![])));
-                Ok(())
-            })
-            .await?;
-
+        let mut storage = SqliteStorage::new(non_existant, AccessMode::ReadWrite, true)?;
+        {
+            let mut txn = storage.txn()?;
+            let task = txn.get_task(uuid)?;
+            assert_eq!(task, Some(taskmap_with(vec![])));
+        }
         Ok(())
     }
 
     /// Test upgrading from a TaskChampion-0.8.0 database, ensuring that some basic task data
     /// remains intact from that version. This provides a basic coverage test of all schema
     /// upgrade functions.
-    #[tokio::test]
-    async fn test_0_8_0_db() -> Result<()> {
+    #[test]
+    fn test_0_8_0_db() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         create_0_8_0_db(tmp_dir.path())?;
-        let storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
-
-        let db_version = storage
-            .con
-            .call(|conn| Ok(schema::get_db_version(conn)))
-            .await??;
-        assert_eq!(db_version, schema::LATEST_VERSION);
-
+        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        assert_eq!(
+            schema::get_db_version(&mut storage.con)?,
+            schema::LATEST_VERSION,
+        );
         let one = Uuid::parse_str("e2956511-fd47-4e40-926a-52616229c2fa").unwrap();
         let two = Uuid::parse_str("1d125b41-ee1d-49a7-9319-0506dee414f8").unwrap();
+        {
+            let mut txn = storage.txn()?;
 
-        storage
-            .txn(move |txn| {
-                let mut task_one = txn.get_task(one)?.unwrap();
-                assert_eq!(task_one.get("description").unwrap(), "one");
+            let mut task_one = txn.get_task(one)?.unwrap();
+            assert_eq!(task_one.get("description").unwrap(), "one");
 
-                let task_two = txn.get_task(two)?.unwrap();
-                assert_eq!(task_two.get("description").unwrap(), "two");
+            let task_two = txn.get_task(two)?.unwrap();
+            assert_eq!(task_two.get("description").unwrap(), "two");
 
-                let ops = txn.unsynced_operations()?;
-                assert_eq!(ops.len(), 14);
-                assert_eq!(ops[0], Operation::UndoPoint);
+            let ops = txn.unsynced_operations()?;
+            assert_eq!(ops.len(), 14);
+            assert_eq!(ops[0], Operation::UndoPoint);
 
-                task_one.insert("description".into(), "updated".into());
-                txn.set_task(one, task_one)?;
-                txn.add_operation(Operation::Update {
-                    uuid: one,
-                    property: "description".into(),
-                    old_value: Some("one".into()),
-                    value: Some("updated".into()),
-                    timestamp: Utc::now(),
-                })?;
-                txn.commit()?;
-                Ok(())
-            })
-            .await?;
+            task_one.insert("description".into(), "updated".into());
+            txn.set_task(one, task_one)?;
+            txn.add_operation(Operation::Update {
+                uuid: one,
+                property: "description".into(),
+                old_value: Some("one".into()),
+                value: Some("updated".into()),
+                timestamp: Utc::now(),
+            })?;
+            txn.commit()?;
+        }
 
         // Read back the modification.
-        storage
-            .txn(move |txn| {
-                let task_one = txn.get_task(one)?.unwrap();
-                assert_eq!(task_one.get("description").unwrap(), "updated");
-                let ops = txn.unsynced_operations()?;
-                assert_eq!(ops.len(), 15);
-                Ok(())
-            })
-            .await?;
+        {
+            let mut txn = storage.txn()?;
+            let task_one = txn.get_task(one)?.unwrap();
+            assert_eq!(task_one.get("description").unwrap(), "updated");
+            let ops = txn.unsynced_operations()?;
+            assert_eq!(ops.len(), 15);
+        }
 
         // Check the UUID fields on the operations directly in the DB.
-        let num_ops = storage
-            .con
-            .call(|conn| {
-                let t = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                let mut q = t.prepare("SELECT data, uuid FROM operations ORDER BY id ASC")?;
-                let mut num_ops = 0;
-
-                let rows = q
-                    .query_map([], |r| {
-                        let uuid: Option<StoredUuid> = r.get("uuid")?;
-                        let operation: Operation = r.get("data")?;
-                        Ok((uuid.map(|su| su.0), operation))
-                    })
-                    .context("Get all operations")
-                    .map_err(|e| tokio_rusqlite::Error::Other(e.into()))?;
-
-                for row in rows {
-                    let (uuid, operation) = row?;
-                    assert_eq!(uuid, operation.get_uuid());
-                    num_ops += 1;
-                }
-                Ok(num_ops)
-            })
-            .await?;
-
-        assert_eq!(num_ops, 15);
+        {
+            let t = storage
+                .con
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut q = t.prepare("SELECT data, uuid FROM operations ORDER BY id ASC")?;
+            let mut num_ops = 0;
+            for row in q
+                .query_map([], |r| {
+                    let uuid: Option<StoredUuid> = r.get("uuid")?;
+                    let operation: Operation = r.get("data")?;
+                    Ok((uuid.map(|su| su.0), operation))
+                })
+                .context("Get all operations")?
+            {
+                let (uuid, operation) = row?;
+                assert_eq!(uuid, operation.get_uuid());
+                num_ops += 1;
+            }
+            assert_eq!(num_ops, 15);
+        }
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_concurrent_access() -> Result<()> {
+    #[test]
+    fn test_concurrent_access() -> Result<()> {
         let tmp_dir = TempDir::new()?;
 
         // Initialize the DB once, as schema modifications are not isolated by transactions.
-        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
 
-        let db_path = tmp_dir.path().to_path_buf();
-
-        // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
-        let path1 = db_path.clone();
-        let handle1 = tokio::spawn(async move {
-            let storage = SqliteStorage::new(path1, AccessMode::ReadWrite, true).unwrap();
-            let u = Uuid::new_v4();
-            storage
-                .txn(move |txn| {
-                    txn.set_base_version(u).unwrap();
-                    thread::sleep(Duration::from_millis(100));
-                    txn.commit().unwrap();
-                    Ok(())
-                })
-                .await
-                .unwrap();
+        thread::scope(|scope| {
+            // First thread begins a transaction, writes immediately, waits 100ms, and commits it.
+            scope.spawn(|| {
+                let mut storage =
+                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
+                let u = Uuid::new_v4();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                thread::sleep(Duration::from_millis(100));
+                txn.commit().unwrap();
+            });
+            // Second thread waits 50ms, and begins a transaction. This
+            // should wait for the first to complete, but the regression would be a SQLITE_BUSY
+            // failure.
+            scope.spawn(|| {
+                thread::sleep(Duration::from_millis(50));
+                let mut storage =
+                    SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).unwrap();
+                let u = Uuid::new_v4();
+                let mut txn = storage.txn().unwrap();
+                txn.set_base_version(u).unwrap();
+                txn.commit().unwrap();
+            });
         });
-
-        // Second thread waits 50ms, and begins a transaction. This
-        // should wait for the first to complete, but the regression would be a SQLITE_BUSY
-        // failure.
-        let path2 = db_path;
-        let handle2 = tokio::spawn(async move {
-            thread::sleep(Duration::from_millis(50));
-            let storage = SqliteStorage::new(path2, AccessMode::ReadWrite, true).unwrap();
-            let u = Uuid::new_v4();
-            storage
-                .txn(move |txn| {
-                    txn.set_base_version(u).unwrap();
-                    txn.commit().unwrap();
-                    Ok(())
-                })
-                .await
-                .unwrap();
-        });
-
-        handle1.await.map_err(|e| errors::Error::Other(e.into()))?;
-        handle2.await.map_err(|e| errors::Error::Other(e.into()))?;
-
         Ok(())
     }
 
@@ -808,49 +753,44 @@ mod test {
     #[case::create_non_existent(false, true)]
     #[case::create_exists(true, true)]
     #[case::exists_dont_create(true, false)]
-    #[tokio::test]
-    async fn test_read_only(#[case] exists: bool, #[case] create: bool) -> Result<()> {
+    fn test_read_only(#[case] exists: bool, #[case] create: bool) -> Result<()> {
         let tmp_dir = TempDir::new()?;
         // If the DB should already exist, create it.
         if exists {
             SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
         }
-        let storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadOnly, create)?;
+        let mut storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadOnly, create)?;
 
         fn is_read_only_err<T: std::fmt::Debug>(res: Result<T>) -> bool {
             &res.unwrap_err().to_string() == "Task storage was opened in read-only mode"
         }
 
-        storage
-            .txn(move |txn| {
-                let taskmap = TaskMap::new();
-                let op = Operation::UndoPoint;
+        let mut txn = storage.txn()?;
+        let taskmap = TaskMap::new();
+        let op = Operation::UndoPoint;
 
-                // Mutating things fail.
-                assert!(is_read_only_err(txn.create_task(Uuid::new_v4())));
-                assert!(is_read_only_err(txn.set_task(Uuid::new_v4(), taskmap)));
-                assert!(is_read_only_err(txn.delete_task(Uuid::new_v4())));
-                assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4())));
-                assert!(is_read_only_err(txn.add_operation(op.clone())));
-                assert!(is_read_only_err(txn.remove_operation(op)));
-                assert!(is_read_only_err(txn.sync_complete()));
-                assert!(is_read_only_err(txn.add_to_working_set(Uuid::new_v4())));
-                assert!(is_read_only_err(txn.set_working_set_item(1, None)));
-                assert!(is_read_only_err(txn.clear_working_set()));
-                assert!(is_read_only_err(txn.commit()));
+        // Mutating things fail.
+        assert!(is_read_only_err(txn.create_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_task(Uuid::new_v4(), taskmap)));
+        assert!(is_read_only_err(txn.delete_task(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.add_operation(op.clone())));
+        assert!(is_read_only_err(txn.remove_operation(op)));
+        assert!(is_read_only_err(txn.sync_complete()));
+        assert!(is_read_only_err(txn.add_to_working_set(Uuid::new_v4())));
+        assert!(is_read_only_err(txn.set_working_set_item(1, None)));
+        assert!(is_read_only_err(txn.clear_working_set()));
+        assert!(is_read_only_err(txn.commit()));
 
-                // Read-only things succeed.
-                assert_eq!(txn.get_task(Uuid::new_v4())?, None);
-                assert_eq!(txn.get_pending_tasks()?.len(), 0);
-                assert_eq!(txn.all_tasks()?.len(), 0);
-                assert_eq!(txn.base_version()?, Uuid::nil());
-                assert_eq!(txn.get_task_operations(Uuid::new_v4())?.len(), 0);
-                assert_eq!(txn.unsynced_operations()?.len(), 0);
-                assert_eq!(txn.num_unsynced_operations()?, 0);
-                assert_eq!(txn.get_working_set()?.len(), 1);
-                Ok(())
-            })
-            .await?;
+        // Read-only things succeed.
+        assert_eq!(txn.get_task(Uuid::new_v4())?, None);
+        assert_eq!(txn.get_pending_tasks()?.len(), 0);
+        assert_eq!(txn.all_tasks()?.len(), 0);
+        assert_eq!(txn.base_version()?, Uuid::nil());
+        assert_eq!(txn.get_task_operations(Uuid::new_v4())?.len(), 0);
+        assert_eq!(txn.unsynced_operations()?.len(), 0);
+        assert_eq!(txn.num_unsynced_operations()?, 0);
+        assert_eq!(txn.get_working_set()?.len(), 1);
 
         Ok(())
     }

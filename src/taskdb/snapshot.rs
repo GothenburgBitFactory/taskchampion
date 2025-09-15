@@ -111,7 +111,7 @@ pub(super) fn apply_snapshot(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::storage::{InMemoryStorage, Storage, TaskMap};
+    use crate::{storage::TaskMap, StorageConfig};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -135,9 +135,9 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_round_trip() -> Result<()> {
-        let storage = InMemoryStorage::new();
+    #[test]
+    fn test_round_trip() -> Result<()> {
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
         let version = Uuid::new_v4();
 
         let task1 = (
@@ -153,40 +153,36 @@ mod test {
                 .collect::<TaskMap>(),
         );
 
-        let task1_clone = task1.clone();
-        let task2_clone = task2.clone();
-        storage
-            .txn(move |txn| {
-                txn.set_task(task1_clone.0, task1_clone.1.clone())?;
-                txn.set_task(task2_clone.0, task2_clone.1.clone())?;
-                txn.commit()
-            })
-            .await?;
+        {
+            let mut txn = storage.txn()?;
+            txn.set_task(task1.0, task1.1.clone())?;
+            txn.set_task(task2.0, task2.1.clone())?;
+            txn.commit()?;
+        }
 
-        let snap = storage.txn(|txn| make_snapshot(txn)).await?;
+        let snap = {
+            let mut txn = storage.txn()?;
+            make_snapshot(txn.as_mut())?
+        };
 
         // apply that snapshot to a fresh bit of fake
-        let storage = InMemoryStorage::new();
+        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        {
+            let mut txn = storage.txn()?;
+            apply_snapshot(txn.as_mut(), version, &snap)?;
+            txn.commit()?
+        }
 
-        storage
-            .txn(move |txn| {
-                apply_snapshot(txn, version, &snap)?;
-                txn.commit()
-            })
-            .await?;
+        {
+            let mut txn = storage.txn()?;
+            assert_eq!(txn.get_task(task1.0)?, Some(task1.1));
+            assert_eq!(txn.get_task(task2.0)?, Some(task2.1));
+            assert_eq!(txn.all_tasks()?.len(), 2);
+            assert_eq!(txn.base_version()?, version);
+            assert_eq!(txn.unsynced_operations()?.len(), 0);
+            assert_eq!(txn.get_working_set()?.len(), 1);
+        }
 
-        let task1_clone = task1.clone();
-        let task2_clone = task2.clone();
-        storage
-            .txn(move |txn| {
-                assert_eq!(txn.get_task(task1_clone.0)?, Some(task1_clone.1));
-                assert_eq!(txn.get_task(task2_clone.0)?, Some(task2_clone.1));
-                assert_eq!(txn.all_tasks()?.len(), 2);
-                assert_eq!(txn.base_version()?, version);
-                assert_eq!(txn.unsynced_operations()?.len(), 0);
-                assert_eq!(txn.get_working_set()?.len(), 1);
-                Ok(())
-            })
-            .await
+        Ok(())
     }
 }

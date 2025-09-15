@@ -4,13 +4,13 @@ This module defines the backend storage used by [`Replica`](crate::Replica).
 It defines a [trait](crate::storage::Storage) for storage implementations, and provides a default
 on-disk implementation as well as an in-memory implementation for testing.
 
-Users who wish to implement their own storage backends can implement the
+Typical uses of this crate do not interact directly with this module; [`StorageConfig`] is
+sufficient. However, users who wish to implement their own storage backends can implement the
 traits defined here and pass the result to [`Replica`](crate::Replica).
 */
 
 use crate::errors::Result;
 use crate::operation::Operation;
-use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -22,14 +22,9 @@ mod config;
 #[cfg(feature = "storage-sqlite")]
 pub(crate) mod sqlite;
 
-#[cfg(feature = "storage-sqlite")]
-pub use sqlite::SqliteStorage;
-
-pub use config::AccessMode;
+pub use config::{AccessMode, StorageConfig};
 
 mod inmemory;
-
-pub use inmemory::InMemoryStorage;
 
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
@@ -154,23 +149,7 @@ pub trait StorageTxn {
 
 /// A trait for objects able to act as task storage.  Most of the interesting behavior is in the
 /// [`crate::storage::StorageTxn`] trait.
-///
-/// ## Concurrency
-///
-/// The [`Storage::txn`] method is `async` but takes a **synchronous** closure `f`. This allows
-/// the use of database drivers with blocking APIs (like `rusqlite`) without stalling
-/// the async runtime.
-///
-/// Implementations of this trait must execute the closure on a separate thread, for
-/// example by using `tokio::task::spawn_blocking`.
-#[async_trait]
-pub trait Storage: Send + Sync {
-    /// Begins an async transaction.
-    ///
-    /// The provided closure `f` is synchronous and will be executed by the storage
-    /// backend on a blocking-safe thread.
-    async fn txn<F, R>(&self, f: F) -> Result<R>
-    where
-        F: for<'a> FnOnce(&'a mut (dyn StorageTxn + 'a)) -> Result<R> + Send + 'static,
-        R: Send + 'static;
+pub trait Storage {
+    /// Begin a transaction
+    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>>;
 }

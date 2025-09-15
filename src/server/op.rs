@@ -177,10 +177,9 @@ impl SyncOp {
 mod test {
     use super::*;
     use crate::errors::Result;
-    use crate::storage::InMemoryStorage;
-    use crate::storage::{Storage, TaskMap};
+    use crate::storage::TaskMap;
     use crate::taskdb::TaskDb;
-    use crate::Operations;
+    use crate::{Operations, StorageConfig};
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use proptest::prelude::*;
@@ -257,19 +256,19 @@ mod test {
         Ok(())
     }
 
-    async fn test_transform(
+    fn test_transform(
         setup: Option<SyncOp>,
         o1: SyncOp,
         o2: SyncOp,
         exp1p: Option<SyncOp>,
         exp2p: Option<SyncOp>,
-    ) -> Result<()> {
+    ) {
         let (o1p, o2p) = SyncOp::transform(o1.clone(), o2.clone());
         assert_eq!((&o1p, &o2p), (&exp1p, &exp2p));
 
         // check that the two operation sequences have the same effect, enforcing the invariant of
         // the transform function.
-        let storage1 = InMemoryStorage::new();
+        let mut db1 = TaskDb::new_inmemory();
         let mut ops1 = Operations::new();
         if let Some(o) = setup.clone() {
             ops1.push(o.into_op());
@@ -278,12 +277,9 @@ mod test {
         if let Some(o) = o2p {
             ops1.push(o.into_op());
         }
-        storage1
-            .txn(|txn| TaskDb::commit_operations(txn, ops1, |_| false))
-            .await
-            .unwrap();
+        db1.commit_operations(ops1, |_| false).unwrap();
 
-        let storage2 = InMemoryStorage::new();
+        let mut db2 = TaskDb::new_inmemory();
         let mut ops2 = Operations::new();
         if let Some(o) = setup {
             ops2.push(o.into_op());
@@ -292,20 +288,13 @@ mod test {
         if let Some(o) = o1p {
             ops2.push(o.into_op());
         }
-        storage2
-            .txn(|txn| TaskDb::commit_operations(txn, ops2, |_| false))
-            .await
-            .unwrap();
+        db2.commit_operations(ops2, |_| false).unwrap();
 
-        let tasks1 = storage1.txn(|txn| Ok(TaskDb::sorted_tasks(txn))).await?;
-        let tasks2 = storage2.txn(|txn| Ok(TaskDb::sorted_tasks(txn))).await?;
-        assert_eq!(tasks1, tasks2);
-
-        Ok(())
+        assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
     }
 
-    #[tokio::test]
-    async fn test_unrelated_create() -> Result<()> {
+    #[test]
+    fn test_unrelated_create() {
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
 
@@ -315,12 +304,11 @@ mod test {
             Create { uuid: uuid2 },
             Some(Create { uuid: uuid1 }),
             Some(Create { uuid: uuid2 }),
-        )
-        .await
+        );
     }
 
-    #[tokio::test]
-    async fn test_related_updates_different_props() -> Result<()> {
+    #[test]
+    fn test_related_updates_different_props() {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 
@@ -350,12 +338,11 @@ mod test {
                 value: Some("false".into()),
                 timestamp,
             }),
-        )
-        .await
+        );
     }
 
-    #[tokio::test]
-    async fn test_related_updates_same_prop() -> Result<()> {
+    #[test]
+    fn test_related_updates_same_prop() {
         let uuid = Uuid::new_v4();
         let timestamp1 = Utc::now();
         let timestamp2 = timestamp1 + Duration::seconds(10);
@@ -381,12 +368,11 @@ mod test {
                 value: Some("false".into()),
                 timestamp: timestamp2,
             }),
-        )
-        .await
+        );
     }
 
-    #[tokio::test]
-    async fn test_related_updates_same_prop_same_time() -> Result<()> {
+    #[test]
+    fn test_related_updates_same_prop_same_time() {
         let uuid = Uuid::new_v4();
         let timestamp = Utc::now();
 
@@ -411,8 +397,7 @@ mod test {
                 timestamp,
             }),
             None,
-        )
-        .await
+        );
     }
 
     fn uuid_strategy() -> impl Strategy<Value = Uuid> {
@@ -447,42 +432,38 @@ mod test {
         /// Check that, given two operations, their transform produces the same result, as
         /// required by the invariant.
         fn transform_invariant_holds(o1 in operation_strategy(), o2 in operation_strategy()) {
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let (o1p, o2p) = SyncOp::transform(o1.clone(), o2.clone());
+            let (o1p, o2p) = SyncOp::transform(o1.clone(), o2.clone());
 
             let mut ops1 = Operations::new();
             let mut ops2 = Operations::new();
-            let storage1 = InMemoryStorage::new();
-            let storage2 = InMemoryStorage::new();
+            let mut db1 = TaskDb::new(StorageConfig::InMemory.into_storage().unwrap());
+            let mut db2 = TaskDb::new(StorageConfig::InMemory.into_storage().unwrap());
 
-                // Ensure that any expected tasks already exist
-                for o in [&o1, &o2] {
-                    match o {
-                        SyncOp::Update { uuid, .. } | SyncOp::Delete { uuid } => {
-                            ops1.push(Operation::Create { uuid: *uuid });
-                            ops2.push(Operation::Create { uuid: *uuid });
-                        }
-                        _ => {},
+            // Ensure that any expected tasks already exist
+            for o in [&o1, &o2] {
+                match o {
+                    Update { uuid, .. } | Delete { uuid } => {
+                        ops1.push(Operation::Create { uuid: *uuid });
+                        ops2.push(Operation::Create { uuid: *uuid });
                     }
+                    _ => {},
                 }
+            }
 
-                ops1.push(o1.into_op());
-                ops2.push(o2.into_op());
+            ops1.push(o1.into_op());
+            ops2.push(o2.into_op());
 
-                if let Some(o2p) = o2p {
-                    ops1.push(o2p.into_op());
-                }
-                if let Some(o1p) = o1p {
-                    ops2.push(o1p.into_op());
-                }
+            if let Some(o2p) = o2p {
+                ops1.push(o2p.into_op());
+            }
+            if let Some(o1p) = o1p {
+                ops2.push(o1p.into_op());
+            }
 
-                storage1.txn(|txn| TaskDb::commit_operations(txn, ops1, |_| false)).await.unwrap();
-                storage2.txn(|txn| TaskDb::commit_operations(txn, ops2, |_| false)).await.unwrap();
+            db1.commit_operations(ops1, |_| false).unwrap();
+            db2.commit_operations(ops2, |_| false).unwrap();
 
-                let tasks1 = storage1.txn(|txn| Ok(TaskDb::sorted_tasks(txn))).await.unwrap();
-                let tasks2 = storage2.txn(|txn| Ok(TaskDb::sorted_tasks(txn))).await.unwrap();
-                assert_eq!(tasks1, tasks2);
-            });
+            assert_eq!(db1.sorted_tasks(), db2.sorted_tasks());
         }
     }
 
