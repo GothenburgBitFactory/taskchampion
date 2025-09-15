@@ -1,3 +1,5 @@
+#[cfg(feature = "storage-sqlite")]
+use crate::storage::sqlite::actor;
 use std::io;
 use thiserror::Error;
 
@@ -41,6 +43,10 @@ other_error!(serde_json::Error);
 other_error!(rusqlite::Error);
 #[cfg(feature = "storage-sqlite")]
 other_error!(crate::storage::sqlite::SqliteError);
+#[cfg(feature = "storage-sqlite")]
+other_error!(tokio::sync::oneshot::error::RecvError);
+#[cfg(feature = "storage-sqlite")]
+other_error!(tokio::sync::mpsc::error::SendError<actor::ActorMessage>);
 
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::http::Error);

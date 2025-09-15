@@ -1,13 +1,14 @@
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::config::AccessMode;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::{TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use uuid::Uuid;
 
+pub mod actor;
 mod schema;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -133,6 +134,16 @@ impl SqliteStorage {
 
         Ok(Self { access_mode, con })
     }
+
+    fn txn(&mut self) -> Result<Txn> {
+        let txn = self
+            .con
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Ok(Txn {
+            txn: Some(txn),
+            access_mode: self.access_mode,
+        })
+    }
 }
 
 struct Txn<'t> {
@@ -168,21 +179,7 @@ impl<'t> Txn<'t> {
 
         Ok(next_id.unwrap_or(0))
     }
-}
 
-impl Storage for SqliteStorage {
-    fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
-        let txn = self
-            .con
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Ok(Box::new(Txn {
-            txn: Some(txn),
-            access_mode: self.access_mode,
-        }))
-    }
-}
-
-impl StorageTxn for Txn<'_> {
     fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         let t = self.get_txn()?;
         let result: Option<StoredTaskMap> = t
@@ -495,6 +492,7 @@ impl StorageTxn for Txn<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::storage::sqlite::actor::SqliteStorageActor;
     use crate::storage::taskmap_with;
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -503,9 +501,11 @@ mod test {
     use std::time::Duration;
     use tempfile::TempDir;
 
-    fn storage() -> Result<SqliteStorage> {
+    fn storage() -> Result<actor::SqliteStorageActor> {
         let tmp_dir = TempDir::new()?;
-        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true)
+        let actor = SqliteStorageActor::new(tmp_dir.path(), AccessMode::ReadWrite, true)?;
+        std::mem::forget(tmp_dir);
+        Ok(actor)
     }
 
     crate::storage::test::storage_tests!(storage()?);

@@ -11,8 +11,8 @@ use log::{debug, info, trace};
 ///
 /// The operations are returned in the order they were applied. Use [`commit_reversed_operations`]
 /// to "undo" them.
-pub(crate) fn get_undo_operations(txn: &mut dyn StorageTxn) -> Result<Operations> {
-    let local_ops = txn.unsynced_operations().unwrap();
+pub(crate) async fn get_undo_operations(txn: &mut dyn StorageTxn) -> Result<Operations> {
+    let local_ops = txn.unsynced_operations().await?;
     let last_undo_op_idx = local_ops
         .iter()
         .enumerate()
@@ -66,12 +66,12 @@ fn reverse_ops(op: Operation) -> Vec<SyncOp> {
 ///
 /// This method only supports reversing operations if they precisely match local operations that
 /// have not yet been synchronized, and will return `false` if this is not the case.
-pub(crate) fn commit_reversed_operations(
+pub(crate) async fn commit_reversed_operations(
     txn: &mut dyn StorageTxn,
     undo_ops: Operations,
 ) -> Result<bool> {
     let mut applied = false;
-    let local_ops = txn.unsynced_operations().unwrap();
+    let local_ops = txn.unsynced_operations().await?;
     let mut undo_ops = undo_ops.to_vec();
 
     if undo_ops.is_empty() {
@@ -102,13 +102,13 @@ pub(crate) fn commit_reversed_operations(
         let rev_ops = reverse_ops(op.clone());
         for op in rev_ops {
             trace!("Applying reversed operation {:?}", op);
-            apply::apply_op(txn, &op)?;
+            apply::apply_op(txn, &op).await?;
             applied = true;
         }
-        txn.remove_operation(op)?;
+        txn.remove_operation(op).await?;
     }
 
-    txn.commit()?;
+    txn.commit().await?;
 
     Ok(applied)
 }
@@ -116,16 +116,18 @@ pub(crate) fn commit_reversed_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::inmemory::InMemoryStorage;
+    use crate::storage::Storage;
     use crate::{storage::taskmap_with, taskdb::TaskDb};
     use crate::{Operation, Operations};
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use uuid::Uuid;
 
-    #[test]
+    #[tokio::test]
     #[allow(clippy::vec_init_then_push)]
-    fn test_apply_create() -> Result<()> {
-        let mut db = TaskDb::new_inmemory();
+    async fn test_apply_create() -> Result<()> {
+        let mut db = TaskDb::new(InMemoryStorage::new());
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
         let timestamp = Utc::now();
@@ -156,9 +158,9 @@ mod tests {
             old_value: Some("v2".into()),
             timestamp,
         });
-        db.commit_operations(ops, |_| false)?;
+        db.commit_operations(ops, |_| false).await?;
 
-        let db_state = db.sorted_tasks();
+        let db_state = db.sorted_tasks().await;
 
         let mut ops = Operations::new();
         ops.push(Operation::UndoPoint);
@@ -180,51 +182,68 @@ mod tests {
             old_value: Some("v3".into()),
             timestamp,
         });
-        db.commit_operations(ops, |_| false)?;
+        db.commit_operations(ops, |_| false).await?;
 
-        assert_eq!(db.operations().len(), 9, "{:#?}", db.operations());
+        assert_eq!(
+            db.operations().await.len(),
+            9,
+            "{:#?}",
+            db.operations().await
+        );
 
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(db.storage.txn().await?.as_mut()).await?;
         assert_eq!(undo_ops.len(), 4, "{:#?}", undo_ops);
-        assert_eq!(&undo_ops[..], &db.operations()[5..]);
+        assert_eq!(&undo_ops[..], &db.operations().await[5..]);
 
         // Try committing the wrong set of ops.
         assert!(!commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
+            db.storage.txn().await?.as_mut(),
             undo_ops[1..=2].to_vec(),
-        )?);
+        )
+        .await?);
 
-        assert!(commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(commit_reversed_operations(db.storage.txn().await?.as_mut(), undo_ops).await?);
 
         // Note that we've subtracted the length of undo_ops.
-        assert_eq!(db.operations().len(), 5, "{:#?}", db.operations());
-        assert_eq!(db.sorted_tasks(), db_state, "{:#?}", db.sorted_tasks());
+        assert_eq!(
+            db.operations().await.len(),
+            5,
+            "{:#?}",
+            db.operations().await
+        );
+        assert_eq!(
+            db.sorted_tasks().await,
+            db_state,
+            "{:#?}",
+            db.sorted_tasks().await
+        );
 
         // Note that the number of undo operations is equal to the number of operations in the
         // database here because there are no UndoPoints.
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(db.storage.txn().await?.as_mut()).await?;
         assert_eq!(undo_ops.len(), 5, "{:#?}", undo_ops);
 
-        assert!(commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(commit_reversed_operations(db.storage.txn().await?.as_mut(), undo_ops).await?);
 
         // empty db
-        assert_eq!(db.operations().len(), 0, "{:#?}", db.operations());
-        assert_eq!(db.sorted_tasks(), vec![], "{:#?}", db.sorted_tasks());
+        assert_eq!(
+            db.operations().await.len(),
+            0,
+            "{:#?}",
+            db.operations().await
+        );
+        assert_eq!(
+            db.sorted_tasks().await,
+            vec![],
+            "{:#?}",
+            db.sorted_tasks().await
+        );
 
-        let undo_ops = get_undo_operations(db.storage.txn()?.as_mut())?;
+        let undo_ops = get_undo_operations(db.storage.txn().await?.as_mut()).await?;
         assert_eq!(undo_ops.len(), 0, "{:#?}", undo_ops);
 
         // nothing left to undo, so commit_undo_ops() returns false
-        assert!(!commit_reversed_operations(
-            db.storage.txn()?.as_mut(),
-            undo_ops
-        )?);
+        assert!(!commit_reversed_operations(db.storage.txn().await?.as_mut(), undo_ops).await?);
 
         Ok(())
     }

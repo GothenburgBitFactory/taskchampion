@@ -80,13 +80,13 @@ impl SnapshotTasks {
 
 /// Generate a snapshot (compressed, unencrypted) for the current state of the taskdb in the given
 /// storage.
-pub(super) fn make_snapshot(txn: &mut dyn StorageTxn) -> Result<Vec<u8>> {
-    let all_tasks = SnapshotTasks(txn.all_tasks()?);
+pub(super) async fn make_snapshot(txn: &mut dyn StorageTxn) -> Result<Vec<u8>> {
+    let all_tasks = SnapshotTasks(txn.all_tasks().await?);
     all_tasks.encode()
 }
 
 /// Apply the given snapshot (compressed, unencrypted) to the taskdb's storage.
-pub(super) fn apply_snapshot(
+pub(super) async fn apply_snapshot(
     txn: &mut dyn StorageTxn,
     version: VersionId,
     snapshot: &[u8],
@@ -94,16 +94,16 @@ pub(super) fn apply_snapshot(
     let all_tasks = SnapshotTasks::decode(snapshot)?;
 
     // double-check emptiness
-    if !txn.is_empty()? {
+    if !txn.is_empty().await? {
         return Err(Error::Database(String::from(
             "Cannot apply snapshot to a non-empty task database",
         )));
     }
 
     for (uuid, task) in all_tasks.into_inner().drain(..) {
-        txn.set_task(uuid, task)?;
+        txn.set_task(uuid, task).await?;
     }
-    txn.set_base_version(version)?;
+    txn.set_base_version(version).await?;
 
     Ok(())
 }
@@ -111,7 +111,7 @@ pub(super) fn apply_snapshot(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{storage::TaskMap, StorageConfig};
+    use crate::storage::{inmemory::InMemoryStorage, Storage, TaskMap};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -135,9 +135,9 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_round_trip() -> Result<()> {
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+    #[tokio::test]
+    async fn test_round_trip() -> Result<()> {
+        let mut storage = InMemoryStorage::new();
         let version = Uuid::new_v4();
 
         let task1 = (
@@ -154,33 +154,33 @@ mod test {
         );
 
         {
-            let mut txn = storage.txn()?;
-            txn.set_task(task1.0, task1.1.clone())?;
-            txn.set_task(task2.0, task2.1.clone())?;
-            txn.commit()?;
+            let mut txn = storage.txn().await?;
+            txn.set_task(task1.0, task1.1.clone()).await?;
+            txn.set_task(task2.0, task2.1.clone()).await?;
+            txn.commit().await?;
         }
 
         let snap = {
-            let mut txn = storage.txn()?;
-            make_snapshot(txn.as_mut())?
+            let mut txn = storage.txn().await?;
+            make_snapshot(txn.as_mut()).await?
         };
 
         // apply that snapshot to a fresh bit of fake
-        let mut storage = StorageConfig::InMemory.into_storage().unwrap();
+        let mut storage = InMemoryStorage::new();
         {
-            let mut txn = storage.txn()?;
-            apply_snapshot(txn.as_mut(), version, &snap)?;
-            txn.commit()?
+            let mut txn = storage.txn().await?;
+            apply_snapshot(txn.as_mut(), version, &snap).await?;
+            txn.commit().await?
         }
 
         {
-            let mut txn = storage.txn()?;
-            assert_eq!(txn.get_task(task1.0)?, Some(task1.1));
-            assert_eq!(txn.get_task(task2.0)?, Some(task2.1));
-            assert_eq!(txn.all_tasks()?.len(), 2);
-            assert_eq!(txn.base_version()?, version);
-            assert_eq!(txn.unsynced_operations()?.len(), 0);
-            assert_eq!(txn.get_working_set()?.len(), 1);
+            let mut txn = storage.txn().await?;
+            assert_eq!(txn.get_task(task1.0).await?, Some(task1.1));
+            assert_eq!(txn.get_task(task2.0).await?, Some(task2.1));
+            assert_eq!(txn.all_tasks().await?.len(), 2);
+            assert_eq!(txn.base_version().await?, version);
+            assert_eq!(txn.unsynced_operations().await?.len(), 0);
+            assert_eq!(txn.get_working_set().await?.len(), 1);
         }
 
         Ok(())
