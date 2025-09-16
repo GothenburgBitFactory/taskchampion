@@ -1,5 +1,6 @@
 use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
+use async_trait::async_trait;
 use google_cloud_storage::client::google_cloud_auth::credentials::CredentialsFile;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::error::ErrorResponse;
@@ -43,9 +44,9 @@ impl GcpService {
         })
     }
 }
-
+#[async_trait]
 impl Service for GcpService {
-    fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
+    async fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
         validate_object_name(name);
         let upload_type =
             objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
@@ -60,7 +61,7 @@ impl Service for GcpService {
         Ok(())
     }
 
-    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+    async fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
         validate_object_name(name);
         let download_res = self.rt.block_on(self.client.download_object(
             &objects::get::GetObjectRequest {
@@ -77,7 +78,7 @@ impl Service for GcpService {
         }
     }
 
-    fn del(&mut self, name: &str) -> Result<()> {
+    async fn del(&mut self, name: &str) -> Result<()> {
         validate_object_name(name);
         let del_res = self.rt.block_on(self.client.delete_object(
             &objects::delete::DeleteObjectRequest {
@@ -92,7 +93,10 @@ impl Service for GcpService {
         Ok(())
     }
 
-    fn list<'a>(&'a mut self, prefix: &str) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+    async fn list<'a>(
+        &'a mut self,
+        prefix: &'a str,
+    ) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + Send + 'a> {
         validate_object_name(prefix);
         Box::new(ObjectIterator {
             service: self,
@@ -102,7 +106,7 @@ impl Service for GcpService {
         })
     }
 
-    fn compare_and_swap(
+    async fn compare_and_swap(
         &mut self,
         name: &str,
         existing_value: Option<Vec<u8>>,

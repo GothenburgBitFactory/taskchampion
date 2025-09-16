@@ -15,14 +15,12 @@ const TASK_APP_ID: u8 = 1;
 #[derive(Clone)]
 pub(super) struct Cryptor {
     key: aead::LessSafeKey,
-    rng: rand::SystemRandom,
 }
 
 impl Cryptor {
     pub(super) fn new(salt: impl AsRef<[u8]>, secret: &Secret) -> Result<Self> {
         Ok(Cryptor {
             key: Self::derive_key(salt, secret)?,
-            rng: rand::SystemRandom::new(),
         })
     }
 
@@ -59,7 +57,7 @@ impl Cryptor {
         } = payload;
 
         let mut nonce_buf = [0u8; aead::NONCE_LEN];
-        self.rng
+        rand::SystemRandom::new()
             .fill(&mut nonce_buf)
             .map_err(|e| anyhow::anyhow!("error generating random nonce: {e}"))?;
         let nonce = aead::Nonce::assume_unique_for_key(nonce_buf);

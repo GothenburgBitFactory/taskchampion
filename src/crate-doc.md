@@ -52,7 +52,7 @@ let mut replica = Replica::new(storage);
 
 // Set up a local, on-disk server.
 let server_config = ServerConfig::Local { server_dir };
-let mut server = server_config.into_server()?;
+let mut server = server_config.into_server().await?;
 
 // Sync to that server.
 replica.sync(&mut server, true).await?;

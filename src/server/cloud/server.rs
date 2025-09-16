@@ -5,8 +5,13 @@ use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
     VersionId,
 };
+use async_trait::async_trait;
 use ring::rand;
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::future::Future;
+#[cfg(test)]
+use std::pin::Pin;
 #[cfg(not(test))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -68,7 +73,11 @@ pub(in crate::server) struct CloudServer<SVC: Service> {
     /// For testing, a function that is called in the middle of `add_version` to simulate
     /// a concurrent change in the service.
     #[cfg(test)]
-    add_version_intercept: Option<fn(service: &mut SVC)>,
+    add_version_intercept: Option<
+        Box<
+            dyn for<'a> FnOnce(&'a mut SVC) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> + Send,
+        >,
+    >,
 }
 
 const LATEST: &str = "latest";
@@ -82,8 +91,11 @@ fn version_to_bytes(v: VersionId) -> Vec<u8> {
 }
 
 impl<SVC: Service> CloudServer<SVC> {
-    pub(in crate::server) fn new(mut service: SVC, encryption_secret: Vec<u8>) -> Result<Self> {
-        let salt = Self::get_salt(&mut service)?;
+    pub(in crate::server) async fn new(
+        mut service: SVC,
+        encryption_secret: Vec<u8>,
+    ) -> Result<Self> {
+        let salt = Self::get_salt(&mut service).await?;
         let cryptor = Cryptor::new(salt, &encryption_secret.into())?;
         Ok(Self {
             service,
@@ -95,13 +107,15 @@ impl<SVC: Service> CloudServer<SVC> {
     }
 
     /// Get the salt value stored in the service, creating a new random one if necessary.
-    fn get_salt(service: &mut SVC) -> Result<Vec<u8>> {
+    async fn get_salt(service: &mut SVC) -> Result<Vec<u8>> {
         const SALT_NAME: &str = "salt";
         loop {
-            if let Some(salt) = service.get(SALT_NAME)? {
+            if let Some(salt) = service.get(SALT_NAME).await? {
                 return Ok(salt);
             }
-            service.compare_and_swap(SALT_NAME, None, Cryptor::gen_salt()?)?;
+            service
+                .compare_and_swap(SALT_NAME, None, Cryptor::gen_salt()?)
+                .await?;
         }
     }
 
@@ -161,8 +175,8 @@ impl<SVC: Service> CloudServer<SVC> {
 
     /// Get the version from "latest", or None if the object does not exist. This always fetches a fresh
     /// value from storage.
-    fn get_latest(&mut self) -> Result<Option<VersionId>> {
-        let Some(latest) = self.service.get(LATEST)? else {
+    async fn get_latest(&mut self) -> Result<Option<VersionId>> {
+        let Some(latest) = self.service.get(LATEST).await? else {
             return Ok(None);
         };
         let latest = VersionId::try_parse_ascii(&latest)
@@ -172,9 +186,13 @@ impl<SVC: Service> CloudServer<SVC> {
 
     /// Get the possible child versions of the given parent version, based only on the object
     /// names.
-    fn get_child_versions(&mut self, parent_version_id: &VersionId) -> Result<Vec<VersionId>> {
+    async fn get_child_versions(
+        &mut self,
+        parent_version_id: &VersionId,
+    ) -> Result<Vec<VersionId>> {
         self.service
             .list(&format!("v-{}-", parent_version_id.as_simple()))
+            .await
             .filter_map(|res| match res {
                 Ok(ObjectInfo { name, .. }) => {
                     if let Some((_, c)) = Self::parse_version_name(&name) {
@@ -203,21 +221,22 @@ impl<SVC: Service> CloudServer<SVC> {
     }
 
     /// Maybe call `cleanup` depending on `cleanup_probability`.
-    fn maybe_cleanup(&mut self) -> Result<()> {
+    async fn maybe_cleanup(&mut self) -> Result<()> {
         if self.randint()? < self.cleanup_probability {
             self.cleanup_probability = DEFAULT_CLEANUP_PROBABILITY;
-            self.cleanup()
+            self.cleanup().await
         } else {
             Ok(())
         }
     }
 
     /// Perform cleanup, deleting unnecessary data.
-    fn cleanup(&mut self) -> Result<()> {
+    async fn cleanup(&mut self) -> Result<()> {
         // Construct a vector containing all (child, parent, creation) tuples
         let mut versions = self
             .service
             .list("v-")
+            .await
             .filter_map(|res| match res {
                 Ok(ObjectInfo { name, creation }) => {
                     if let Some((p, c)) = Self::parse_version_name(&name) {
@@ -242,7 +261,7 @@ impl<SVC: Service> CloudServer<SVC> {
         // at "latest".
         let mut rev_chain = HashMap::new();
         let mut iterations = versions.len() + 1; // For cycle detection.
-        let latest = self.get_latest()?;
+        let latest = self.get_latest().await?;
         if let Some(mut c) = latest {
             while let Some(p) = parent_of(c) {
                 rev_chain.insert(c, p);
@@ -284,7 +303,7 @@ impl<SVC: Service> CloudServer<SVC> {
         // so any pair with parent equal to latest is allowed to stay.
         for (c, p, _) in versions {
             if rev_chain.get(&c) != Some(&p) && Some(p) != latest {
-                self.service.del(&Self::version_name(&p, &c))?;
+                self.service.del(&Self::version_name(&p, &c)).await?;
             }
         }
 
@@ -292,6 +311,7 @@ impl<SVC: Service> CloudServer<SVC> {
         let snapshots = self
             .service
             .list("s-")
+            .await
             .filter_map(|res| match res {
                 Ok(ObjectInfo { name, .. }) => Self::parse_snapshot_name(&name).map(Ok),
                 Err(e) => Some(Err(e)),
@@ -322,7 +342,7 @@ impl<SVC: Service> CloudServer<SVC> {
         };
         for version in snapshots {
             if version != latest_snapshot {
-                self.service.del(&Self::snapshot_name(&version))?;
+                self.service.del(&Self::snapshot_name(&version)).await?;
             }
         }
 
@@ -331,7 +351,9 @@ impl<SVC: Service> CloudServer<SVC> {
         let mut version = latest_snapshot;
         while let Some(parent) = rev_chain.get(&version) {
             if old_versions.contains(&version) {
-                self.service.del(&Self::version_name(parent, &version))?;
+                self.service
+                    .del(&Self::version_name(parent, &version))
+                    .await?;
             }
             version = *parent;
         }
@@ -340,13 +362,14 @@ impl<SVC: Service> CloudServer<SVC> {
     }
 }
 
-impl<SVC: Service> Server for CloudServer<SVC> {
-    fn add_version(
+#[async_trait]
+impl<SVC: Service + Send> Server for CloudServer<SVC> {
+    async fn add_version(
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
-        let latest = self.get_latest()?;
+        let latest = self.get_latest().await?;
         if let Some(l) = latest {
             if l != parent_version_id {
                 return Ok((
@@ -363,11 +386,11 @@ impl<SVC: Service> Server for CloudServer<SVC> {
             version_id,
             payload: history_segment,
         })?;
-        self.service.put(&new_name, sealed.as_ref())?;
+        self.service.put(&new_name, sealed.as_ref()).await?;
 
         #[cfg(test)]
-        if let Some(f) = self.add_version_intercept {
-            f(&mut self.service);
+        if let Some(f) = self.add_version_intercept.take() {
+            f(&mut self.service).await;
         }
 
         // Try to compare-and-swap this value into LATEST
@@ -375,11 +398,12 @@ impl<SVC: Service> Server for CloudServer<SVC> {
         let new_value = version_to_bytes(version_id);
         if !self
             .service
-            .compare_and_swap(LATEST, old_value, new_value)?
+            .compare_and_swap(LATEST, old_value, new_value)
+            .await?
         {
             // Delete the version data, since it was not latest.
-            self.service.del(&new_name)?;
-            let latest = self.get_latest()?;
+            self.service.del(&new_name).await?;
+            let latest = self.get_latest().await?;
             let latest = latest.unwrap_or(Uuid::nil());
             return Ok((
                 AddVersionResult::ExpectedParentVersion(latest),
@@ -388,23 +412,26 @@ impl<SVC: Service> Server for CloudServer<SVC> {
         }
 
         // Attempt a cleanup, but ignore errors.
-        let _ = self.maybe_cleanup();
+        let _ = self.maybe_cleanup().await;
 
         Ok((AddVersionResult::Ok(version_id), self.snapshot_urgency()?))
     }
 
-    fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
+    async fn get_child_version(
+        &mut self,
+        parent_version_id: VersionId,
+    ) -> Result<GetVersionResult> {
         // The `get_child_versions` function may return several possible children, only one of
         // those will lead to `latest`, and importantly the others will not have their own
         // children. So we can detect the "true" child as the one that is equal to "latest" or has
         // children. Note that even if `get_child_versions` returns a single version, that version
         // may not be valid and the appropriate result may be NoSuchVersion.
-        let version_id = match &(self.get_child_versions(&parent_version_id)?)[..] {
+        let version_id = match &(self.get_child_versions(&parent_version_id).await?)[..] {
             [] => return Ok(GetVersionResult::NoSuchVersion),
             children => {
                 // There are some extra version objects, so a cleanup is warranted.
                 self.cleanup_probability = 255;
-                let latest = self.get_latest()?;
+                let latest = self.get_latest().await?;
                 let mut true_child = None;
                 for child in children {
                     if Some(*child) == latest {
@@ -414,7 +441,7 @@ impl<SVC: Service> Server for CloudServer<SVC> {
                 }
                 if true_child.is_none() {
                     for child in children {
-                        if !self.get_child_versions(child)?.is_empty() {
+                        if !self.get_child_versions(child).await?.is_empty() {
                             true_child = Some(*child)
                         }
                     }
@@ -428,7 +455,8 @@ impl<SVC: Service> Server for CloudServer<SVC> {
 
         let Some(sealed) = self
             .service
-            .get(&Self::version_name(&parent_version_id, &version_id))?
+            .get(&Self::version_name(&parent_version_id, &version_id))
+            .await?
         else {
             // This really shouldn't happen, since the chain was derived from object names, but
             // perhaps the object was deleted.
@@ -445,26 +473,26 @@ impl<SVC: Service> Server for CloudServer<SVC> {
         })
     }
 
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+    async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         let name = Self::snapshot_name(&version_id);
         let sealed = self.cryptor.seal(Unsealed {
             version_id,
             payload: snapshot,
         })?;
-        self.service.put(&name, sealed.as_ref())?;
+        self.service.put(&name, sealed.as_ref()).await?;
         Ok(())
     }
 
-    fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
+    async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         // Pick the first snapshot we find.
-        let Some(name) = self.service.list("s-").next() else {
+        let Some(name) = self.service.list("s-").await.next() else {
             return Ok(None);
         };
         let ObjectInfo { name, .. } = name?;
         let Some(version_id) = Self::parse_snapshot_name(&name) else {
             return Ok(None);
         };
-        let Some(payload) = self.service.get(&name)? else {
+        let Some(payload) = self.service.get(&name).await? else {
             return Ok(None);
         };
         let unsealed = self.cryptor.unseal(Sealed {
@@ -496,22 +524,23 @@ mod tests {
         }
     }
 
+    #[async_trait]
     impl Service for MockService {
-        fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
+        async fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
             self.0.insert(name.into(), (INSERTION_TIME, value.into()));
             Ok(())
         }
 
-        fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+        async fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
             Ok(self.0.get(name).map(|(_, data)| data.clone()))
         }
 
-        fn del(&mut self, name: &str) -> Result<()> {
+        async fn del(&mut self, name: &str) -> Result<()> {
             self.0.remove(name);
             Ok(())
         }
 
-        fn compare_and_swap(
+        async fn compare_and_swap(
             &mut self,
             name: &str,
             existing_value: Option<Vec<u8>>,
@@ -524,10 +553,10 @@ mod tests {
             Ok(false)
         }
 
-        fn list<'a>(
+        async fn list<'a>(
             &'a mut self,
             prefix: &'a str,
-        ) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+        ) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + Send + 'a> {
             Box::new(
                 self.0
                     .iter()
@@ -644,8 +673,10 @@ mod tests {
 
     const SECRET: &[u8] = b"testing";
 
-    fn make_server() -> CloudServer<MockService> {
-        let mut server = CloudServer::new(MockService::new(), SECRET.into()).unwrap();
+    async fn make_server() -> CloudServer<MockService> {
+        let mut server = CloudServer::new(MockService::new(), SECRET.into())
+            .await
+            .unwrap();
         // Prevent cleanup during tests.
         server.cleanup_probability = 0;
         server
@@ -758,91 +789,105 @@ mod tests {
         );
     }
 
-    #[test]
-    fn get_salt_existing() {
+    #[tokio::test]
+    async fn get_salt_existing() {
         let mut service = MockService::new();
         assert_eq!(
-            CloudServer::<MockService>::get_salt(&mut service).unwrap(),
+            CloudServer::<MockService>::get_salt(&mut service)
+                .await
+                .unwrap(),
             b"abcdefghabcdefgh".to_vec()
         );
     }
 
-    #[test]
-    fn get_salt_create() {
+    #[tokio::test]
+    async fn get_salt_create() {
         let mut service = MockService::new();
-        service.del("salt").unwrap();
-        let got_salt = CloudServer::<MockService>::get_salt(&mut service).unwrap();
-        let salt_obj = service.get("salt").unwrap().unwrap();
+        service.del("salt").await.unwrap();
+        let got_salt = CloudServer::<MockService>::get_salt(&mut service)
+            .await
+            .unwrap();
+        let salt_obj = service.get("salt").await.unwrap().unwrap();
         assert_eq!(got_salt, salt_obj);
     }
 
-    #[test]
-    fn get_latest_empty() {
-        let mut server = make_server();
-        assert_eq!(server.get_latest().unwrap(), None);
+    #[tokio::test]
+    async fn get_latest_empty() {
+        let mut server = make_server().await;
+        assert_eq!(server.get_latest().await.unwrap(), None);
     }
 
-    #[test]
-    fn get_latest_exists() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_latest_exists() {
+        let mut server = make_server().await;
         let latest = Uuid::new_v4();
         server.mock_set_latest(latest);
-        assert_eq!(server.get_latest().unwrap(), Some(latest));
+        assert_eq!(server.get_latest().await.unwrap(), Some(latest));
     }
 
-    #[test]
-    fn get_latest_invalid() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_latest_invalid() {
+        let mut server = make_server().await;
         server
             .service
             .0
             .insert(LATEST.into(), (999, b"not-a-uuid".to_vec()));
-        assert!(server.get_latest().is_err());
+        assert!(server.get_latest().await.is_err());
     }
 
-    #[test]
-    fn get_child_versions_empty() {
-        let mut server = make_server();
-        assert_eq!(server.get_child_versions(&Uuid::new_v4()).unwrap().len(), 0);
+    #[tokio::test]
+    async fn get_child_versions_empty() {
+        let mut server = make_server().await;
+        assert_eq!(
+            server
+                .get_child_versions(&Uuid::new_v4())
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
-    #[test]
-    fn get_child_versions_single() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_child_versions_single() {
+        let mut server = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v2, v1, 1000, b"first");
-        assert_eq!(server.get_child_versions(&v1).unwrap().len(), 0);
-        assert_eq!(server.get_child_versions(&v2).unwrap(), vec![v1]);
+        assert_eq!(server.get_child_versions(&v1).await.unwrap().len(), 0);
+        assert_eq!(server.get_child_versions(&v2).await.unwrap(), vec![v1]);
     }
 
-    #[test]
-    fn get_child_versions_multiple() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_child_versions_multiple() {
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v3, v1, 1000, b"first");
         server.mock_add_version(v3, v2, 1000, b"second");
-        assert_eq!(server.get_child_versions(&v1).unwrap().len(), 0);
-        assert_eq!(server.get_child_versions(&v2).unwrap().len(), 0);
-        let versions = server.get_child_versions(&v3).unwrap();
+        assert_eq!(server.get_child_versions(&v1).await.unwrap().len(), 0);
+        assert_eq!(server.get_child_versions(&v2).await.unwrap().len(), 0);
+        let versions = server.get_child_versions(&v3).await.unwrap();
         assert!(versions == vec![v1, v2] || versions == vec![v2, v1]);
     }
 
-    #[test]
-    fn add_version_empty() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn add_version_empty() {
+        let mut server = make_server().await;
         let parent = Uuid::new_v4();
-        let (res, _) = server.add_version(parent, b"history".to_vec()).unwrap();
+        let (res, _) = server
+            .add_version(parent, b"history".to_vec())
+            .await
+            .unwrap();
         assert!(matches!(res, AddVersionResult::Ok(_)));
     }
 
-    #[test]
-    fn add_version_good() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn add_version_good() {
+        let mut server = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"first");
         server.mock_set_latest(v2);
 
-        let (res, _) = server.add_version(v2, b"history".to_vec()).unwrap();
+        let (res, _) = server.add_version(v2, b"history".to_vec()).await.unwrap();
         let AddVersionResult::Ok(new_version) = res else {
             panic!("expected OK");
         };
@@ -855,36 +900,38 @@ mod tests {
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn add_version_not_latest() {
+    #[tokio::test]
+    async fn add_version_not_latest() {
         // The `add_version` method does nothing if the version is not latest.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"first");
         server.mock_set_latest(v2);
 
         let expected = server.clone();
 
-        let (res, _) = server.add_version(v1, b"history".to_vec()).unwrap();
+        let (res, _) = server.add_version(v1, b"history".to_vec()).await.unwrap();
         assert_eq!(res, AddVersionResult::ExpectedParentVersion(v2));
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn add_version_not_latest_race() {
+    #[tokio::test]
+    async fn add_version_not_latest_race() {
         // The `add_version` function effectively checks twice for a conflict: once by just
         // fetching "latest", returning early if the value is not as expected; and once in the
         // compare-and-swap. This test uses `add_version_intercept` to force the first check to
         // succeed and the second test to fail.
-        let mut server = make_server();
+        let mut server: CloudServer<MockService> = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         const V3: Uuid = Uuid::max();
         server.mock_add_version(v1, v2, 1000, b"first");
         server.mock_add_version(v2, V3, 1000, b"second");
         server.mock_set_latest(v2);
-        server.add_version_intercept = Some(|service| {
-            service.put(LATEST, &version_to_bytes(V3)).unwrap();
-        });
+        server.add_version_intercept = Some(Box::new(|service| {
+            Box::pin(async move {
+                service.put(LATEST, &version_to_bytes(V3)).await.unwrap();
+            })
+        }));
 
         let mut expected = server.empty_clone();
         expected.mock_add_version(v1, v2, 1000, b"first");
@@ -892,14 +939,14 @@ mod tests {
         expected.mock_set_latest(V3); // updated by the intercept
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        let (res, _) = server.add_version(v2, b"history".to_vec()).unwrap();
+        let (res, _) = server.add_version(v2, b"history".to_vec()).await.unwrap();
         assert_eq!(res, AddVersionResult::ExpectedParentVersion(V3));
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn add_version_unknown() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn add_version_unknown() {
+        let mut server = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"first");
         server.mock_set_latest(v2);
@@ -908,32 +955,33 @@ mod tests {
 
         let (res, _) = server
             .add_version(Uuid::new_v4(), b"history".to_vec())
+            .await
             .unwrap();
         assert_eq!(res, AddVersionResult::ExpectedParentVersion(v2));
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn get_child_version_empty() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_child_version_empty() {
+        let mut server = make_server().await;
         assert_eq!(
-            server.get_child_version(Uuid::new_v4()).unwrap(),
+            server.get_child_version(Uuid::new_v4()).await.unwrap(),
             GetVersionResult::NoSuchVersion
         );
     }
 
-    #[test]
-    fn get_child_version_single() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_child_version_single() {
+        let mut server = make_server().await;
         let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v2, v1, 1000, b"first");
         server.mock_set_latest(v1);
         assert_eq!(
-            server.get_child_version(v1).unwrap(),
+            server.get_child_version(v1).await.unwrap(),
             GetVersionResult::NoSuchVersion
         );
         assert_eq!(
-            server.get_child_version(v2).unwrap(),
+            server.get_child_version(v2).await.unwrap(),
             GetVersionResult::Version {
                 version_id: v1,
                 parent_version_id: v2,
@@ -942,17 +990,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn get_child_version_single_invalid() {
+    #[tokio::test]
+    async fn get_child_version_single_invalid() {
         // This is a regression test for #387.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         // Here v2 is latest, so v3 is not a valid child of v2.
         server.mock_add_version(v1, v2, 1000, b"second");
         server.mock_add_version(v2, v3, 1000, b"third");
         server.mock_set_latest(v2);
         assert_eq!(
-            server.get_child_version(v1).unwrap(),
+            server.get_child_version(v1).await.unwrap(),
             GetVersionResult::Version {
                 version_id: v2,
                 parent_version_id: v1,
@@ -960,14 +1008,14 @@ mod tests {
             }
         );
         assert_eq!(
-            server.get_child_version(v2).unwrap(),
+            server.get_child_version(v2).await.unwrap(),
             GetVersionResult::NoSuchVersion
         );
     }
 
-    #[test]
-    fn get_child_version_multiple() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_child_version_multiple() {
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (vx, vy, vz) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -977,7 +1025,7 @@ mod tests {
         server.mock_add_version(v2, vz, 1000, b"false start z");
         server.mock_set_latest(v3);
         assert_eq!(
-            server.get_child_version(v1).unwrap(),
+            server.get_child_version(v1).await.unwrap(),
             GetVersionResult::Version {
                 version_id: v2,
                 parent_version_id: v1,
@@ -985,7 +1033,7 @@ mod tests {
             }
         );
         assert_eq!(
-            server.get_child_version(v2).unwrap(),
+            server.get_child_version(v2).await.unwrap(),
             GetVersionResult::Version {
                 version_id: v3,
                 parent_version_id: v2,
@@ -993,22 +1041,22 @@ mod tests {
             }
         );
         assert_eq!(
-            server.get_child_version(v3).unwrap(),
+            server.get_child_version(v3).await.unwrap(),
             GetVersionResult::NoSuchVersion
         );
     }
 
-    #[test]
-    fn cleanup_empty() {
-        let mut server = make_server();
-        server.cleanup().unwrap();
+    #[tokio::test]
+    async fn cleanup_empty() {
+        let mut server = make_server().await;
+        server.cleanup().await.unwrap();
     }
 
-    #[test]
-    fn cleanup_linear() {
+    #[tokio::test]
+    async fn cleanup_linear() {
         // Test that cleanup does nothing for a linear version history with a snapshot at the
         // oldest version.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(NIL_VERSION_ID, v1, 1000, b"first");
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -1018,14 +1066,14 @@ mod tests {
 
         let expected = server.clone();
 
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_cycle() {
+    #[tokio::test]
+    async fn cleanup_cycle() {
         // When a cycle is present, cleanup succeeds and makes no changes.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v3, v1, 1000, b"first");
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -1034,14 +1082,14 @@ mod tests {
 
         let expected = server.clone();
 
-        assert!(server.cleanup().is_err());
+        assert!(server.cleanup().await.is_err());
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_extra_branches() {
+    #[tokio::test]
+    async fn cleanup_extra_branches() {
         // Cleanup deletes extra branches in the versions.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (vx, vy) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -1056,13 +1104,13 @@ mod tests {
         expected.mock_set_latest(v3);
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_extra_snapshots() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn cleanup_extra_snapshots() {
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let vy = Uuid::new_v4();
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -1080,14 +1128,14 @@ mod tests {
         expected.mock_set_latest(v3);
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_old_versions_no_snapshot() {
+    #[tokio::test]
+    async fn cleanup_old_versions_no_snapshot() {
         // If there are old versions ,but no snapshot, nothing is cleaned up.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 200, b"second");
         server.mock_add_version(v2, v3, 300, b"third");
@@ -1095,15 +1143,15 @@ mod tests {
 
         let expected = server.clone();
 
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_old_versions_with_snapshot() {
+    #[tokio::test]
+    async fn cleanup_old_versions_with_snapshot() {
         // If there are old versions that are also older than a snapshot, they are
         // cleaned up.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (v4, v5, v6) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 200, b"second");
@@ -1122,14 +1170,14 @@ mod tests {
         expected.mock_set_latest(v6);
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_old_versions_newer_than_snapshot() {
+    #[tokio::test]
+    async fn cleanup_old_versions_newer_than_snapshot() {
         // Old versions that are newer than the latest snapshot are not cleaned up.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (v4, v5, v6) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 200, b"second");
@@ -1148,14 +1196,14 @@ mod tests {
         expected.mock_set_latest(v6);
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn cleanup_children_of_latest() {
+    #[tokio::test]
+    async fn cleanup_children_of_latest() {
         // New versions that are children of the latest version are not cleaned up.
-        let mut server = make_server();
+        let mut server = make_server().await;
         let (v1, v2, v3) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (vnew1, vnew2) = (Uuid::new_v4(), Uuid::new_v4());
         server.mock_add_version(v1, v2, 1000, b"second");
@@ -1167,34 +1215,37 @@ mod tests {
 
         let expected = server.clone();
 
-        server.cleanup().unwrap();
+        server.cleanup().await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn add_snapshot() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn add_snapshot() {
+        let mut server = make_server().await;
         let v = Uuid::new_v4();
 
         let mut expected = server.empty_clone();
         expected.mock_add_snapshot(v, INSERTION_TIME, b"SNAP");
 
         assert_ne!(server.unencrypted(), expected.unencrypted());
-        server.add_snapshot(v, b"SNAP".to_vec()).unwrap();
+        server.add_snapshot(v, b"SNAP".to_vec()).await.unwrap();
         assert_eq!(server.unencrypted(), expected.unencrypted());
     }
 
-    #[test]
-    fn get_snapshot_missing() {
-        let mut server = make_server();
-        assert_eq!(server.get_snapshot().unwrap(), None);
+    #[tokio::test]
+    async fn get_snapshot_missing() {
+        let mut server = make_server().await;
+        assert_eq!(server.get_snapshot().await.unwrap(), None);
     }
 
-    #[test]
-    fn get_snapshot_present() {
-        let mut server = make_server();
+    #[tokio::test]
+    async fn get_snapshot_present() {
+        let mut server = make_server().await;
         let v = Uuid::new_v4();
         server.mock_add_snapshot(v, 1000, b"SNAP");
-        assert_eq!(server.get_snapshot().unwrap(), Some((v, b"SNAP".to_vec())));
+        assert_eq!(
+            server.get_snapshot().await.unwrap(),
+            Some((v, b"SNAP".to_vec()))
+        );
     }
 }

@@ -1,5 +1,6 @@
 use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
+use async_trait::async_trait;
 use aws_config::{
     meta::region::RegionProviderChain, profile::ProfileFileCredentialsProvider, BehaviorVersion,
     Region,
@@ -134,8 +135,9 @@ async fn get_body(get_res: GetObjectOutput) -> Result<Vec<u8>> {
     Ok(get_res.body.collect().await?.to_vec())
 }
 
+#[async_trait]
 impl Service for AwsService {
-    fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
+    async fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
         self.block_on(async {
             validate_object_name(name);
             self.client
@@ -150,7 +152,7 @@ impl Service for AwsService {
         })
     }
 
-    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+    async fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
         self.block_on(async {
             validate_object_name(name);
             let Some(get_res) = if_key_exists(
@@ -169,7 +171,7 @@ impl Service for AwsService {
         })
     }
 
-    fn del(&mut self, name: &str) -> Result<()> {
+    async fn del(&mut self, name: &str) -> Result<()> {
         self.block_on(async {
             validate_object_name(name);
             self.client
@@ -183,7 +185,10 @@ impl Service for AwsService {
         })
     }
 
-    fn list<'a>(&'a mut self, prefix: &str) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+    async fn list<'a>(
+        &'a mut self,
+        prefix: &'a str,
+    ) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + Send + 'a> {
         validate_object_name(prefix);
         Box::new(ObjectIterator {
             service: self,
@@ -193,7 +198,7 @@ impl Service for AwsService {
         })
     }
 
-    fn compare_and_swap(
+    async fn compare_and_swap(
         &mut self,
         name: &str,
         existing_value: Option<Vec<u8>>,

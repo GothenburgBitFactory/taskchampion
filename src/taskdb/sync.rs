@@ -21,7 +21,7 @@ pub(super) async fn sync(
     // if this taskdb is entirely empty, then start by getting and applying a snapshot
     if txn.is_empty().await? {
         trace!("storage is empty; attempting to apply a snapshot");
-        if let Some((version, snap)) = server.get_snapshot()? {
+        if let Some((version, snap)) = server.get_snapshot().await? {
             snapshot::apply_snapshot(txn, version, snap.as_ref()).await?;
             trace!("applied snapshot for version {}", version);
         }
@@ -68,7 +68,7 @@ pub(super) async fn sync(
                     version_id,
                     history_segment,
                     ..
-                } = server.get_child_version(base_version_id)?
+                } = server.get_child_version(base_version_id).await?
                 {
                     let version_str = str::from_utf8(&history_segment).unwrap();
                     let version: Version = serde_json::from_str(version_str).unwrap();
@@ -105,7 +105,8 @@ pub(super) async fn sync(
             };
             let history_segment = serde_json::to_string(&new_version).unwrap().into();
             info!("sending new version to server");
-            let (res, snapshot_urgency) = server.add_version(base_version_id, history_segment)?;
+            let (res, snapshot_urgency) =
+                server.add_version(base_version_id, history_segment).await?;
             match res {
                 AddVersionResult::Ok(new_version_id) => {
                     info!("version {:?} received by server", new_version_id);
@@ -120,7 +121,7 @@ pub(super) async fn sync(
                     };
                     if snapshot_urgency >= base_urgency {
                         let snapshot = snapshot::make_snapshot(txn).await?;
-                        server.add_snapshot(new_version_id, snapshot)?;
+                        server.add_snapshot(new_version_id, snapshot).await?;
                     }
                 }
                 AddVersionResult::ExpectedParentVersion(parent_version_id) => {
