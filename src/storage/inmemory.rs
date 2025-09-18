@@ -50,7 +50,8 @@ impl Txn<'_> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageTxn for Txn<'_> {
     async fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
         match self.data_ref().tasks.get(&uuid) {
@@ -253,9 +254,21 @@ impl InMemoryStorage {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl Storage for InMemoryStorage {
     async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + Send + 'a>> {
+        Ok(Box::new(Txn {
+            storage: self,
+            new_data: None,
+        }))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+impl Storage for InMemoryStorage {
+    async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + 'a>> {
         Ok(Box::new(Txn {
             storage: self,
             new_data: None,

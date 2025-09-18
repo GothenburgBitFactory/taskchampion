@@ -20,3 +20,12 @@ The Rust API, as defined in [the docs](https://docs.rs/taskchampion/latest/taskc
 
 The Rust API follows semantic versioning.
 As this is still in the `0.x` phase, so breaking changes may occur but will be indicated with a change to the minor version.
+
+## Building for WebAssembly (WASM)
+When compiling this crate for a WebAssembly target (e.g., wasm32-unknown-unknown), you must disable the default features, as they include dependencies not compatible with WASM. Instead, select only the features you need that are WASM-compatible.
+
+For example, to build with in-memory storage, use the following command:
+
+```bash
+cargo build --target wasm32-unknown-unknown --no-default-features --features "storage-inmemory"
+```

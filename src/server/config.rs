@@ -1,4 +1,6 @@
+#[cfg(feature = "sync-api")]
 use super::types::Server;
+#[cfg(feature = "sync-api")]
 use crate::errors::Result;
 #[cfg(feature = "server-aws")]
 pub use crate::server::cloud::aws::AwsCredentials;
@@ -12,6 +14,7 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
+#[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
@@ -20,6 +23,7 @@ use uuid::Uuid;
 ///
 /// This enum is non-exhaustive, as users should only be constructing required
 /// variants, not matching on it.
+#[cfg(feature = "sync-api")]
 #[non_exhaustive]
 pub enum ServerConfig {
     /// A local task database, for situations with a single replica.
@@ -93,6 +97,7 @@ pub enum ServerConfig {
     },
 }
 
+#[cfg(feature = "sync-api")]
 impl ServerConfig {
     /// Get a server based on this configuration
     pub async fn into_server(self) -> Result<Box<dyn Server>> {

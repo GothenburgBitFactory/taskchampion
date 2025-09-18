@@ -1,4 +1,5 @@
 //! Tests for storage backends. This tests consistency across multiple method calls, to ensure that
+//!
 //! all implementations are consistent.
 
 use super::{Storage, TaskMap};
@@ -12,99 +13,130 @@ use uuid::Uuid;
 /// Define a collection of storage tests that apply to all storage implementations.
 macro_rules! storage_tests {
     ($storage:expr) => {
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn get_working_set_empty() -> $crate::errors::Result<()> {
             $crate::storage::test::get_working_set_empty($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn add_to_working_set() -> $crate::errors::Result<()> {
             $crate::storage::test::add_to_working_set($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn clear_working_set() -> $crate::errors::Result<()> {
             $crate::storage::test::clear_working_set($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn drop_transaction() -> $crate::errors::Result<()> {
             $crate::storage::test::drop_transaction($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn create() -> $crate::errors::Result<()> {
             $crate::storage::test::create($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn create_exists() -> $crate::errors::Result<()> {
             $crate::storage::test::create_exists($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn get_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::get_missing($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn set_task() -> $crate::errors::Result<()> {
             $crate::storage::test::set_task($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn delete_task_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_missing($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn delete_task_exists() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_exists($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn all_tasks_empty() -> $crate::errors::Result<()> {
             $crate::storage::test::all_tasks_empty($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn all_tasks_and_uuids() -> $crate::errors::Result<()> {
             $crate::storage::test::all_tasks_and_uuids($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn base_version_default() -> Result<()> {
             $crate::storage::test::base_version_default($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn base_version_setting() -> Result<()> {
             $crate::storage::test::base_version_setting($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn unsynced_operations() -> Result<()> {
             $crate::storage::test::unsynced_operations($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn remove_operations() -> Result<()> {
             $crate::storage::test::remove_operations($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn task_operations() -> Result<()> {
             $crate::storage::test::task_operations($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn sync_complete() -> Result<()> {
             $crate::storage::test::sync_complete($storage).await
         }
 
-        #[tokio::test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
         async fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage).await
+        }
+
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+        async fn drop_transaction_on_update() -> Result<()> {
+            $crate::storage::test::drop_transaction_on_update($storage).await
+        }
+
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+        async fn get_pending_tasks_behavior() -> Result<()> {
+            $crate::storage::test::get_pending_tasks_behavior($storage).await
         }
     };
 }
@@ -725,6 +757,89 @@ pub(super) async fn set_working_set_item(mut storage: impl Storage) -> Result<()
         let ws = txn.get_working_set().await?;
         // Note no trailing `None`.
         assert_eq!(ws, vec![None, Some(uuid1)]);
+    }
+
+    Ok(())
+}
+
+pub(super) async fn drop_transaction_on_update(mut storage: impl Storage) -> Result<()> {
+    let uuid = Uuid::new_v4();
+
+    // Create a task with initial data and commit it.
+    {
+        let mut txn = storage.txn().await?;
+        txn.create_task(uuid).await?;
+        txn.set_task(
+            uuid,
+            taskmap_with(vec![("k".to_string(), "original_v".to_string())]),
+        )
+        .await?;
+        txn.commit().await?;
+    }
+
+    // Start a new transaction and MODIFY the task, but do NOT commit.
+    {
+        let mut txn = storage.txn().await?;
+        let mut task = txn.get_task(uuid).await?.unwrap();
+        task.insert("k".into(), "modified_v".into());
+        txn.set_task(uuid, task).await?;
+        // std::mem::drop(txn) is implicit here
+    }
+
+    // Start a new transaction and verify the task has its original data.
+    {
+        let mut txn = storage.txn().await?;
+        let task = txn.get_task(uuid).await?.unwrap();
+        assert_eq!(task.get("k").unwrap(), "original_v");
+    }
+
+    Ok(())
+}
+
+pub(super) async fn get_pending_tasks_behavior(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4();
+    let uuid2 = Uuid::new_v4();
+    let deleted_uuid = Uuid::new_v4();
+
+    // Setup initial state
+    {
+        let mut txn = storage.txn().await?;
+        // Create three tasks
+        txn.create_task(uuid1).await?;
+        txn.set_task(uuid1, taskmap_with(vec![("num".into(), "1".into())]))
+            .await?;
+        txn.create_task(uuid2).await?;
+        txn.set_task(uuid2, taskmap_with(vec![("num".into(), "2".into())]))
+            .await?;
+        txn.create_task(deleted_uuid).await?;
+
+        // Add all three to the working set
+        txn.add_to_working_set(uuid1).await?;
+        txn.add_to_working_set(deleted_uuid).await?;
+        txn.add_to_working_set(uuid2).await?;
+
+        // Now delete one of the tasks
+        txn.delete_task(deleted_uuid).await?;
+
+        txn.commit().await?;
+    }
+
+    // Verify get_pending_tasks
+    {
+        let mut txn = storage.txn().await?;
+        let mut pending = txn.get_pending_tasks().await?;
+
+        // Sort by UUID to make the assertion deterministic
+        pending.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut expected = vec![
+            (uuid1, taskmap_with(vec![("num".into(), "1".into())])),
+            (uuid2, taskmap_with(vec![("num".into(), "2".into())])),
+        ];
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // The key assertion: the deleted task should NOT be in the pending list,
+        // even though its UUID is in the working set.
+        assert_eq!(pending, expected);
     }
 
     Ok(())

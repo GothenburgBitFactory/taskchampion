@@ -28,6 +28,7 @@ mod sync;
 #[cfg(feature = "cloud")]
 mod cloud;
 
+#[cfg(feature = "sync-api")]
 pub use config::*;
 pub use types::*;
 

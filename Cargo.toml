@@ -20,16 +20,18 @@ resolver = "2"
 [features]
 default = ["sync", "bundled", "storage"]
 
+# (private) Support for the sync API
+sync-api = []
 # Support for all sync solutions
-sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
+sync = ["sync-api", "server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server
-server-sync = ["encryption", "dep:ureq", "dep:url"]
+server-sync = ["sync-api", "encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
-server-gcp = ["cloud", "encryption", "dep:google-cloud-storage"]
+server-gcp = ["sync-api", "cloud", "encryption", "dep:google-cloud-storage"]
 # Support for sync to AWS
-server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types"]
+server-aws = ["sync-api", "cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types"]
 # Suppport for sync to another SQLite database on the same machine
-server-local = ["storage-sqlite"]
+server-local = ["sync-api", "storage-sqlite"]
 # Support for all task storage backends
 storage = ["storage-sqlite"]
 # Support for SQLite task storage
@@ -62,15 +64,35 @@ serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.27"
 strum_macros = "0.27"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "2.0"
 ureq = { version = "^2.12.1", features = ["tls"], optional = true }
 uuid = { version = "^1.16.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
 async-trait = "0.1.89"
 
+# Use only WASM-compatible features by default
+tokio = { version = "1", features = ["macros"] }
+futures-util = "0.3.31"
+
+# For non-WASM targets, enable the multi-threaded runtime
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# For WASM targets, enable the single-threaded runtime
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["rt"] }
+uuid = { version = "^1.16.0", features = ["serde", "v4", "js"] }
+indexed_db_futures = { version = "0.6.4", features = ["cursors", "indices", "serde"] }
+serde-wasm-bindgen = "0.6.5"
+wasm-bindgen = "0.2.103"
+
 [dev-dependencies]
-proptest = "^1.7.0"
-tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tempfile = "3"
+proptest = "^1.7.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.53"

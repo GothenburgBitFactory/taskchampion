@@ -173,7 +173,7 @@ impl SyncOp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod test {
     use super::*;
     use crate::storage::TaskMap;
