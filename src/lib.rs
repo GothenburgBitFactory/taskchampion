@@ -20,7 +20,8 @@ pub use errors::Error;
 pub use operation::{Operation, Operations};
 pub use replica::Replica;
 pub use server::{Server, ServerConfig};
-pub use storage::StorageConfig;
+#[cfg(feature = "storage-sqlite")]
+pub use storage::sqlite::SqliteStorage;
 pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
 pub use workingset::WorkingSet;
 
