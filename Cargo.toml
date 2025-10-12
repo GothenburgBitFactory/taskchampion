@@ -43,7 +43,10 @@ bundled = ["rusqlite/bundled"]
 # use native CA roots, instead of bundled
 tls-native-roots = ["ureq/native-certs"]
 # Expose serde::{Serialize, Deserialize} for crate types.
-serde = []
+# Note: Task's depmap will be copied to allow for freestanding deserialization.
+# This means that after Deserialization this data will not be de-duplicated.
+# See also: https://serde.rs/feature-flags.html#rc
+serde = ["serde/rc"]
 
 [package.metadata.docs.rs]
 all-features = true

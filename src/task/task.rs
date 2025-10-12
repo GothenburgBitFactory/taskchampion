@@ -26,6 +26,7 @@ use uuid::Uuid;
 /// See the documentation for [`crate::Replica`] for background on the `ops` arguments to methods
 /// on this type.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Task {
     // The underlying task data.
     data: TaskData,

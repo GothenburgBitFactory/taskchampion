@@ -5,6 +5,7 @@ use uuid::Uuid;
 /// This information requires a scan of the working set to generate, so it is
 /// typically calculated once and re-used.
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DependencyMap {
     /// Edges of the dependency graph.  If (a, b) is in this array, then task a depends on task b.
     edges: Vec<(Uuid, Uuid)>,
