@@ -42,6 +42,8 @@ cloud = []
 bundled = ["rusqlite/bundled"]
 # use native CA roots, instead of bundled
 tls-native-roots = ["ureq/native-certs"]
+# Expose serde::{Serialize, Deserialize} for crate types.
+serde = []
 
 [package.metadata.docs.rs]
 all-features = true
