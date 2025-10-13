@@ -7,6 +7,7 @@
 * chain of versions, even if multiple replicas attempt to sync at the same time.
 */
 
+mod iter;
 mod server;
 mod service;
 

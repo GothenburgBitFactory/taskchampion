@@ -27,7 +27,8 @@ async fn update_and_delete_sync(delete_first: bool) -> anyhow::Result<()> {
     let mut server = ServerConfig::Local {
         server_dir: tmp_dir.path().to_path_buf(),
     }
-    .into_server()?;
+    .into_server()
+    .await?;
 
     // add a task on rep1, and sync it to rep2
     let mut ops = Operations::new();

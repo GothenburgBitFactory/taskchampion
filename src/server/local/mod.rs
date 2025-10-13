@@ -5,6 +5,7 @@ use crate::server::{
 };
 use crate::storage::sqlite::StoredUuid;
 use anyhow::Context;
+use async_trait::async_trait;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -108,11 +109,12 @@ impl LocalServer {
     }
 }
 
+#[async_trait]
 impl Server for LocalServer {
     // TODO: better transaction isolation for add_version (gets and sets should be in the same
     // transaction)
 
-    fn add_version(
+    async fn add_version(
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
@@ -142,7 +144,10 @@ impl Server for LocalServer {
         Ok((AddVersionResult::Ok(version_id), SnapshotUrgency::None))
     }
 
-    fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
+    async fn get_child_version(
+        &mut self,
+        parent_version_id: VersionId,
+    ) -> Result<GetVersionResult> {
         if let Some(version) = self.get_version_by_parent_version_id(parent_version_id)? {
             Ok(GetVersionResult::Version {
                 version_id: version.version_id,
@@ -154,12 +159,12 @@ impl Server for LocalServer {
         }
     }
 
-    fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> Result<()> {
+    async fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> Result<()> {
         // the local server never requests a snapshot, so it should never get one
         unreachable!()
     }
 
-    fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
+    async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         Ok(None)
     }
 }
@@ -170,26 +175,26 @@ mod test {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_empty() -> Result<()> {
+    #[tokio::test]
+    async fn test_empty() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(tmp_dir.path())?;
-        let child_version = server.get_child_version(NIL_VERSION_ID)?;
+        let child_version = server.get_child_version(NIL_VERSION_ID).await?;
         assert_eq!(child_version, GetVersionResult::NoSuchVersion);
         Ok(())
     }
 
-    #[test]
-    fn test_add_zero_base() -> Result<()> {
+    #[tokio::test]
+    async fn test_add_zero_base() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(tmp_dir.path())?;
         let history = b"1234".to_vec();
-        match server.add_version(NIL_VERSION_ID, history.clone())?.0 {
+        match server.add_version(NIL_VERSION_ID, history.clone()).await?.0 {
             AddVersionResult::ExpectedParentVersion(_) => {
                 panic!("should have accepted the version")
             }
             AddVersionResult::Ok(version_id) => {
-                let new_version = server.get_child_version(NIL_VERSION_ID)?;
+                let new_version = server.get_child_version(NIL_VERSION_ID).await?;
                 assert_eq!(
                     new_version,
                     GetVersionResult::Version {
@@ -204,20 +209,24 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_add_nonzero_base() -> Result<()> {
+    #[tokio::test]
+    async fn test_add_nonzero_base() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(tmp_dir.path())?;
         let history = b"1234".to_vec();
         let parent_version_id = Uuid::new_v4() as VersionId;
 
         // This is OK because the server has no latest_version_id yet
-        match server.add_version(parent_version_id, history.clone())?.0 {
+        match server
+            .add_version(parent_version_id, history.clone())
+            .await?
+            .0
+        {
             AddVersionResult::ExpectedParentVersion(_) => {
                 panic!("should have accepted the version")
             }
             AddVersionResult::Ok(version_id) => {
-                let new_version = server.get_child_version(parent_version_id)?;
+                let new_version = server.get_child_version(parent_version_id).await?;
                 assert_eq!(
                     new_version,
                     GetVersionResult::Version {
@@ -232,23 +241,24 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_add_nonzero_base_forbidden() -> Result<()> {
+    #[tokio::test]
+    async fn test_add_nonzero_base_forbidden() -> Result<()> {
         let tmp_dir = TempDir::new()?;
         let mut server = LocalServer::new(tmp_dir.path())?;
         let history = b"1234".to_vec();
         let parent_version_id = Uuid::new_v4() as VersionId;
 
         // add a version
-        if let (AddVersionResult::ExpectedParentVersion(_), SnapshotUrgency::None) =
-            server.add_version(parent_version_id, history.clone())?
+        if let (AddVersionResult::ExpectedParentVersion(_), SnapshotUrgency::None) = server
+            .add_version(parent_version_id, history.clone())
+            .await?
         {
             panic!("should have accepted the version")
         }
 
         // then add another, not based on that one
         if let (AddVersionResult::Ok(_), SnapshotUrgency::None) =
-            server.add_version(parent_version_id, history)?
+            server.add_version(parent_version_id, history).await?
         {
             panic!("should not have accepted the version")
         }

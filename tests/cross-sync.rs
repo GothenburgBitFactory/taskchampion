@@ -1,3 +1,5 @@
+#![cfg(feature = "server-local")]
+
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use taskchampion::storage::inmemory::InMemoryStorage;
@@ -5,7 +7,6 @@ use taskchampion::{Operations, Replica, ServerConfig, Status, Uuid};
 use tempfile::TempDir;
 
 #[tokio::test]
-#[cfg(feature = "server-local")]
 async fn cross_sync() -> anyhow::Result<()> {
     // set up two replicas, and demonstrate replication between them
     let mut rep1 = Replica::new(InMemoryStorage::new());
@@ -15,7 +16,7 @@ async fn cross_sync() -> anyhow::Result<()> {
     let server_config = ServerConfig::Local {
         server_dir: tmp_dir.path().to_path_buf(),
     };
-    let mut server = server_config.into_server()?;
+    let mut server = server_config.into_server().await?;
 
     let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
     let mut ops = Operations::new();

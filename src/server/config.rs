@@ -95,7 +95,7 @@ pub enum ServerConfig {
 
 impl ServerConfig {
     /// Get a server based on this configuration
-    pub fn into_server(self) -> Result<Box<dyn Server>> {
+    pub async fn into_server(self) -> Result<Box<dyn Server>> {
         Ok(match self {
             #[cfg(feature = "server-local")]
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
@@ -110,20 +110,26 @@ impl ServerConfig {
                 bucket,
                 credential_path,
                 encryption_secret,
-            } => Box::new(CloudServer::new(
-                GcpService::new(bucket, credential_path)?,
-                encryption_secret,
-            )?),
+            } => Box::new(
+                CloudServer::new(
+                    GcpService::new(bucket, credential_path).await?,
+                    encryption_secret,
+                )
+                .await?,
+            ),
             #[cfg(feature = "server-aws")]
             ServerConfig::Aws {
                 region,
                 bucket,
                 credentials,
                 encryption_secret,
-            } => Box::new(CloudServer::new(
-                AwsService::new(region, bucket, credentials)?,
-                encryption_secret,
-            )?),
+            } => Box::new(
+                CloudServer::new(
+                    AwsService::new(region, bucket, credentials).await?,
+                    encryption_secret,
+                )
+                .await?,
+            ),
         })
     }
 }
