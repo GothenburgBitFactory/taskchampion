@@ -3,6 +3,7 @@ use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
     VersionId,
 };
+use async_trait::async_trait;
 use std::time::Duration;
 use url::Url;
 use uuid::Uuid;
@@ -107,8 +108,9 @@ fn sealed_from_resp(resp: ureq::Response, version_id: Uuid, content_type: &str) 
     }
 }
 
+#[async_trait]
 impl Server for SyncServer {
-    fn add_version(
+    async fn add_version(
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
@@ -146,7 +148,10 @@ impl Server for SyncServer {
         }
     }
 
-    fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
+    async fn get_child_version(
+        &mut self,
+        parent_version_id: VersionId,
+    ) -> Result<GetVersionResult> {
         let url = self.construct_endpoint_url(
             format!("v1/client/get-child-version/{}", parent_version_id).as_str(),
         )?;
@@ -174,7 +179,7 @@ impl Server for SyncServer {
         }
     }
 
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+    async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         let url =
             self.construct_endpoint_url(format!("v1/client/add-snapshot/{}", version_id).as_str())?;
         let unsealed = Unsealed {
@@ -191,7 +196,7 @@ impl Server for SyncServer {
             .map(|_| ())?)
     }
 
-    fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
+    async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         let url = self.construct_endpoint_url("v1/client/snapshot")?;
         match self
             .agent

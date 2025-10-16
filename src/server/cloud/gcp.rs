@@ -1,16 +1,16 @@
 use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
+use crate::server::cloud::iter::AsyncObjectIterator;
+use async_trait::async_trait;
 use google_cloud_storage::client::google_cloud_auth::credentials::CredentialsFile;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::error::ErrorResponse;
 use google_cloud_storage::http::Error as GcsError;
 use google_cloud_storage::http::{self, objects};
-use tokio::runtime::Runtime;
 
 /// A [`Service`] implementation based on the Google Cloud Storage service.
 pub(in crate::server) struct GcpService {
     client: Client,
-    rt: Runtime,
     bucket: String,
 }
 
@@ -26,50 +26,57 @@ fn is_http_error<T>(query: u16, res: &std::result::Result<T, http::Error>) -> bo
 }
 
 impl GcpService {
-    pub(in crate::server) fn new(bucket: String, credential_path: Option<String>) -> Result<Self> {
-        let rt = Runtime::new()?;
-
+    pub(in crate::server) async fn new(
+        bucket: String,
+        credential_path: Option<String>,
+    ) -> Result<Self> {
         let config: ClientConfig = if let Some(credentials) = credential_path {
-            let credentials = rt.block_on(CredentialsFile::new_from_file(credentials))?;
-            rt.block_on(ClientConfig::default().with_credentials(credentials))?
+            let credentials = CredentialsFile::new_from_file(credentials).await?;
+            ClientConfig::default()
+                .with_credentials(credentials)
+                .await?
         } else {
-            rt.block_on(ClientConfig::default().with_auth())?
+            ClientConfig::default().with_auth().await?
         };
 
         Ok(Self {
             client: Client::new(config),
-            rt,
             bucket,
         })
     }
 }
-
+#[async_trait]
 impl Service for GcpService {
-    fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
+    async fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
         validate_object_name(name);
         let upload_type =
             objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
-        self.rt.block_on(self.client.upload_object(
-            &objects::upload::UploadObjectRequest {
-                bucket: self.bucket.clone(),
-                ..Default::default()
-            },
-            value.to_vec(),
-            &upload_type,
-        ))?;
+        self.client
+            .upload_object(
+                &objects::upload::UploadObjectRequest {
+                    bucket: self.bucket.clone(),
+                    ..Default::default()
+                },
+                value.to_vec(),
+                &upload_type,
+            )
+            .await?;
         Ok(())
     }
 
-    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
+    async fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>> {
         validate_object_name(name);
-        let download_res = self.rt.block_on(self.client.download_object(
-            &objects::get::GetObjectRequest {
-                bucket: self.bucket.clone(),
-                object: name.to_string(),
-                ..Default::default()
-            },
-            &objects::download::Range::default(),
-        ));
+        let download_res = self
+            .client
+            .download_object(
+                &objects::get::GetObjectRequest {
+                    bucket: self.bucket.clone(),
+                    object: name.to_string(),
+                    ..Default::default()
+                },
+                &objects::download::Range::default(),
+            )
+            .await;
         if is_http_error(404, &download_res) {
             Ok(None)
         } else {
@@ -77,22 +84,23 @@ impl Service for GcpService {
         }
     }
 
-    fn del(&mut self, name: &str) -> Result<()> {
+    async fn del(&mut self, name: &str) -> Result<()> {
         validate_object_name(name);
-        let del_res = self.rt.block_on(self.client.delete_object(
-            &objects::delete::DeleteObjectRequest {
+        let del_res = self
+            .client
+            .delete_object(&objects::delete::DeleteObjectRequest {
                 bucket: self.bucket.clone(),
                 object: name.to_string(),
                 ..Default::default()
-            },
-        ));
+            })
+            .await;
         if !is_http_error(404, &del_res) {
             del_res?;
         }
         Ok(())
     }
 
-    fn list<'a>(&'a mut self, prefix: &str) -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a> {
+    async fn list<'a>(&'a mut self, prefix: &'a str) -> Box<dyn AsyncObjectIterator + Send + 'a> {
         validate_object_name(prefix);
         Box::new(ObjectIterator {
             service: self,
@@ -102,7 +110,7 @@ impl Service for GcpService {
         })
     }
 
-    fn compare_and_swap(
+    async fn compare_and_swap(
         &mut self,
         name: &str,
         existing_value: Option<Vec<u8>>,
@@ -110,12 +118,13 @@ impl Service for GcpService {
     ) -> Result<bool> {
         validate_object_name(name);
         let get_res = self
-            .rt
-            .block_on(self.client.get_object(&objects::get::GetObjectRequest {
+            .client
+            .get_object(&objects::get::GetObjectRequest {
                 bucket: self.bucket.clone(),
                 object: name.to_string(),
                 ..Default::default()
-            }));
+            })
+            .await;
         // Determine the object's generation. See https://cloud.google.com/storage/docs/metadata#generation-number
         let generation = if is_http_error(404, &get_res) {
             // If a value was expected, that expectation has not been met.
@@ -130,16 +139,19 @@ impl Service for GcpService {
 
         // If the file existed, then verify its contents.
         if generation > 0 {
-            let data = self.rt.block_on(self.client.download_object(
-                &objects::get::GetObjectRequest {
-                    bucket: self.bucket.clone(),
-                    object: name.to_string(),
-                    // Fetch the same generation.
-                    generation: Some(generation),
-                    ..Default::default()
-                },
-                &objects::download::Range::default(),
-            ))?;
+            let data = self
+                .client
+                .download_object(
+                    &objects::get::GetObjectRequest {
+                        bucket: self.bucket.clone(),
+                        object: name.to_string(),
+                        // Fetch the same generation.
+                        generation: Some(generation),
+                        ..Default::default()
+                    },
+                    &objects::download::Range::default(),
+                )
+                .await?;
             if Some(data) != existing_value {
                 return Ok(false);
             }
@@ -150,13 +162,14 @@ impl Service for GcpService {
         #[cfg(test)]
         if name.ends_with("-racing-delete") {
             println!("deleting object {name}");
-            let del_res = self.rt.block_on(self.client.delete_object(
-                &objects::delete::DeleteObjectRequest {
+            let del_res = self
+                .client
+                .delete_object(&objects::delete::DeleteObjectRequest {
                     bucket: self.bucket.clone(),
                     object: name.to_string(),
                     ..Default::default()
-                },
-            ));
+                })
+                .await;
             if !is_http_error(404, &del_res) {
                 del_res?;
             }
@@ -169,28 +182,33 @@ impl Service for GcpService {
             println!("changing object {name}");
             let upload_type =
                 objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
-            self.rt.block_on(self.client.upload_object(
-                &objects::upload::UploadObjectRequest {
-                    bucket: self.bucket.clone(),
-                    ..Default::default()
-                },
-                b"CHANGED".to_vec(),
-                &upload_type,
-            ))?;
+            self.client
+                .upload_object(
+                    &objects::upload::UploadObjectRequest {
+                        bucket: self.bucket.clone(),
+                        ..Default::default()
+                    },
+                    b"CHANGED".to_vec(),
+                    &upload_type,
+                )
+                .await?;
         }
 
         // Finally, put the new value with a condition that the generation hasn't changed.
         let upload_type =
             objects::upload::UploadType::Simple(objects::upload::Media::new(name.to_string()));
-        let upload_res = self.rt.block_on(self.client.upload_object(
-            &objects::upload::UploadObjectRequest {
-                bucket: self.bucket.clone(),
-                if_generation_match: Some(generation),
-                ..Default::default()
-            },
-            new_value.to_vec(),
-            &upload_type,
-        ));
+        let upload_res = self
+            .client
+            .upload_object(
+                &objects::upload::UploadObjectRequest {
+                    bucket: self.bucket.clone(),
+                    if_generation_match: Some(generation),
+                    ..Default::default()
+                },
+                new_value.to_vec(),
+                &upload_type,
+            )
+            .await;
         if is_http_error(412, &upload_res) {
             // A 412 indicates the precondition was not satisfied: the given generation
             // is no longer the latest.
@@ -213,32 +231,35 @@ struct ObjectIterator<'a> {
 }
 
 impl ObjectIterator<'_> {
-    fn fetch_batch(&mut self) -> Result<()> {
+    async fn fetch_batch(&mut self) -> Result<()> {
         let mut page_token = None;
         if let Some(ref resp) = self.last_response {
             page_token.clone_from(&resp.next_page_token);
         }
-        self.last_response = Some(self.service.rt.block_on(self.service.client.list_objects(
-            &objects::list::ListObjectsRequest {
+        self.last_response = Some(
+            self.service
+                .client
+                .list_objects(&objects::list::ListObjectsRequest {
                 bucket: self.service.bucket.clone(),
                 prefix: Some(self.prefix.clone()),
                 page_token,
                 #[cfg(test)] // For testing, use a small page size.
                 max_results: Some(6),
                 ..Default::default()
-            },
-        ))?);
+            })
+                .await?,
+        );
         self.next_index = 0;
         Ok(())
     }
 }
 
-impl Iterator for ObjectIterator<'_> {
-    type Item = Result<ObjectInfo>;
-    fn next(&mut self) -> Option<Self::Item> {
+#[async_trait]
+impl AsyncObjectIterator for ObjectIterator<'_> {
+    async fn next(&mut self) -> Option<Result<ObjectInfo>> {
         // If the iterator is just starting, fetch the first response.
         if self.last_response.is_none() {
-            if let Err(e) = self.fetch_batch() {
+            if let Err(e) = self.fetch_batch().await {
                 return Some(Err(e));
             }
         }
@@ -258,10 +279,10 @@ impl Iterator for ObjectIterator<'_> {
                     }));
                 } else if result.next_page_token.is_some() {
                     // Fetch the next page and try again.
-                    if let Err(e) = self.fetch_batch() {
+                    if let Err(e) = self.fetch_batch().await {
                         return Some(Err(e));
                     }
-                    return self.next();
+                    return self.next().await;
                 }
             }
         }
@@ -283,7 +304,7 @@ mod tests {
     /// When the environment variable is not set, this returns false and the test does not run.
     /// Note that the Rust test runner will still show "ok" for the test, as there is no way to
     /// indicate anything else.
-    fn make_service() -> Option<GcpService> {
+    async fn make_service() -> Option<GcpService> {
         let Ok(bucket) = std::env::var("GCP_TEST_BUCKET") else {
             return None;
         };
@@ -292,8 +313,12 @@ mod tests {
             return None;
         };
 
-        Some(GcpService::new(bucket, Some(credential_path)).unwrap())
+        Some(
+            GcpService::new(bucket, Some(credential_path))
+                .await
+                .unwrap(),
+        )
     }
 
-    crate::server::cloud::test::service_tests!(make_service());
+    crate::server::cloud::test::service_tests!(make_service().await);
 }
