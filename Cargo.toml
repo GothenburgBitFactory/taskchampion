@@ -70,7 +70,7 @@ url = { version = "2", optional = true }
 async-trait = "0.1.89"
 
 [dev-dependencies]
-proptest = "^1.8.0"
+proptest = "^1.9.0"
 tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
