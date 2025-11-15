@@ -56,6 +56,8 @@ other_error!(google_cloud_storage::client::google_cloud_auth::error::Error);
 other_error!(aws_sdk_s3::Error);
 #[cfg(feature = "server-aws")]
 other_error!(aws_sdk_s3::primitives::ByteStreamError);
+#[cfg(feature = "server-gcp")]
+other_error!(reqwest::Error);
 
 /// Convert ureq errors more carefully
 #[cfg(feature = "server-sync")]

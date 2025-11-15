@@ -33,7 +33,7 @@ Several server implementations are included, and users can define their own impl
 # Example
 
 ```rust
-# #[cfg(feature = "storage-sqlite")]
+# #[cfg(all(feature = "storage-sqlite", feature = "server-local"))]
 # {
 # use taskchampion::{storage::AccessMode, ServerConfig, Replica, SqliteStorage};
 # use tempfile::TempDir;
@@ -69,12 +69,19 @@ Support for some optional functionality is controlled by feature flags.
  * `server-aws` - sync to Amazon Web Services
  * `server-gcp` - sync to Google Cloud Platform
  * `server-sync` - sync to the taskchampion-sync-server
+ * `server-local` - sync to a local file
  * `sync` - enables all of the sync features above
+ * `storage-sqlite` - store task data locally in SQLite
+ * `storage` - enables all of the storage features above
  * `bundled` - activates bundling system libraries like sqlite
- * `tls-native-roots` - use native (system) TLS roots, instead of those bundled with rustls, by
-   (indirectly) enabling the `rustls` feature `rustls-tls-native-roots`.
+ * `tls-webpki-roots` - use TLS roots bundled with the library, instead of reading them from
+   system configuration.
+ * `tls-native-roots` - use native (system) TLS roots, instead of those bundled with rustls.
+   If both `tls-webpki-roots` and `tls-native-roots` are given, `tls-native-roots` takes
+   precedence. At least one of the `tls-*-roots` features must be enabled to support any
+   of the HTTPS-based `server-*` features.
 
- By default, `sync` and `bundled` are enabled.
+By default, `sync`, `storage`, `bundled`, and `tls-webpki-roots` are enabled.
 
 # See Also
 

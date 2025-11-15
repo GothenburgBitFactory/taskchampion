@@ -15,11 +15,13 @@ jobs:
       matrix:
         features:
           - ""
-          - "server-sync"
-          - "server-gcp"
-          - "server-aws"
-          - "tls-native-roots"
-          - "bundled"
+          - "server-sync,tls-webpki-roots"
+          - "server-gcp,tls-webpki-roots"
+          - "server-aws,tls-webpki-roots"
+          - "server-sync,tls-native-roots"
+          - "server-gcp,tls-native-roots"
+          - "server-aws,tls-native-roots"
+          - "storage,bundled"
 
     name: "taskchampion ${{ matrix.features == '' && 'with no features' || format('with features {0}', matrix.features) }}"
     runs-on: ubuntu-latest
