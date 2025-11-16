@@ -1,14 +1,14 @@
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 use crate::operation::Operation;
 use crate::storage::config::AccessMode;
 use crate::storage::sqlite::inner::SqliteStorageInner;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId};
-use async_trait::async_trait;
+use crate::storage::{actor, TaskMap, VersionId};
 use rusqlite::types::FromSql;
 use rusqlite::ToSql;
 use std::path::Path;
-use std::sync::mpsc;
-use std::thread;
+use tokio::sync::mpsc::{
+    unbounded_channel as channel, UnboundedReceiver as Receiver, UnboundedSender as Sender,
+};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -44,12 +44,20 @@ impl ToSql for StoredUuid {
 }
 
 /// An enum for messages sent to the sync thread actor.
-pub(crate) enum ActorMessage {
+pub enum SqliteActorMessage {
     // Transaction control
-    BeginTxn(oneshot::Sender<Result<mpsc::Sender<TxnMessage>>>),
+    BeginTxn(oneshot::Sender<Result<Sender<SqliteTxnMessage>>>),
 }
 
-pub(crate) enum TxnMessage {
+impl actor::ActorMessage for SqliteActorMessage {
+    type TxnMessage = SqliteTxnMessage;
+
+    fn begin_txn_message(reply_sender: oneshot::Sender<Result<Sender<Self::TxnMessage>>>) -> Self {
+        Self::BeginTxn(reply_sender)
+    }
+}
+
+pub enum SqliteTxnMessage {
     Commit(oneshot::Sender<Result<()>>),
     Rollback(oneshot::Sender<Result<()>>),
 
@@ -75,19 +83,126 @@ pub(crate) enum TxnMessage {
     ClearWorkingSet(oneshot::Sender<Result<()>>),
 }
 
+impl actor::TxnMessage for SqliteTxnMessage {
+    fn commit_message(reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::Commit(reply_sender)
+    }
+
+    fn rollback_message(reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::Rollback(reply_sender)
+    }
+
+    fn get_task_message(
+        uuid: Uuid,
+        reply_sender: oneshot::Sender<Result<Option<TaskMap>>>,
+    ) -> Self {
+        Self::GetTask(uuid, reply_sender)
+    }
+
+    fn create_task_message(uuid: Uuid, reply_sender: oneshot::Sender<Result<bool>>) -> Self {
+        Self::CreateTask(uuid, reply_sender)
+    }
+
+    fn set_task_message(
+        uuid: Uuid,
+        task: TaskMap,
+        reply_sender: oneshot::Sender<Result<()>>,
+    ) -> Self {
+        Self::SetTask(uuid, task, reply_sender)
+    }
+
+    fn delete_task_message(uuid: Uuid, reply_sender: oneshot::Sender<Result<bool>>) -> Self {
+        Self::DeleteTask(uuid, reply_sender)
+    }
+
+    fn get_pending_tasks_message(
+        reply_sender: oneshot::Sender<Result<Vec<(Uuid, TaskMap)>>>,
+    ) -> Self {
+        Self::GetPendingTasks(reply_sender)
+    }
+
+    fn all_tasks_message(reply_sender: oneshot::Sender<Result<Vec<(Uuid, TaskMap)>>>) -> Self {
+        Self::AllTasks(reply_sender)
+    }
+
+    fn all_task_uuids_message(reply_sender: oneshot::Sender<Result<Vec<Uuid>>>) -> Self {
+        Self::AllTaskUuids(reply_sender)
+    }
+
+    fn base_version_message(reply_sender: oneshot::Sender<Result<VersionId>>) -> Self {
+        Self::BaseVersion(reply_sender)
+    }
+
+    fn set_base_version_message(
+        version: VersionId,
+        reply_sender: oneshot::Sender<Result<()>>,
+    ) -> Self {
+        Self::SetBaseVersion(version, reply_sender)
+    }
+
+    fn get_task_operations_message(
+        uuid: Uuid,
+        reply_sender: oneshot::Sender<Result<Vec<Operation>>>,
+    ) -> Self {
+        Self::GetTaskOperations(uuid, reply_sender)
+    }
+
+    fn unsynced_operations_message(reply_sender: oneshot::Sender<Result<Vec<Operation>>>) -> Self {
+        Self::UnsyncedOperations(reply_sender)
+    }
+
+    fn num_unsynced_operations_message(reply_sender: oneshot::Sender<Result<usize>>) -> Self {
+        Self::NumUnsyncedOperations(reply_sender)
+    }
+
+    fn add_operation_message(op: Operation, reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::AddOperation(op, reply_sender)
+    }
+
+    fn remove_operation_message(op: Operation, reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::RemoveOperation(op, reply_sender)
+    }
+
+    fn sync_complete_message(reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::SyncComplete(reply_sender)
+    }
+
+    fn get_working_set_message(reply_sender: oneshot::Sender<Result<Vec<Option<Uuid>>>>) -> Self {
+        Self::GetWorkingSet(reply_sender)
+    }
+
+    fn add_to_working_set_message(
+        uuid: Uuid,
+        reply_sender: oneshot::Sender<Result<usize>>,
+    ) -> Self {
+        Self::AddToWorkingSet(uuid, reply_sender)
+    }
+
+    fn set_working_set_item_message(
+        index: usize,
+        uuid: Option<Uuid>,
+        reply_sender: oneshot::Sender<Result<()>>,
+    ) -> Self {
+        Self::SetWorkingSetItem(index, uuid, reply_sender)
+    }
+
+    fn clear_working_set_message(reply_sender: oneshot::Sender<Result<()>>) -> Self {
+        Self::ClearWorkingSet(reply_sender)
+    }
+}
+
 /// State owned by the dedicated synchronous thread. It handles the low-level,
 /// sync db ops.
 struct Actor {
     storage: SqliteStorageInner,
-    receiver: mpsc::Receiver<ActorMessage>,
 }
 
 impl Actor {
-    fn run(&mut self) {
+    fn run(mut self, mut receiver: Receiver<SqliteActorMessage>) {
         // The outer loop waits for a BeginTxn message. If the channel is disconnected,
         // the thread will exit gracefully.
-        while let Ok(ActorMessage::BeginTxn(reply_sender)) = self.receiver.recv() {
-            let (txn_sender, txn_receiver) = mpsc::channel::<TxnMessage>();
+        while let Some(SqliteActorMessage::BeginTxn(reply_sender)) = receiver.blocking_recv() {
+            let (txn_sender, mut txn_receiver) = channel::<SqliteTxnMessage>();
             match self.storage.txn() {
                 Ok(mut txn) => {
                     // Send the new transaction channel sender back
@@ -95,7 +210,7 @@ impl Actor {
                         log::warn!("Client disconnected before transaction could be established");
                         continue; // Don't handle the txn if the client is gone.
                     }
-                    Self::handle_transaction(&txn_receiver, &mut txn);
+                    Self::handle_transaction(&mut txn_receiver, &mut txn);
                 }
                 Err(e) => {
                     // Send the database error back to the caller
@@ -108,75 +223,75 @@ impl Actor {
 
     /// The inner loop for handling messages within an active transaction.
     fn handle_transaction(
-        receiver: &mpsc::Receiver<TxnMessage>,
+        receiver: &mut Receiver<SqliteTxnMessage>,
         txn: &mut crate::storage::sqlite::inner::Txn,
     ) {
-        while let Ok(msg) = receiver.recv() {
+        while let Some(msg) = receiver.blocking_recv() {
             match msg {
-                TxnMessage::Commit(resp) => {
+                SqliteTxnMessage::Commit(resp) => {
                     let _ = resp.send(txn.commit());
                     return; // Transaction over, return to the outer loop.
                 }
-                TxnMessage::Rollback(resp) => {
+                SqliteTxnMessage::Rollback(resp) => {
                     // The sync txn is implicitly rolled back when it's dropped.
                     let _ = resp.send(Ok(()));
                     return; // Transaction over, return to the outer loop.
                 }
-                TxnMessage::GetTask(uuid, resp) => {
+                SqliteTxnMessage::GetTask(uuid, resp) => {
                     let _ = resp.send(txn.get_task(uuid));
                 }
-                TxnMessage::GetPendingTasks(resp) => {
+                SqliteTxnMessage::GetPendingTasks(resp) => {
                     let _ = resp.send(txn.get_pending_tasks());
                 }
-                TxnMessage::CreateTask(uuid, resp) => {
+                SqliteTxnMessage::CreateTask(uuid, resp) => {
                     let _ = resp.send(txn.create_task(uuid));
                 }
-                TxnMessage::SetTask(uuid, t, resp) => {
+                SqliteTxnMessage::SetTask(uuid, t, resp) => {
                     let _ = resp.send(txn.set_task(uuid, t));
                 }
-                TxnMessage::DeleteTask(uuid, resp) => {
+                SqliteTxnMessage::DeleteTask(uuid, resp) => {
                     let _ = resp.send(txn.delete_task(uuid));
                 }
-                TxnMessage::AllTasks(resp) => {
+                SqliteTxnMessage::AllTasks(resp) => {
                     let _ = resp.send(txn.all_tasks());
                 }
-                TxnMessage::AllTaskUuids(resp) => {
+                SqliteTxnMessage::AllTaskUuids(resp) => {
                     let _ = resp.send(txn.all_task_uuids());
                 }
-                TxnMessage::BaseVersion(resp) => {
+                SqliteTxnMessage::BaseVersion(resp) => {
                     let _ = resp.send(txn.base_version());
                 }
-                TxnMessage::SetBaseVersion(v, resp) => {
+                SqliteTxnMessage::SetBaseVersion(v, resp) => {
                     let _ = resp.send(txn.set_base_version(v));
                 }
-                TxnMessage::GetTaskOperations(u, resp) => {
+                SqliteTxnMessage::GetTaskOperations(u, resp) => {
                     let _ = resp.send(txn.get_task_operations(u));
                 }
-                TxnMessage::UnsyncedOperations(resp) => {
+                SqliteTxnMessage::UnsyncedOperations(resp) => {
                     let _ = resp.send(txn.unsynced_operations());
                 }
-                TxnMessage::NumUnsyncedOperations(resp) => {
+                SqliteTxnMessage::NumUnsyncedOperations(resp) => {
                     let _ = resp.send(txn.num_unsynced_operations());
                 }
-                TxnMessage::AddOperation(o, resp) => {
+                SqliteTxnMessage::AddOperation(o, resp) => {
                     let _ = resp.send(txn.add_operation(o));
                 }
-                TxnMessage::RemoveOperation(o, resp) => {
+                SqliteTxnMessage::RemoveOperation(o, resp) => {
                     let _ = resp.send(txn.remove_operation(o));
                 }
-                TxnMessage::SyncComplete(resp) => {
+                SqliteTxnMessage::SyncComplete(resp) => {
                     let _ = resp.send(txn.sync_complete());
                 }
-                TxnMessage::GetWorkingSet(resp) => {
+                SqliteTxnMessage::GetWorkingSet(resp) => {
                     let _ = resp.send(txn.get_working_set());
                 }
-                TxnMessage::AddToWorkingSet(u, resp) => {
+                SqliteTxnMessage::AddToWorkingSet(u, resp) => {
                     let _ = resp.send(txn.add_to_working_set(u));
                 }
-                TxnMessage::SetWorkingSetItem(i, u, resp) => {
+                SqliteTxnMessage::SetWorkingSetItem(i, u, resp) => {
                     let _ = resp.send(txn.set_working_set_item(i, u));
                 }
-                TxnMessage::ClearWorkingSet(resp) => {
+                SqliteTxnMessage::ClearWorkingSet(resp) => {
                     let _ = resp.send(txn.clear_working_set());
                 }
             };
@@ -184,11 +299,8 @@ impl Actor {
     }
 }
 
-/// SqliteStorageActor is an async actor wrapper for the sync SqliteStorage.
-#[derive(Clone)]
-pub struct SqliteStorage {
-    sender: mpsc::Sender<ActorMessage>,
-}
+/// An async actor-based SQLite-backed storage backend.
+pub type SqliteStorage = actor::ActorStorage<SqliteActorMessage, SqliteTxnMessage>;
 
 impl SqliteStorage {
     pub fn new<P: AsRef<Path>>(
@@ -196,180 +308,40 @@ impl SqliteStorage {
         access_mode: AccessMode,
         create_if_missing: bool,
     ) -> Result<Self> {
-        let (sender, receiver) = mpsc::channel();
         let path = path.as_ref().to_path_buf();
 
         // Use a sync_channel to block until the thread has initialized.
-        let (init_sender, init_receiver) = mpsc::sync_channel(0);
+        let (init_sender, init_receiver) = std::sync::mpsc::sync_channel(0);
 
-        thread::spawn(move || {
+        let actor_fn = move |receiver| {
             match SqliteStorageInner::new(path, access_mode, create_if_missing) {
                 Ok(storage) => {
                     // Send Ok back to the caller of `new` and then start the actor loop.
                     init_sender.send(Ok(())).unwrap();
-                    let mut actor = Actor { storage, receiver };
-                    actor.run();
+                    let actor = Actor { storage };
+                    actor.run(receiver);
                 }
                 Err(e) => {
                     // Send the initialization error back.
                     init_sender.send(Err(e)).unwrap();
                 }
             }
-        });
+        };
+
+        let storage = Self::new_internal(actor_fn);
 
         // Block until the thread sends its initialization result.
         init_receiver.recv().unwrap()?;
-        Ok(Self { sender })
-    }
-}
-
-#[async_trait]
-impl Storage for SqliteStorage {
-    // Sends the BeginTxn message to the underlying SqliteStorage. Now that the txn has
-    // begun, this async txn obj can be passed around and operated upon, as it
-    // communicates with the underlying sync txn.
-    async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + Send + 'a>> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.sender
-            .send(ActorMessage::BeginTxn(reply_tx))
-            .map_err(|e| Error::Other(e.into()))?;
-        let txn_sender = reply_rx.await??;
-        Ok(Box::new(ActorTxn::new(txn_sender)))
-    }
-}
-
-/// An async proxy for a transaction running on the sync actor thread.
-pub(super) struct ActorTxn {
-    sender: mpsc::Sender<TxnMessage>,
-    committed: bool,
-}
-
-impl ActorTxn {
-    fn new(sender: mpsc::Sender<TxnMessage>) -> Self {
-        Self {
-            sender,
-            committed: false,
-        }
-    }
-
-    async fn call<R, F>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(oneshot::Sender<Result<R>>) -> TxnMessage,
-        R: Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.sender
-            .send(f(tx))
-            .map_err(|e| Error::Other(e.into()))?;
-        rx.await?
-    }
-}
-
-impl Drop for ActorTxn {
-    fn drop(&mut self) {
-        if !self.committed {
-            // If the transaction proxy is dropped without being committed,
-            // we send a Rollback message. We don't need to wait for the response.
-            let (tx, _rx) = oneshot::channel();
-            let _ = self.sender.send(TxnMessage::Rollback(tx));
-        }
-    }
-}
-
-#[async_trait]
-impl StorageTxn for ActorTxn {
-    async fn commit(&mut self) -> Result<()> {
-        let res = self.call(TxnMessage::Commit).await;
-        if res.is_ok() {
-            self.committed = true;
-        }
-        res
-    }
-
-    async fn get_task(&mut self, uuid: Uuid) -> Result<Option<TaskMap>> {
-        self.call(|tx| TxnMessage::GetTask(uuid, tx)).await
-    }
-
-    async fn create_task(&mut self, uuid: Uuid) -> Result<bool> {
-        self.call(|tx| TxnMessage::CreateTask(uuid, tx)).await
-    }
-
-    async fn set_task(&mut self, uuid: Uuid, task: TaskMap) -> Result<()> {
-        self.call(|tx| TxnMessage::SetTask(uuid, task, tx)).await
-    }
-
-    async fn delete_task(&mut self, uuid: Uuid) -> Result<bool> {
-        self.call(|tx| TxnMessage::DeleteTask(uuid, tx)).await
-    }
-
-    async fn get_pending_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
-        self.call(TxnMessage::GetPendingTasks).await
-    }
-
-    async fn all_tasks(&mut self) -> Result<Vec<(Uuid, TaskMap)>> {
-        self.call(TxnMessage::AllTasks).await
-    }
-
-    async fn all_task_uuids(&mut self) -> Result<Vec<Uuid>> {
-        self.call(TxnMessage::AllTaskUuids).await
-    }
-
-    async fn base_version(&mut self) -> Result<VersionId> {
-        self.call(TxnMessage::BaseVersion).await
-    }
-
-    async fn set_base_version(&mut self, version: VersionId) -> Result<()> {
-        self.call(|tx| TxnMessage::SetBaseVersion(version, tx))
-            .await
-    }
-
-    async fn get_task_operations(&mut self, uuid: Uuid) -> Result<Vec<Operation>> {
-        self.call(|tx| TxnMessage::GetTaskOperations(uuid, tx))
-            .await
-    }
-
-    async fn unsynced_operations(&mut self) -> Result<Vec<Operation>> {
-        self.call(TxnMessage::UnsyncedOperations).await
-    }
-
-    async fn num_unsynced_operations(&mut self) -> Result<usize> {
-        self.call(TxnMessage::NumUnsyncedOperations).await
-    }
-
-    async fn add_operation(&mut self, op: Operation) -> Result<()> {
-        self.call(|tx| TxnMessage::AddOperation(op, tx)).await
-    }
-
-    async fn remove_operation(&mut self, op: Operation) -> Result<()> {
-        self.call(|tx| TxnMessage::RemoveOperation(op, tx)).await
-    }
-
-    async fn sync_complete(&mut self) -> Result<()> {
-        self.call(TxnMessage::SyncComplete).await
-    }
-
-    async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
-        self.call(TxnMessage::GetWorkingSet).await
-    }
-
-    async fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize> {
-        self.call(|tx| TxnMessage::AddToWorkingSet(uuid, tx)).await
-    }
-
-    async fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()> {
-        self.call(|tx| TxnMessage::SetWorkingSetItem(index, uuid, tx))
-            .await
-    }
-
-    async fn clear_working_set(&mut self) -> Result<()> {
-        self.call(TxnMessage::ClearWorkingSet).await
+        Ok(storage)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::errors::Error;
     use crate::storage::config::AccessMode;
+    use crate::storage::Storage;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

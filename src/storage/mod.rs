@@ -18,6 +18,7 @@ use uuid::Uuid;
 #[cfg(test)]
 mod test;
 
+pub mod actor;
 mod config;
 
 #[cfg(feature = "storage-sqlite")]
