@@ -12,6 +12,7 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
+#[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;

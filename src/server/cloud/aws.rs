@@ -11,8 +11,14 @@ use aws_sdk_s3::{
     error::ProvideErrorMetadata,
     operation::{get_object::GetObjectOutput, list_objects_v2::ListObjectsV2Output},
 };
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 
-/// A [`Service`] implementation based on the Google Cloud Storage service.
+#[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
+compile_error!(
+    "Either feature \"tls-native-roots\" or \"tls-webpki-roots\" must be enabled for TLS support."
+);
+
+/// A [`Service`] implementation based on AWS S3.
 pub(in crate::server) struct AwsService {
     client: s3::Client,
     bucket: String,
@@ -88,6 +94,21 @@ impl AwsService {
                 // Just use the default.
             }
         }
+
+        let builder = hyper_rustls::HttpsConnectorBuilder::new();
+
+        // Only one of with_native_roots and with_webpki_roots is supported, so prefer
+        // native roots.
+        #[cfg(feature = "tls-native-roots")]
+        let builder = builder.with_native_roots();
+        #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
+        let builder = builder.with_webpki_roots();
+
+        let tls_connector = builder.https_only().enable_http2().build();
+
+        let hyper_client = HyperClientBuilder::new().build(tls_connector);
+        config_provider = config_provider.http_client(hyper_client);
+
         let config = config_provider
             .region(RegionProviderChain::first_try(Region::new(region)))
             .load()

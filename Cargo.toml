@@ -18,16 +18,16 @@ members = [ "xtask" ]
 resolver = "2"
 
 [features]
-default = ["sync", "bundled", "storage"]
+default = ["sync", "bundled", "storage", "tls-webpki-roots"]
 
 # Support for all sync solutions
 sync = ["server-sync", "server-gcp", "server-aws", "server-local"]
 # Support for sync to a server
 server-sync = ["encryption", "dep:ureq", "dep:url"]
 # Support for sync to GCP
-server-gcp = ["cloud", "encryption", "dep:google-cloud-storage"]
+server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:reqwest-middleware"]
 # Support for sync to AWS
-server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types"]
+server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:aws-smithy-runtime"]
 # Suppport for sync to another SQLite database on the same machine
 server-local = ["storage-sqlite"]
 # Support for all task storage backends
@@ -40,8 +40,10 @@ encryption = ["dep:ring"]
 cloud = []
 # static bundling of dependencies
 bundled = ["rusqlite/bundled"]
-# use native CA roots, instead of bundled
-tls-native-roots = ["ureq/native-certs"]
+# use CA roots built into the library for all HTTPS access
+tls-webpki-roots = ["dep:hyper-rustls", "hyper-rustls/webpki-roots", "dep:reqwest", "reqwest/rustls-tls-webpki-roots"]
+# use native CA roots (from the filesystem), instead of bundled for all HTTPS access
+tls-native-roots = ["ureq/native-certs", "dep:hyper-rustls", "hyper-rustls/rustls-native-certs", "dep:reqwest", "reqwest/rustls-tls-native-roots"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -51,18 +53,22 @@ anyhow = "1.0"
 aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", features = ["hardcoded-credentials"], optional = true }
+aws-smithy-runtime = { version = "*", optional = true } # AWS SDK selects a version
 byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
 flate2 = "1"
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
+hyper-rustls = { version = "*", optional = true } # AWS SDK selects a version
 log = "^0.4.17"
+reqwest = { version = "*", optional = true } # GCP SDK selects a version
+reqwest-middleware = { version = "*", optional = true } # GCP SDK selects a version
 ring = { version = "0.17", optional = true }
 rusqlite = { version = "0.37", optional = true}
 serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.27"
 strum_macros = "0.27"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 thiserror = "2.0"
 ureq = { version = "^2.12.1", features = ["tls"], optional = true }
 uuid = { version = "^1.16.0", features = ["serde", "v4"] }
@@ -74,3 +80,4 @@ proptest = "^1.9.0"
 tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
+libc = "*"

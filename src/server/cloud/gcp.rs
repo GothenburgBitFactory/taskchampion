@@ -8,6 +8,11 @@ use google_cloud_storage::http::error::ErrorResponse;
 use google_cloud_storage::http::Error as GcsError;
 use google_cloud_storage::http::{self, objects};
 
+#[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
+compile_error!(
+    "Either feature \"tls-native-roots\" or \"tls-webpki-roots\" must be enabled for TLS support."
+);
+
 /// A [`Service`] implementation based on the Google Cloud Storage service.
 pub(in crate::server) struct GcpService {
     client: Client,
@@ -30,13 +35,27 @@ impl GcpService {
         bucket: String,
         credential_path: Option<String>,
     ) -> Result<Self> {
-        let config: ClientConfig = if let Some(credentials) = credential_path {
+        #![allow(unused)]
+        let mut config = ClientConfig::default();
+
+        // Build a reqwest client using the appropriate settings for the configuration.
+        let client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(false);
+        #[cfg(feature = "tls-native-roots")]
+        let client = client.tls_built_in_native_certs(true);
+        #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
+        let client = client.tls_built_in_webpki_certs(true);
+        let client = client.build()?;
+        config.http = Some(reqwest_middleware::ClientBuilder::new(client).build());
+
+        // Set up the credentials after the HTTP client has been configured, so that the client is used to
+        // validate the credentials.
+        if let Some(credentials) = credential_path {
             let credentials = CredentialsFile::new_from_file(credentials).await?;
-            ClientConfig::default()
-                .with_credentials(credentials)
-                .await?
+            config = config.with_credentials(credentials).await?
         } else {
-            ClientConfig::default().with_auth().await?
+            config = config.with_auth().await?
         };
 
         Ok(Self {
@@ -45,6 +64,7 @@ impl GcpService {
         })
     }
 }
+
 #[async_trait]
 impl Service for GcpService {
     async fn put(&mut self, name: &str, value: &[u8]) -> Result<()> {
