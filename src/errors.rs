@@ -82,6 +82,7 @@ pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
+    #[cfg(feature = "server-sync")]
     use super::*;
 
     #[cfg(feature = "server-sync")]
