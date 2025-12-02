@@ -1,4 +1,4 @@
-#![cfg(feature = "server-local")]
+#![cfg(all(feature = "server-local", not(target_arch = "wasm32")))]
 
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;

@@ -92,11 +92,14 @@ jobs:
 
   ## Test a build for WASM.
   wasm:
-    name: "WASM Build"
+    name: "WASM Tests"
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -116,7 +119,10 @@ jobs:
           target: wasm32-unknown-unknown
           override: true
 
-      - name: build
-        # At the moment, only sqlite storage and the local server are
-        # supported. See https://github.com/GothenburgBitFactory/taskchampion/issues/599.
-        run: cargo build --no-default-features --features storage-sqlite,server-local
+      - run: |
+          wasm-pack test --headless --firefox \
+            --no-default-features --features storage-indexeddb
+
+      - run: |
+          wasm-pack test --headless --chrome \
+            --no-default-features --features storage-indexeddb

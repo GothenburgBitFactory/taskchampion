@@ -176,13 +176,11 @@ impl SyncOp {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::storage::TaskMap;
     use crate::taskdb::TaskDb;
     use crate::Operations;
     use crate::{errors::Result, storage::inmemory::InMemoryStorage};
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
-    use proptest::prelude::*;
 
     #[test]
     fn test_json_create() -> Result<()> {
@@ -403,6 +401,18 @@ mod test {
         )
         .await;
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod proptest_test {
+    use super::*;
+    use crate::storage::inmemory::InMemoryStorage;
+    use crate::storage::TaskMap;
+    use crate::taskdb::TaskDb;
+    use crate::Operations;
+    use chrono::Utc;
+    use pretty_assertions::assert_eq;
+    use proptest::prelude::*;
 
     fn uuid_strategy() -> impl Strategy<Value = Uuid> {
         prop_oneof![

@@ -71,8 +71,9 @@ Support for some optional functionality is controlled by feature flags.
  * `server-sync` - sync to the taskchampion-sync-server
  * `server-local` - sync to a local file
  * `sync` - enables all of the sync features above
+ * `storage-indexeddb` - store task data in the browser using IndexedDB (WASM only)
  * `storage-sqlite` - store task data locally in SQLite
- * `storage` - enables all of the storage features above
+ * `storage` - enables all of the storage features above except `storage-indexeddb`
  * `bundled` - activates bundling system libraries like sqlite
  * `tls-webpki-roots` - use TLS roots bundled with the library, instead of reading them from
    system configuration.
@@ -82,6 +83,13 @@ Support for some optional functionality is controlled by feature flags.
    of the HTTPS-based `server-*` features.
 
 By default, `sync`, `storage`, `bundled`, and `tls-webpki-roots` are enabled.
+
+# WASM Support
+
+TaskChampion can be built for WASM with the usual WASM tools, such as
+`wasm-pack`. Only the following features are supported:
+
+ * `storage-indexeddb` - store task data in the browser using IndexedDB (WASM only)
 
 # See Also
 

@@ -15,19 +15,21 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+mod config;
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+pub mod indexeddb;
+pub mod inmemory;
+#[cfg(feature = "storage-sqlite")]
+pub mod sqlite;
 #[cfg(test)]
 mod test;
 
-mod config;
-
-#[cfg(feature = "storage-sqlite")]
-pub mod sqlite;
-
 pub use config::AccessMode;
 
-pub mod inmemory;
-
-#[cfg(feature = "storage-sqlite")]
+#[cfg(any(
+    feature = "storage-sqlite",
+    all(target_arch = "wasm32", feature = "storage-indexeddb")
+))]
 mod send_wrapper;
 
 #[doc(hidden)]
@@ -91,6 +93,7 @@ pub trait StorageTxn: Send {
     async fn all_task_uuids(&mut self) -> Result<Vec<Uuid>>;
 
     /// Get the current base_version for this storage -- the last version synced from the server.
+    /// If no version has been set, this returns the nil version.
     async fn base_version(&mut self) -> Result<VersionId>;
 
     /// Set the current base_version for this storage.
@@ -108,7 +111,7 @@ pub trait StorageTxn: Send {
     async fn num_unsynced_operations(&mut self) -> Result<usize>;
 
     /// Add an operation to the end of the list of operations in the storage.  Note that this
-    //. merely *stores* the operation; it is up to the TaskDb to apply it.
+    /// merely *stores* the operation; it is up to the TaskDb to apply it.
     async fn add_operation(&mut self, op: Operation) -> Result<()>;
 
     /// Remove an operation from the end of the list of operations in the storage.  The operation
