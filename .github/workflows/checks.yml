@@ -43,6 +43,13 @@ jobs:
           args: --all-features --no-deps -- -D warnings
           name: "Clippy Results"
 
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: wasm32-unknown-unknown
+          args: --no-default-features --features storage-indexeddb --no-deps -- -D warnings
+          name: "Clippy Results (WASM)"
+
   rustdoc:
     runs-on: ubuntu-latest
     name: "Rustdoc"

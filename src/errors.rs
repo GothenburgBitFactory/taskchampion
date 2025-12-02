@@ -57,6 +57,22 @@ impl<T: Sync + Send + 'static> From<tokio::sync::mpsc::error::SendError<T>> for 
     }
 }
 
+/// Convert [`idb::Error`] into [`Error::Database`]
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+impl From<idb::Error> for Error {
+    fn from(err: idb::Error) -> Self {
+        Error::Database(err.to_string())
+    }
+}
+
+/// Convert [`serde_wasm_bindgen::Error`] into [`Error::Database`]
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+impl From<serde_wasm_bindgen::Error> for Error {
+    fn from(err: serde_wasm_bindgen::Error) -> Self {
+        Error::Database(err.to_string())
+    }
+}
+
 /// Convert reqwest errors more carefully
 #[cfg(feature = "http")]
 impl From<reqwest::Error> for Error {

@@ -10,105 +10,135 @@ use pretty_assertions::assert_eq;
 use uuid::Uuid;
 
 /// Define a collection of storage tests that apply to all storage implementations.
-macro_rules! storage_tests {
-    ($storage:expr) => {
-        #[tokio::test]
+macro_rules! storage_tests_base {
+    ($storage:expr, $macro:meta) => {
+        #[$macro]
         async fn get_working_set_empty() -> $crate::errors::Result<()> {
             $crate::storage::test::get_working_set_empty($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn add_to_working_set() -> $crate::errors::Result<()> {
             $crate::storage::test::add_to_working_set($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn clear_working_set() -> $crate::errors::Result<()> {
             $crate::storage::test::clear_working_set($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn drop_transaction() -> $crate::errors::Result<()> {
             $crate::storage::test::drop_transaction($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn create() -> $crate::errors::Result<()> {
             $crate::storage::test::create($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn create_exists() -> $crate::errors::Result<()> {
             $crate::storage::test::create_exists($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn get_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::get_missing($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn set_task() -> $crate::errors::Result<()> {
             $crate::storage::test::set_task($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn delete_task_missing() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_missing($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn delete_task_exists() -> $crate::errors::Result<()> {
             $crate::storage::test::delete_task_exists($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn all_tasks_empty() -> $crate::errors::Result<()> {
             $crate::storage::test::all_tasks_empty($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn all_tasks_and_uuids() -> $crate::errors::Result<()> {
             $crate::storage::test::all_tasks_and_uuids($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
+        async fn pending_tasks_empty() -> $crate::errors::Result<()> {
+            $crate::storage::test::pending_tasks_empty($storage).await
+        }
+
+        #[$macro]
+        async fn pending_tasks() -> $crate::errors::Result<()> {
+            $crate::storage::test::pending_tasks($storage).await
+        }
+
+        #[$macro]
         async fn base_version_default() -> Result<()> {
             $crate::storage::test::base_version_default($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn base_version_setting() -> Result<()> {
             $crate::storage::test::base_version_setting($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn unsynced_operations() -> Result<()> {
             $crate::storage::test::unsynced_operations($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn remove_operations() -> Result<()> {
             $crate::storage::test::remove_operations($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn task_operations() -> Result<()> {
             $crate::storage::test::task_operations($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn sync_complete() -> Result<()> {
             $crate::storage::test::sync_complete($storage).await
         }
 
-        #[tokio::test]
+        #[$macro]
         async fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage).await
         }
     };
 }
+pub(crate) use storage_tests_base;
+
+/// Invoke storage_tests_base with the regular `#[tokio::test]` macro.
+macro_rules! storage_tests {
+    ($storage:expr) => {
+        use $crate::storage::test::storage_tests_base;
+        storage_tests_base!($storage, tokio::test);
+    };
+}
 pub(crate) use storage_tests;
+
+/// Invoke storage_tests_base with the `#[wasm_bindgen_test]` macro.
+#[cfg(target_arch = "wasm32")]
+macro_rules! storage_tests_wasm {
+    ($storage:expr) => {
+        use $crate::storage::test::storage_tests_base;
+        storage_tests_base!($storage, wasm_bindgen_test);
+    };
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) use storage_tests_wasm;
 
 pub(super) async fn get_working_set_empty(mut storage: impl Storage) -> Result<()> {
     {
@@ -334,6 +364,62 @@ pub(super) async fn all_tasks_and_uuids(mut storage: impl Storage) -> Result<()>
         exp.sort();
 
         assert_eq!(uuids, exp);
+    }
+    Ok(())
+}
+
+pub(super) async fn pending_tasks_empty(mut storage: impl Storage) -> Result<()> {
+    {
+        let mut txn = storage.txn().await?;
+        let tasks = txn.get_pending_tasks().await?;
+
+        assert_eq!(tasks, vec![]);
+    }
+    Ok(())
+}
+
+pub(super) async fn pending_tasks(mut storage: impl Storage) -> Result<()> {
+    let uuids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    {
+        let mut txn = storage.txn().await?;
+        for (i, uuid) in uuids.iter().enumerate() {
+            assert!(txn.create_task(*uuid).await?);
+            txn.set_task(
+                *uuid,
+                taskmap_with(vec![("num".to_string(), i.to_string())]),
+            )
+            .await?;
+        }
+
+        // Put only uuids[1] and [2] and a UUID with no matching task in the working set.
+        txn.add_to_working_set(uuids[0]).await?;
+        txn.add_to_working_set(uuids[1]).await?;
+        txn.add_to_working_set(uuids[2]).await?;
+        txn.add_to_working_set(Uuid::new_v4()).await?;
+        txn.set_working_set_item(1, None).await?;
+
+        txn.commit().await?;
+    }
+    {
+        let mut txn = storage.txn().await?;
+        let mut tasks = txn.get_pending_tasks().await?;
+
+        // order is nondeterministic, so sort by uuid
+        tasks.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut exp = vec![
+            (
+                uuids[1],
+                taskmap_with(vec![("num".to_string(), "1".to_string())]),
+            ),
+            (
+                uuids[2],
+                taskmap_with(vec![("num".to_string(), "2".to_string())]),
+            ),
+        ];
+        exp.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(tasks, exp);
     }
     Ok(())
 }

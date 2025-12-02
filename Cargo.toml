@@ -17,6 +17,9 @@ rust-version = "1.88.0"
 members = [ "xtask" ]
 resolver = "2"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["sync", "bundled", "storage", "tls-webpki-roots"]
 
@@ -30,10 +33,14 @@ server-gcp = ["cloud", "encryption", "http", "dep:google-cloud-storage", "dep:re
 server-aws = ["cloud", "encryption", "http", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 # Suppport for sync to another SQLite database on the same machine
 server-local = ["dep:rusqlite"]
-# Support for all task storage backends
+
+# Support for all task storage backends (except indexeddb, which only works on WASM builds)
 storage = ["storage-sqlite"]
 # Support for SQLite task storage
 storage-sqlite = ["dep:rusqlite"]
+# Support for IndexedDB task storage
+storage-indexeddb = ["dep:idb", "dep:web-sys"]
+
 # (private) Support for sync protocol encryption
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
@@ -49,9 +56,11 @@ http = ["dep:reqwest", "dep:url"]
 
 [package.metadata.docs.rs]
 all-features = true
+additional-targets = ["wasm32-unknown-unknown"]
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1.89"
 aws-sdk-s3 = { version = "1.118", default-features = false, optional = true }
 aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
@@ -61,6 +70,7 @@ byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
 flate2 = "1"
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
+idb = { version = "0.6.4", optional = true }
 log = "^0.4.17"
 reqwest = { version = "0.12", default-features = false, optional = true }
 reqwest-middleware = { version = "0.4", optional = true }
@@ -74,16 +84,43 @@ tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
 uuid = { version = "^1.16.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
-async-trait = "0.1.89"
 
+## wasm-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "*", features = ["js"] }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4" }
+serde-wasm-bindgen = "0.6"
+web-sys = { version = "0.3.83", optional = true, features = [
+  "Window",
+  "IdbFactory",
+  "IdbOpenDbRequest",
+  "IdbDatabase",
+  "IdbTransaction",
+  "IdbObjectStore",
+  "IdbRequest",
+  "DomException",
+  "IdbObjectStoreParameters",
+  "IdbTransactionMode",
+  "EventTarget",
+  "Event",
+  "console",
+]}
 
+## common dev-dependencies
 [dev-dependencies]
-proptest = "^1.9.0"
 tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
 libc = "*"
 tokio = { version = "*", features = ["time", "rt"] }
+
+## wasm-only dev-dependencies
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+## non-wasm dev-dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# proptest requires getrandom, which is not supported on WASM
+proptest = "^1.9.0"
 httptest = "0.16"
