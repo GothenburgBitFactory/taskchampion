@@ -47,7 +47,7 @@ let storage = SqliteStorage::new(
   taskdb_dir,
   AccessMode::ReadWrite,
   true,
-)?;
+).await?;
 let mut replica = Replica::new(storage);
 
 // Set up a local, on-disk server.
@@ -90,4 +90,4 @@ for more information about the design and usage of the tool.
 
 # Minimum Supported Rust Version (MSRV)
 
-This crate supports Rust version 1.82.0 and higher.
+This crate supports Rust version 1.85.0 and higher.
