@@ -43,7 +43,7 @@ use uuid::Uuid;
 #   tmp_dir.path().to_path_buf(),
 #   AccessMode::ReadWrite,
 #   true
-# )?);
+# ).await?);
 // Create a new task, recording the required operations.
 let mut ops = Operations::new();
 let uuid = Uuid::new_v4();

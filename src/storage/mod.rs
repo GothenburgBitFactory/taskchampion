@@ -27,6 +27,9 @@ pub use config::AccessMode;
 
 pub mod inmemory;
 
+#[cfg(feature = "storage-sqlite")]
+mod send_wrapper;
+
 #[doc(hidden)]
 /// For compatibility with 0.6 and earlier, [`Operation`] is re-exported here.
 pub use crate::Operation as ReplicaOp;

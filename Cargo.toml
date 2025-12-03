@@ -11,7 +11,7 @@ keywords = ["cli", "todo", "tasks", "taskwarrior", "task-tracking"]
 readme = "src/crate-doc.md"
 license = "MIT"
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.85.0"
 
 [workspace]
 members = [ "xtask" ]
@@ -68,7 +68,7 @@ serde_json = "^1.0"
 serde = { version = "^1.0.147", features = ["derive"] }
 strum = "0.27"
 strum_macros = "0.27"
-tokio = { version = "1", features = ["macros", "sync"] }
+tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
 ureq = { version = "^2.12.1", features = ["tls"], optional = true }
 uuid = { version = "^1.16.0", features = ["serde", "v4"] }
@@ -84,4 +84,4 @@ tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
 libc = "*"
-tokio = { version = "*", features = ["rt"] }
+tokio = { version = "*", features = ["time", "rt"] }
