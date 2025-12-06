@@ -97,6 +97,8 @@ pub enum ServerConfig {
 impl ServerConfig {
     /// Get a server based on this configuration
     pub async fn into_server(self) -> Result<Box<dyn Server>> {
+        // This expression is unreachable if no server features are enabled.
+        #[allow(unreachable_code)]
         Ok(match self {
             #[cfg(feature = "server-local")]
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
