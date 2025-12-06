@@ -58,7 +58,7 @@ byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
 flate2 = "1"
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
-hyper-rustls = { version = "*", optional = true } # AWS SDK selects a version
+hyper-rustls = { version = "0.24.2", optional = true }
 log = "^0.4.17"
 reqwest = { version = "*", optional = true } # GCP SDK selects a version
 reqwest-middleware = { version = "*", optional = true } # GCP SDK selects a version
