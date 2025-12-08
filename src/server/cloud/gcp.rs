@@ -1,12 +1,12 @@
 use super::service::{validate_object_name, ObjectInfo, Service};
 use crate::errors::Result;
-use crate::server::cloud::iter::AsyncObjectIterator;
+use crate::server::{cloud::iter::AsyncObjectIterator, http};
 use async_trait::async_trait;
 use google_cloud_storage::client::google_cloud_auth::credentials::CredentialsFile;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::error::ErrorResponse;
+use google_cloud_storage::http::objects;
 use google_cloud_storage::http::Error as GcsError;
-use google_cloud_storage::http::{self, objects};
 
 #[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
 compile_error!(
@@ -20,7 +20,7 @@ pub(in crate::server) struct GcpService {
 }
 
 /// Determine whether the given result contains an HTTP error with the given code.
-fn is_http_error<T>(query: u16, res: &std::result::Result<T, http::Error>) -> bool {
+fn is_http_error<T>(query: u16, res: &std::result::Result<T, GcsError>) -> bool {
     match res {
         // Errors from RPC's.
         Err(GcsError::Response(ErrorResponse { code, .. })) => *code == query,
@@ -36,18 +36,10 @@ impl GcpService {
         credential_path: Option<String>,
     ) -> Result<Self> {
         #![allow(unused)]
-        let mut config = ClientConfig::default();
-
-        // Build a reqwest client using the appropriate settings for the configuration.
-        let client = reqwest::Client::builder()
-            .use_rustls_tls()
-            .tls_built_in_root_certs(false);
-        #[cfg(feature = "tls-native-roots")]
-        let client = client.tls_built_in_native_certs(true);
-        #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
-        let client = client.tls_built_in_webpki_certs(true);
-        let client = client.build()?;
-        config.http = Some(reqwest_middleware::ClientBuilder::new(client).build());
+        let mut config = ClientConfig {
+            http: Some(reqwest_middleware::ClientBuilder::new(http::client()?).build()),
+            ..ClientConfig::default()
+        };
 
         // Set up the credentials after the HTTP client has been configured, so that the client is used to
         // validate the credentials.
