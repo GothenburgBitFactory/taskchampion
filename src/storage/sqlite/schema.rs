@@ -193,7 +193,7 @@ fn has_column(t: &Transaction, table: &str, column: &str) -> Result<bool> {
             [table, column],
             |r| r.get(0),
         )
-        .with_context(|| format!("Checking for {}.{}", table, column))?;
+        .with_context(|| format!("Checking for {table}.{column}"))?;
     Ok(res > 0)
 }
 

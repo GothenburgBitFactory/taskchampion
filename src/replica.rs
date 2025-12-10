@@ -106,7 +106,7 @@ impl<S: Storage> Replica<S> {
         let property = property.into();
         let mut ops = self.make_operations();
         let Some(mut task) = self.get_task_data(uuid).await? else {
-            return Err(Error::Database(format!("Task {} does not exist", uuid)));
+            return Err(Error::Database(format!("Task {uuid} does not exist")));
         };
         task.update(property, value, &mut ops);
         self.commit_operations(ops).await?;
@@ -339,7 +339,7 @@ impl<S: Storage> Replica<S> {
     #[deprecated(since = "0.7.0", note = "please use TaskData::delete")]
     pub async fn delete_task(&mut self, uuid: Uuid) -> Result<()> {
         let Some(mut task) = self.get_task_data(uuid).await? else {
-            return Err(Error::Database(format!("Task {} does not exist", uuid)));
+            return Err(Error::Database(format!("Task {uuid} does not exist")));
         };
         let mut ops = self.make_operations();
         task.delete(&mut ops);

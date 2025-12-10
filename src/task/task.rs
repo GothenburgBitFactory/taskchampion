@@ -78,7 +78,7 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
     if namespace.is_empty() {
         key.into()
     } else {
-        format!("{}.{}", namespace, key)
+        format!("{namespace}.{key}")
     }
 }
 
@@ -173,7 +173,7 @@ impl Task {
     /// Check if this task has the given tag
     pub fn has_tag(&self, tag: &Tag) -> bool {
         match tag.inner() {
-            TagInner::User(s) => self.data.has(format!("tag_{}", s)),
+            TagInner::User(s) => self.data.has(format!("tag_{s}")),
             TagInner::Synthetic(st) => self.has_synthetic_tag(st),
         }
     }
@@ -419,7 +419,7 @@ impl Task {
                 "Synthetic tags cannot be modified",
             )));
         }
-        self.set_value(format!("tag_{}", tag), Some("".to_owned()), ops)
+        self.set_value(format!("tag_{tag}"), Some("".to_owned()), ops)
     }
 
     /// Remove a tag from this task.  Does nothing if the tag is not present.
@@ -429,7 +429,7 @@ impl Task {
                 "Synthetic tags cannot be modified",
             )));
         }
-        self.set_value(format!("tag_{}", tag), None, ops)
+        self.set_value(format!("tag_{tag}"), None, ops)
     }
 
     /// Add a new annotation.  Note that annotations with the same entry time
@@ -501,8 +501,7 @@ impl Task {
         let key = key.into();
         if Task::is_known_key(&key) {
             return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
+                "Property name {key} as special meaning in a task and cannot be used as a UDA"
             )));
         }
         self.set_value(key, Some(value.into()), ops)
@@ -527,8 +526,7 @@ impl Task {
         let key = key.into();
         if Task::is_known_key(&key) {
             return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
+                "Property name {key} as special meaning in a task and cannot be used as a UDA"
             )));
         }
         self.set_value(key, None, ops)
@@ -536,13 +534,13 @@ impl Task {
 
     /// Add a dependency.
     pub fn add_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
-        let key = format!("dep_{}", dep);
+        let key = format!("dep_{dep}");
         self.set_value(key, Some("".to_string()), ops)
     }
 
     /// Remove a dependency.
     pub fn remove_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
-        let key = format!("dep_{}", dep);
+        let key = format!("dep_{dep}");
         self.set_value(key, None, ops)
     }
 

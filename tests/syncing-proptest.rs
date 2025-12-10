@@ -53,7 +53,7 @@ proptest! {
                 ];
 
                 for (action, rep) in action_sequence {
-                    println!("{:?} on rep {}", action, rep);
+                    println!("{action:?} on rep {rep}");
 
                     let rep = &mut replicas[rep as usize];
                     match action {

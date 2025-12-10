@@ -100,12 +100,12 @@ pub(super) async fn apply_op(txn: &mut dyn StorageTxn, op: &SyncOp) -> Result<()
         SyncOp::Create { uuid } => {
             // insert if the task does not already exist
             if !txn.create_task(*uuid).await? {
-                return Err(Error::Database(format!("Task {} already exists", uuid)));
+                return Err(Error::Database(format!("Task {uuid} already exists")));
             }
         }
         SyncOp::Delete { ref uuid } => {
             if !txn.delete_task(*uuid).await? {
-                return Err(Error::Database(format!("Task {} does not exist", uuid)));
+                return Err(Error::Database(format!("Task {uuid} does not exist")));
             }
         }
         SyncOp::Update {
@@ -122,7 +122,7 @@ pub(super) async fn apply_op(txn: &mut dyn StorageTxn, op: &SyncOp) -> Result<()
                 };
                 txn.set_task(*uuid, task).await?;
             } else {
-                return Err(Error::Database(format!("Task {} does not exist", uuid)));
+                return Err(Error::Database(format!("Task {uuid} does not exist")));
             }
         }
     }

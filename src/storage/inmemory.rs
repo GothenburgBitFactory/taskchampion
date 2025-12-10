@@ -209,8 +209,7 @@ impl StorageTxn for Txn<'_> {
         let working_set = &mut self.mut_data_ref().working_set;
         if index >= working_set.len() {
             return Err(Error::Database(format!(
-                "Index {} is not in the working set",
-                index
+                "Index {index} is not in the working set"
             )));
         }
         working_set[index] = uuid;

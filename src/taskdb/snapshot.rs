@@ -130,7 +130,7 @@ mod test {
         let all_tasks = SnapshotTasks(vec![(u, m)]);
         assert_eq!(
             serde_json::to_vec(&all_tasks)?,
-            format!("{{\"{}\":{{\"description\":\"my task\"}}}}", u).into_bytes(),
+            format!("{{\"{u}\":{{\"description\":\"my task\"}}}}").into_bytes(),
         );
         Ok(())
     }
