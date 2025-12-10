@@ -29,7 +29,7 @@ server-gcp = ["cloud", "encryption", "dep:google-cloud-storage", "dep:reqwest-mi
 # Support for sync to AWS
 server-aws = ["cloud", "encryption", "dep:aws-sdk-s3", "dep:aws-config", "dep:aws-credential-types", "dep:aws-smithy-runtime"]
 # Suppport for sync to another SQLite database on the same machine
-server-local = ["storage-sqlite"]
+server-local = ["dep:rusqlite"]
 # Support for all task storage backends
 storage = ["storage-sqlite"]
 # Support for SQLite task storage
