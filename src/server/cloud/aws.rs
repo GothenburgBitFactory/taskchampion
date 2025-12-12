@@ -1,5 +1,8 @@
 use super::service::{validate_object_name, ObjectInfo, Service};
-use crate::{errors::Result, server::cloud::iter::AsyncObjectIterator};
+use crate::{
+    errors::Result,
+    server::{cloud::iter::AsyncObjectIterator, http},
+};
 use async_trait::async_trait;
 use aws_config::{
     meta::region::RegionProviderChain, profile::ProfileFileCredentialsProvider, BehaviorVersion,
@@ -8,15 +11,19 @@ use aws_config::{
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     self as s3,
+    config::http::{HttpRequest, HttpResponse},
     error::ProvideErrorMetadata,
     operation::{get_object::GetObjectOutput, list_objects_v2::ListObjectsV2Output},
 };
-use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
-
-#[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
-compile_error!(
-    "Either feature \"tls-native-roots\" or \"tls-webpki-roots\" must be enabled for TLS support."
-);
+use aws_smithy_runtime_api::{
+    client::{
+        http::{HttpClient, HttpConnector, HttpConnectorFuture, SharedHttpConnector},
+        result::ConnectorError,
+        retries::ErrorKind,
+    },
+    http::{Headers, StatusCode},
+};
+use reqwest::Method;
 
 /// A [`Service`] implementation based on AWS S3.
 pub(in crate::server) struct AwsService {
@@ -71,7 +78,7 @@ impl AwsService {
         bucket: String,
         creds: AwsCredentials,
     ) -> Result<Self> {
-        let mut config_provider = aws_config::defaults(BehaviorVersion::v2024_03_28());
+        let mut config_provider = aws_config::defaults(BehaviorVersion::latest());
         match creds {
             AwsCredentials::AccessKey {
                 access_key_id,
@@ -95,19 +102,7 @@ impl AwsService {
             }
         }
 
-        let builder = hyper_rustls::HttpsConnectorBuilder::new();
-
-        // Only one of with_native_roots and with_webpki_roots is supported, so prefer
-        // native roots.
-        #[cfg(feature = "tls-native-roots")]
-        let builder = builder.with_native_roots();
-        #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
-        let builder = builder.with_webpki_roots();
-
-        let tls_connector = builder.https_only().enable_http2().build();
-
-        let hyper_client = HyperClientBuilder::new().build(tls_connector);
-        config_provider = config_provider.http_client(hyper_client);
+        config_provider = config_provider.http_client(ReqwestClient::new()?);
 
         let config = config_provider
             .region(RegionProviderChain::first_try(Region::new(region)))
@@ -116,6 +111,95 @@ impl AwsService {
 
         let client = s3::client::Client::new(&config);
         Ok(Self { client, bucket })
+    }
+}
+
+/// An [`HttpClient`] implementation wrapping Reqwest.
+#[derive(Debug)]
+struct ReqwestClient {
+    connector: SharedHttpConnector,
+}
+
+impl ReqwestClient {
+    fn new() -> Result<Self> {
+        let client = http::client()?;
+        Ok(ReqwestClient {
+            connector: SharedHttpConnector::new(ReqwestConnector { client }),
+        })
+    }
+}
+
+impl HttpClient for ReqwestClient {
+    fn http_connector(
+        &self,
+        _settings: &aws_smithy_runtime_api::client::http::HttpConnectorSettings,
+        _components: &aws_sdk_s3::config::RuntimeComponents,
+    ) -> SharedHttpConnector {
+        self.connector.clone()
+    }
+}
+
+/// An [`HttpConnector`] implementation wrapping Reqwest.
+#[derive(Debug)]
+struct ReqwestConnector {
+    client: reqwest::Client,
+}
+
+/// Convert a [`reqwest::Error`] into an AWS ['ConnectorError'].
+fn reqwest_error_to_connector(err: reqwest::Error) -> ConnectorError {
+    let mut kind = None;
+    if err.is_connect() || err.is_timeout() {
+        kind = Some(ErrorKind::TransientError);
+    }
+    if err.is_request() {
+        kind = Some(ErrorKind::ClientError);
+    }
+    ConnectorError::other(Box::new(err), kind)
+}
+
+impl HttpConnector for ReqwestConnector {
+    fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
+        use std::str::FromStr;
+        // This `from_str` only fails if it cannot allocate. For the methods we will
+        // see from the AWS SDK, this will not occur.
+        let method = Method::from_str(request.method()).unwrap();
+        let mut reqwest_req = self.client.request(method, request.uri());
+        for (h, v) in request.headers() {
+            reqwest_req = reqwest_req.header(h, v);
+        }
+        if let Some(b) = request.into_body().bytes().map(|b| b.to_vec()) {
+            reqwest_req = reqwest_req.body(b);
+        }
+        HttpConnectorFuture::new(async {
+            let reqwest_resp = reqwest_req
+                .send()
+                .await
+                .map_err(reqwest_error_to_connector)?;
+            let status_code = reqwest_resp.status().as_u16();
+
+            // Gather headers before consuming reqwest_resp to get the body.
+            let mut aws_headers = Headers::new();
+            for (h, v) in reqwest_resp.headers() {
+                if let Ok(v) = v.to_str() {
+                    aws_headers.insert(h.to_string(), v.to_owned());
+                }
+            }
+
+            // Collect the body in memory
+            let body = reqwest_resp
+                .bytes()
+                .await
+                .map_err(reqwest_error_to_connector)?;
+
+            // Combine all of that into an AWS HttpResponse
+            let mut resp = HttpResponse::new(
+                StatusCode::try_from(status_code)
+                    .map_err(|e| ConnectorError::other(Box::new(e), None))?,
+                body.into(),
+            );
+            *resp.headers_mut() = aws_headers;
+            Ok(resp)
+        })
     }
 }
 

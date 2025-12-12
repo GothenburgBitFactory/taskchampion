@@ -270,7 +270,7 @@ pub(super) async fn compare_and_swap_disappears(
     pfx: impl Fn(&str) -> String,
 ) -> Result<()> {
     // Create the existing object, but since it is named "racing-delete" it will disappear just
-    // before the `put_object` call. This tests the case where the exists when
+    // before the `put_object` call. This tests the case where the object exists when
     // `compare_and_swap` calls `get_object` but is deleted when it calls `put_object`.
     svc.put(&pfx("racing-delete"), b"foo1").await?;
     assert!(
