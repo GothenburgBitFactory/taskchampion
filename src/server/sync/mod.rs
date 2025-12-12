@@ -44,12 +44,12 @@ impl SyncServer {
         encryption_secret: Vec<u8>,
     ) -> Result<SyncServer> {
         let mut url = Url::parse(&url)
-            .map_err(|_| Error::Server(format!("Could not parse {} as a URL", url)))?;
+            .map_err(|_| Error::Server(format!("Could not parse {url} as a URL")))?;
         // Ensure the path has a trailing slash, so that `Url::join` correctly appends
         // additional path segments to it.
         let path = url.path();
         if !path.ends_with('/') {
-            url.set_path(&format!("{}/", path));
+            url.set_path(&format!("{path}/"));
         }
         Ok(SyncServer {
             base_url: url,
@@ -121,7 +121,7 @@ impl Server for SyncServer {
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
         let url = self.construct_endpoint_url(
-            format!("v1/client/add-version/{}", parent_version_id).as_str(),
+            format!("v1/client/add-version/{parent_version_id}").as_str(),
         )?;
         let unsealed = Unsealed {
             version_id: parent_version_id,
@@ -158,7 +158,7 @@ impl Server for SyncServer {
         parent_version_id: VersionId,
     ) -> Result<GetVersionResult> {
         let url = self.construct_endpoint_url(
-            format!("v1/client/get-child-version/{}", parent_version_id).as_str(),
+            format!("v1/client/get-child-version/{parent_version_id}").as_str(),
         )?;
 
         match self
@@ -186,7 +186,7 @@ impl Server for SyncServer {
 
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         let url =
-            self.construct_endpoint_url(format!("v1/client/add-snapshot/{}", version_id).as_str())?;
+            self.construct_endpoint_url(format!("v1/client/add-snapshot/{version_id}").as_str())?;
         let unsealed = Unsealed {
             version_id,
             payload: snapshot,

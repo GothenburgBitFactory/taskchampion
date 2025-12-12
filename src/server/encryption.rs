@@ -149,8 +149,7 @@ impl<'a> Envelope<'a> {
         let version = buf[0];
         if version != ENVELOPE_VERSION {
             return Err(Error::Server(format!(
-                "unrecognized encryption envelope version {}",
-                version
+                "unrecognized encryption envelope version {version}"
             )));
         }
 

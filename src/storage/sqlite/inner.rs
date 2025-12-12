@@ -576,7 +576,7 @@ mod test {
         ];
         for q in queries {
             con.execute(q, [])
-                .with_context(|| format!("executing {}", q))?;
+                .with_context(|| format!("executing {q}"))?;
         }
         Ok(())
     }
