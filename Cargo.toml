@@ -52,7 +52,7 @@ all-features = true
 
 [dependencies]
 anyhow = "1.0"
-aws-sdk-s3 = { version = "1.116", default-features = false, optional = true }
+aws-sdk-s3 = { version = "1.118", default-features = false, optional = true }
 aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
 aws-smithy-runtime-api = { version = "1.9", default-features = false, optional = true }
