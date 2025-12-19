@@ -40,7 +40,7 @@ impl ToSql for StoredUuid {
     }
 }
 
-/// SqliteStorageActor is an async actor wrapper for the sync SqliteStorage.
+/// SqliteStorage stores task data in a file on disk.
 #[derive(Clone)]
 pub struct SqliteStorage(Wrapper);
 
