@@ -7,6 +7,9 @@
 * chain of versions, even if multiple replicas attempt to sync at the same time.
 */
 
+#[cfg(target_arch = "wasm32")]
+compile_error!("Cloud servers are not available on WASM targets");
+
 mod iter;
 mod server;
 mod service;

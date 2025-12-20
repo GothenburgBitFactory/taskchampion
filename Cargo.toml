@@ -61,19 +61,12 @@ additional-targets = ["wasm32-unknown-unknown"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1.89"
-aws-sdk-s3 = { version = "1.119", default-features = false, optional = true }
-aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
-aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
-aws-smithy-runtime-api = { version = "1.9", default-features = false, optional = true }
-aws-smithy-types = { version = "1.3", default-features = false, optional = true }
 byteorder = "1.5"
 chrono = { version = "^0.4.38", features = ["serde"] }
 flate2 = "1"
-google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
 idb = { version = "0.6.4", optional = true }
 log = "^0.4.17"
 reqwest = { version = "0.12", default-features = false, optional = true }
-reqwest-middleware = { version = "0.4", optional = true }
 ring = { version = "0.17", optional = true }
 rusqlite = { version = "0.37", optional = true}
 serde_json = "^1.0"
@@ -85,9 +78,13 @@ thiserror = "2.0"
 uuid = { version = "^1.19.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
 
-## wasm-only dependencies
+## wasm-only dependencies.
+# Some of these have version="*" because the version is given in the general dependencies and
+# only adds a feature here.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "*", features = ["js"] }
+ring = { version = "*", optional = true, features = ["wasm32_unknown_unknown_js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 wasm-bindgen = { version = "0.2" }
 wasm-bindgen-futures = { version = "0.4" }
 serde-wasm-bindgen = "0.6"
@@ -107,6 +104,16 @@ web-sys = { version = "0.3.83", optional = true, features = [
   "console",
 ]}
 
+## non-wasm dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aws-sdk-s3 = { version = "1.119", default-features = false, optional = true }
+aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
+aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
+aws-smithy-runtime-api = { version = "1.9", default-features = false, optional = true }
+aws-smithy-types = { version = "1.3", default-features = false, optional = true }
+google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
+reqwest-middleware = { version = "0.4", optional = true }
+
 ## common dev-dependencies
 [dev-dependencies]
 tempfile = "3"
@@ -121,6 +128,6 @@ wasm-bindgen-test = "0.3"
 
 ## non-wasm dev-dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-# proptest requires getrandom, which is not supported on WASM
+# proptest has a number of non-WASM-compatible requirements
 proptest = "^1.9.0"
 httptest = "0.16"

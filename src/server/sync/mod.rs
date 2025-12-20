@@ -10,11 +10,6 @@ use uuid::Uuid;
 
 use super::encryption::{Cryptor, Sealed, Secret, Unsealed};
 
-#[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
-compile_error!(
-    "Either feature \"tls-native-roots\" or \"tls-webpki-roots\" must be enabled for TLS support."
-);
-
 pub(crate) struct SyncServer {
     base_url: Url,
     client_id: Uuid,
@@ -122,7 +117,7 @@ async fn sealed_from_resp(
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Server for SyncServer {
     async fn add_version(
         &mut self,
@@ -243,7 +238,9 @@ impl Server for SyncServer {
     }
 }
 
-#[cfg(test)]
+// httptest is not available on WASM32, so do not build these tests
+// on that platform (they wouldn't run anyway!).
+#[cfg(all(not(target_arch = "wasm32"), test))]
 mod test {
     use super::*;
     use crate::Server as ServerTrait;
