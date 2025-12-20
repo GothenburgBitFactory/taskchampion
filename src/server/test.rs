@@ -66,7 +66,7 @@ impl TestServer {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Server for TestServer {
     /// Add a new version.  If the given version number is incorrect, this responds with the
     /// appropriate version and expects the caller to try again.
