@@ -19,4 +19,3 @@ There are two crates here:
 The Rust API, as defined in [the docs](https://docs.rs/taskchampion/latest/taskchampion/), supports simple creation and manipulation of replicas and the tasks they contain.
 
 The Rust API follows semantic versioning.
-As this is still in the `0.x` phase, so breaking changes may occur but will be indicated with a change to the minor version.

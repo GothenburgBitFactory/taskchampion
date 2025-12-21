@@ -1,4 +1,5 @@
-use crate::errors::Result;
+use crate::{errors::Result, server::cloud::iter::AsyncObjectIterator};
+use async_trait::async_trait;
 
 /// Information about an object as returned from `Service::list`
 pub(in crate::server) struct ObjectInfo {
@@ -14,23 +15,23 @@ pub(in crate::server) struct ObjectInfo {
 /// similar to a HashMap, with the addition of a compare-and-swap operation. Object names
 /// are always simple strings from the character set `[a-zA-Z0-9-]`, no more than 100 characters
 /// in length.
+#[async_trait]
 pub(in crate::server) trait Service {
     /// Put an object into cloud storage. If the object exists, it is overwritten.
-    fn put(&mut self, name: &str, value: &[u8]) -> Result<()>;
+    async fn put(&mut self, name: &str, value: &[u8]) -> Result<()>;
 
     /// Get an object from cloud storage, or None if the object does not exist.
-    fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>>;
+    async fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>>;
 
     /// Delete an object. Does nothing if the object does not exist.
-    fn del(&mut self, name: &str) -> Result<()>;
+    async fn del(&mut self, name: &str) -> Result<()>;
 
     /// Enumerate objects with the given prefix.
-    fn list<'a>(&'a mut self, prefix: &'a str)
-        -> Box<dyn Iterator<Item = Result<ObjectInfo>> + 'a>;
+    async fn list<'a>(&'a mut self, prefix: &'a str) -> Box<dyn AsyncObjectIterator + Send + 'a>;
 
     /// Compare the existing object's value with `existing_value`, and replace with `new_value`
     /// only if the values match. Returns true if the replacement occurred.
-    fn compare_and_swap(
+    async fn compare_and_swap(
         &mut self,
         name: &str,
         existing_value: Option<Vec<u8>>,

@@ -78,7 +78,7 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
     if namespace.is_empty() {
         key.into()
     } else {
-        format!("{}.{}", namespace, key)
+        format!("{namespace}.{key}")
     }
 }
 
@@ -173,7 +173,7 @@ impl Task {
     /// Check if this task has the given tag
     pub fn has_tag(&self, tag: &Tag) -> bool {
         match tag.inner() {
-            TagInner::User(s) => self.data.has(format!("tag_{}", s)),
+            TagInner::User(s) => self.data.has(format!("tag_{s}")),
             TagInner::Synthetic(st) => self.has_synthetic_tag(st),
         }
     }
@@ -419,7 +419,7 @@ impl Task {
                 "Synthetic tags cannot be modified",
             )));
         }
-        self.set_value(format!("tag_{}", tag), Some("".to_owned()), ops)
+        self.set_value(format!("tag_{tag}"), Some("".to_owned()), ops)
     }
 
     /// Remove a tag from this task.  Does nothing if the tag is not present.
@@ -429,7 +429,7 @@ impl Task {
                 "Synthetic tags cannot be modified",
             )));
         }
-        self.set_value(format!("tag_{}", tag), None, ops)
+        self.set_value(format!("tag_{tag}"), None, ops)
     }
 
     /// Add a new annotation.  Note that annotations with the same entry time
@@ -501,8 +501,7 @@ impl Task {
         let key = key.into();
         if Task::is_known_key(&key) {
             return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
+                "Property name {key} as special meaning in a task and cannot be used as a UDA"
             )));
         }
         self.set_value(key, Some(value.into()), ops)
@@ -527,8 +526,7 @@ impl Task {
         let key = key.into();
         if Task::is_known_key(&key) {
             return Err(Error::Usage(format!(
-                "Property name {} as special meaning in a task and cannot be used as a UDA",
-                key
+                "Property name {key} as special meaning in a task and cannot be used as a UDA"
             )));
         }
         self.set_value(key, None, ops)
@@ -536,14 +534,38 @@ impl Task {
 
     /// Add a dependency.
     pub fn add_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
-        let key = format!("dep_{}", dep);
+        let key = format!("dep_{dep}");
         self.set_value(key, Some("".to_string()), ops)
     }
 
     /// Remove a dependency.
     pub fn remove_dependency(&mut self, dep: Uuid, ops: &mut Operations) -> Result<()> {
-        let key = format!("dep_{}", dep);
+        let key = format!("dep_{dep}");
         self.set_value(key, None, ops)
+    }
+
+    /// Get the given timestamp property.
+    ///
+    /// This will return `None` if the property is not set, or if it is not a valid
+    /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
+    pub fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
+        if let Some(ts) = self.data.get(property) {
+            if let Ok(ts) = ts.parse() {
+                return Some(utc_timestamp(ts));
+            }
+            // if the value does not parse as an integer, default to None
+        }
+        None
+    }
+
+    /// Set the given timestamp property, mapping the value correctly.
+    pub fn set_timestamp(
+        &mut self,
+        property: &str,
+        value: Option<Timestamp>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        self.set_value(property, value.map(|v| v.timestamp().to_string()), ops)
     }
 
     // -- utility functions
@@ -554,32 +576,13 @@ impl Task {
             || key.starts_with("annotation_")
             || key.starts_with("dep_")
     }
-
-    fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
-        if let Some(ts) = self.data.get(property) {
-            if let Ok(ts) = ts.parse() {
-                return Some(utc_timestamp(ts));
-            }
-            // if the value does not parse as an integer, default to None
-        }
-        None
-    }
-
-    fn set_timestamp(
-        &mut self,
-        property: &str,
-        value: Option<Timestamp>,
-        ops: &mut Operations,
-    ) -> Result<()> {
-        self.set_value(property, value.map(|v| v.timestamp().to_string()), ops)
-    }
 }
 
 #[cfg(test)]
 #[allow(deprecated)]
 mod test {
     use super::*;
-    use crate::Replica;
+    use crate::{storage::inmemory::InMemoryStorage, Replica};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -590,14 +593,14 @@ mod test {
     // Test task mutation by modifying a task and checking the assertions both on the
     // modified task and on a re-loaded task after the operations are committed. Then,
     // apply the same operations again and check that the result is the same.
-    fn with_mut_task<MODIFY: Fn(&mut Task, &mut Operations), ASSERT: Fn(&Task)>(
+    async fn with_mut_task<MODIFY: Fn(&mut Task, &mut Operations), ASSERT: Fn(&Task)>(
         modify: MODIFY,
         assert: ASSERT,
     ) {
-        let mut replica = Replica::new_inmemory();
+        let mut replica = Replica::new(InMemoryStorage::new());
         let mut ops = Operations::new();
         let uuid = Uuid::new_v4();
-        let mut task = replica.create_task(uuid, &mut ops).unwrap();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
 
         // Modify the task
         modify(&mut task, &mut ops);
@@ -605,10 +608,10 @@ mod test {
         // Check assertions about the task before committing it.
         assert(&task);
         println!("commiting operations from first call to modify function");
-        replica.commit_operations(ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
 
         // Check assertions on task loaded from storage
-        let mut task = replica.get_task(uuid).unwrap().unwrap();
+        let mut task = replica.get_task(uuid).await.unwrap().unwrap();
         assert(&task);
 
         // Apply the operations again, checking that they do not fail.
@@ -618,10 +621,10 @@ mod test {
         // Changes should still be as expected before commit.
         assert(&task);
         println!("commiting operations from second call to modify function");
-        replica.commit_operations(ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
 
         // Changes should still be as expected when loaded from storage.
-        let task = replica.get_task(uuid).unwrap().unwrap();
+        let task = replica.get_task(uuid).await.unwrap().unwrap();
         assert(&task);
     }
 
@@ -833,24 +836,25 @@ mod test {
         assert_eq!(task.get_due(), None);
     }
 
-    #[test]
-    fn test_due_new_task() {
-        with_mut_task(|_task, _ops| {}, |task| assert_eq!(task.get_due(), None));
+    #[tokio::test]
+    async fn test_due_new_task() {
+        with_mut_task(|_task, _ops| {}, |task| assert_eq!(task.get_due(), None)).await;
     }
 
-    #[test]
-    fn test_add_due() {
+    #[tokio::test]
+    async fn test_add_due() {
         let test_time = Utc.with_ymd_and_hms(2033, 1, 1, 0, 0, 0).unwrap();
         with_mut_task(
             |task, ops| {
                 task.set_due(Some(test_time), ops).unwrap();
             },
             |task| assert_eq!(task.get_due(), Some(test_time)),
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_remove_due() {
+    #[tokio::test]
+    async fn test_remove_due() {
         with_mut_task(
             |task, ops| {
                 task.data.update("due", Some("some-time".into()), ops);
@@ -860,7 +864,8 @@ mod test {
             |task| {
                 assert!(!task.data.has("due"));
             },
-        );
+        )
+        .await;
     }
 
     #[test]
@@ -909,8 +914,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_add_annotation() {
+    #[tokio::test]
+    async fn test_add_annotation() {
         with_mut_task(
             |task, ops| {
                 task.add_annotation(
@@ -926,11 +931,12 @@ mod test {
                 let k = "annotation_1635301900";
                 assert_eq!(task.data.get(k).unwrap(), "right message".to_owned());
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_add_annotation_overwrite() {
+    #[tokio::test]
+    async fn test_add_annotation_overwrite() {
         with_mut_task(
             |task, ops| {
                 task.add_annotation(
@@ -954,11 +960,12 @@ mod test {
                 let k = "annotation_1635301900";
                 assert_eq!(task.data.get(k).unwrap(), "right message 2".to_owned());
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_remove_annotation() {
+    #[tokio::test]
+    async fn test_remove_annotation() {
         with_mut_task(
             |task, ops| {
                 task.data
@@ -978,11 +985,12 @@ mod test {
                 anns.sort();
                 assert_eq!(anns, vec![]);
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_get_priority() {
+    #[tokio::test]
+    async fn test_set_get_priority() {
         with_mut_task(
             |task, ops| {
                 task.set_priority("H".into(), ops).unwrap();
@@ -990,21 +998,23 @@ mod test {
             |task| {
                 assert_eq!(task.get_priority(), "H");
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_get_priority_new_task() {
+    #[tokio::test]
+    async fn test_get_priority_new_task() {
         with_mut_task(
             |_task, _ops| {},
             |task| {
                 assert_eq!(task.get_priority(), "");
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_status_pending() {
+    #[tokio::test]
+    async fn test_set_status_pending() {
         with_mut_task(
             |task, ops| {
                 task.data.update("status", Some("completed".into()), ops);
@@ -1018,11 +1028,12 @@ mod test {
                 assert!(task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_status_recurring() {
+    #[tokio::test]
+    async fn test_set_status_recurring() {
         with_mut_task(
             |task, ops| {
                 task.data.update("status", Some("completed".into()), ops);
@@ -1035,11 +1046,12 @@ mod test {
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending))); // recurring is not +PENDING
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_status_completed() {
+    #[tokio::test]
+    async fn test_set_status_completed() {
         with_mut_task(
             |task, ops| {
                 task.set_status(Status::Completed, ops).unwrap();
@@ -1050,11 +1062,12 @@ mod test {
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_status_deleted() {
+    #[tokio::test]
+    async fn test_set_status_deleted() {
         with_mut_task(
             |task, ops| {
                 task.set_status(Status::Deleted, ops).unwrap();
@@ -1065,11 +1078,12 @@ mod test {
                 assert!(!task.has_tag(&stag(SyntheticTag::Pending)));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_get_value() {
+    #[tokio::test]
+    async fn test_set_get_value() {
         let property = "property-name";
         with_mut_task(
             |task, ops| {
@@ -1078,11 +1092,12 @@ mod test {
             |task| {
                 assert_eq!(task.get_value(property), Some("value"));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_set_get_value_none() {
+    #[tokio::test]
+    async fn test_set_get_value_none() {
         let property = "property-name";
         with_mut_task(
             |task, ops| {
@@ -1092,11 +1107,12 @@ mod test {
             |task| {
                 assert_eq!(task.get_value(property), None);
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_start() {
+    #[tokio::test]
+    async fn test_start() {
         with_mut_task(
             |task, ops| {
                 task.start(ops).unwrap();
@@ -1104,11 +1120,12 @@ mod test {
             |task| {
                 assert!(task.data.has("start"));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_stop() {
+    #[tokio::test]
+    async fn test_stop() {
         with_mut_task(
             |task, ops| {
                 task.data.update("start", Some("right now".into()), ops);
@@ -1117,11 +1134,12 @@ mod test {
             |task| {
                 assert!(!task.data.has("start"));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_done() {
+    #[tokio::test]
+    async fn test_done() {
         with_mut_task(
             |task, ops| {
                 task.done(ops).unwrap();
@@ -1131,11 +1149,12 @@ mod test {
                 assert!(task.data.has("end"));
                 assert!(task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_delete() {
+    #[tokio::test]
+    async fn test_delete() {
         with_mut_task(
             |task, ops| {
                 #[allow(deprecated)]
@@ -1146,11 +1165,12 @@ mod test {
                 assert!(task.data.has("end"));
                 assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_add_tags() {
+    #[tokio::test]
+    async fn test_add_tags() {
         with_mut_task(
             |task, ops| {
                 task.add_tag(&utag("abc"), ops).unwrap();
@@ -1159,11 +1179,12 @@ mod test {
                 assert!(task.data.has("tag_abc"));
                 assert!(task.has_tag(&utag("abc")));
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_remove_tags() {
+    #[tokio::test]
+    async fn test_remove_tags() {
         with_mut_task(
             |task, ops| {
                 task.data.update("tag_abc", Some("x".into()), ops);
@@ -1172,7 +1193,8 @@ mod test {
             |task| {
                 assert!(!task.data.has("tag_abc"));
             },
-        );
+        )
+        .await;
     }
 
     #[test]
@@ -1277,8 +1299,8 @@ mod test {
         assert_eq!(task.get_user_defined_attribute("bugzilla.url"), None);
     }
 
-    #[test]
-    fn test_set_uda() {
+    #[tokio::test]
+    async fn test_set_uda() {
         with_mut_task(
             |task, ops| {
                 task.set_uda("jira", "url", "h://y", ops).unwrap();
@@ -1293,10 +1315,11 @@ mod test {
                 );
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_set_legacy_uda() {
+    #[tokio::test]
+    async fn test_set_legacy_uda() {
         with_mut_task(
             |task, ops| {
                 task.set_legacy_uda("jira.url", "h://y", ops).unwrap();
@@ -1311,10 +1334,11 @@ mod test {
                 );
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_set_user_defined_attribute() {
+    #[tokio::test]
+    async fn test_set_user_defined_attribute() {
         with_mut_task(
             |task, ops| {
                 task.set_user_defined_attribute("jira.url", "h://y", ops)
@@ -1331,10 +1355,11 @@ mod test {
                 );
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_set_uda_invalid() {
+    #[tokio::test]
+    async fn test_set_uda_invalid() {
         with_mut_task(
             |task, ops| {
                 assert!(task.set_uda("", "modified", "123", ops).is_err());
@@ -1350,10 +1375,11 @@ mod test {
             },
             |_task| {},
         )
+        .await
     }
 
-    #[test]
-    fn test_remove_uda() {
+    #[tokio::test]
+    async fn test_remove_uda() {
         with_mut_task(
             |task, ops| {
                 task.data.update("github.id", Some("123".into()), ops);
@@ -1364,10 +1390,11 @@ mod test {
                 assert_eq!(udas, vec![]);
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_remove_legacy_uda() {
+    #[tokio::test]
+    async fn test_remove_legacy_uda() {
         with_mut_task(
             |task, ops| {
                 task.data.update("githubid", Some("123".into()), ops);
@@ -1378,10 +1405,11 @@ mod test {
                 assert_eq!(udas, vec![]);
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_remove_user_defined_attribute() {
+    #[tokio::test]
+    async fn test_remove_user_defined_attribute() {
         with_mut_task(
             |task, ops| {
                 task.data.update("githubid", Some("123".into()), ops);
@@ -1392,10 +1420,11 @@ mod test {
                 assert_eq!(udas, vec![]);
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_remove_uda_invalid() {
+    #[tokio::test]
+    async fn test_remove_uda_invalid() {
         with_mut_task(
             |task, ops| {
                 assert!(task.remove_uda("", "modified", ops).is_err());
@@ -1407,10 +1436,11 @@ mod test {
             },
             |_task| {},
         )
+        .await
     }
 
-    #[test]
-    fn test_dependencies_one() {
+    #[tokio::test]
+    async fn test_dependencies_one() {
         let dep1 = Uuid::new_v4();
         with_mut_task(
             |task, ops| {
@@ -1421,10 +1451,11 @@ mod test {
                 assert!(deps.contains(&dep1));
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_dependencies_two() {
+    #[tokio::test]
+    async fn test_dependencies_two() {
         let dep1 = Uuid::new_v4();
         let dep2 = Uuid::new_v4();
         with_mut_task(
@@ -1438,10 +1469,11 @@ mod test {
                 assert!(deps.contains(&dep2));
             },
         )
+        .await
     }
 
-    #[test]
-    fn test_dependencies_removed() {
+    #[tokio::test]
+    async fn test_dependencies_removed() {
         let dep1 = Uuid::new_v4();
         let dep2 = Uuid::new_v4();
         with_mut_task(
@@ -1456,28 +1488,29 @@ mod test {
                 assert!(!deps.contains(&dep2));
             },
         )
+        .await
     }
 
-    #[test]
-    fn dependencies_tags() {
-        let mut rep = Replica::new_inmemory();
+    #[tokio::test]
+    async fn dependencies_tags() {
+        let mut rep = Replica::new(InMemoryStorage::new());
         let mut ops = Operations::new();
         let (uuid1, uuid2) = (Uuid::new_v4(), Uuid::new_v4());
 
-        let mut t1 = rep.create_task(uuid1, &mut ops).unwrap();
+        let mut t1 = rep.create_task(uuid1, &mut ops).await.unwrap();
         t1.set_status(Status::Pending, &mut ops).unwrap();
         t1.add_dependency(uuid2, &mut ops).unwrap();
 
-        let mut t2 = rep.create_task(uuid2, &mut ops).unwrap();
+        let mut t2 = rep.create_task(uuid2, &mut ops).await.unwrap();
         t2.set_status(Status::Pending, &mut ops).unwrap();
 
-        rep.commit_operations(ops).unwrap();
+        rep.commit_operations(ops).await.unwrap();
 
         // force-refresh depmap
-        rep.dependency_map(true).unwrap();
+        rep.dependency_map(true).await.unwrap();
 
-        let t1 = rep.get_task(uuid1).unwrap().unwrap();
-        let t2 = rep.get_task(uuid2).unwrap().unwrap();
+        let t1 = rep.get_task(uuid1).await.unwrap().unwrap();
+        let t2 = rep.get_task(uuid2).await.unwrap().unwrap();
         assert!(t1.has_tag(&stag(SyntheticTag::Blocked)));
         assert!(!t1.has_tag(&stag(SyntheticTag::Unblocked)));
         assert!(!t1.has_tag(&stag(SyntheticTag::Blocking)));
@@ -1486,8 +1519,8 @@ mod test {
         assert!(t2.has_tag(&stag(SyntheticTag::Blocking)));
     }
 
-    #[test]
-    fn set_value_modified() {
+    #[tokio::test]
+    async fn set_value_modified() {
         with_mut_task(
             |task, ops| {
                 // set the modified property to something in the past..
@@ -1501,5 +1534,6 @@ mod test {
                 assert_eq!(task.get_value("modified").unwrap(), "1671820000")
             },
         )
+        .await
     }
 }

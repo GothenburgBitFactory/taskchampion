@@ -12,6 +12,7 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
+#[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
@@ -112,7 +113,9 @@ pub enum ServerConfig {
 
 impl ServerConfig {
     /// Get a server based on this configuration
-    pub fn into_server(self) -> Result<Box<dyn Server>> {
+    pub async fn into_server(self) -> Result<Box<dyn Server>> {
+        // This expression is unreachable if no server features are enabled.
+        #[allow(unreachable_code)]
         Ok(match self {
             #[cfg(feature = "server-local")]
             ServerConfig::Local { server_dir } => Box::new(LocalServer::new(server_dir)?),
@@ -127,10 +130,13 @@ impl ServerConfig {
                 bucket,
                 credential_path,
                 encryption_secret,
-            } => Box::new(CloudServer::new(
-                GcpService::new(bucket, credential_path)?,
-                encryption_secret,
-            )?),
+            } => Box::new(
+                CloudServer::new(
+                    GcpService::new(bucket, credential_path).await?,
+                    encryption_secret,
+                )
+                .await?,
+            ),
             #[cfg(feature = "server-aws")]
             ServerConfig::Aws {
                 region,
@@ -139,10 +145,14 @@ impl ServerConfig {
                 encryption_secret,
                 endpoint_url,
                 force_path_style,
-            } => Box::new(CloudServer::new(
-                AwsService::new(region, bucket, credentials, endpoint_url, force_path_style)?,
-                encryption_secret,
-            )?),
+            } => Box::new(
+                CloudServer::new(
+                    AwsService::new(region, bucket, credentials, endpoint_url, force_path_style)
+                        .await?,
+                    encryption_secret,
+                )
+                .await?,
+            ),
         })
     }
 }

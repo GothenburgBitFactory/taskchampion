@@ -19,6 +19,9 @@ mod types;
 #[cfg(feature = "encryption")]
 mod encryption;
 
+#[cfg(feature = "http")]
+mod http;
+
 #[cfg(feature = "server-local")]
 mod local;
 

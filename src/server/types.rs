@@ -1,4 +1,5 @@
 use crate::errors::Result;
+use async_trait::async_trait;
 use uuid::Uuid;
 
 /// Versions are referred to with UUIDs.
@@ -50,6 +51,7 @@ pub enum GetVersionResult {
 }
 
 /// A value implementing this trait can act as a server against which a replica can sync.
+#[async_trait]
 pub trait Server {
     /// Add a new version.
     ///
@@ -57,17 +59,18 @@ pub trait Server {
     /// `parent_version_id`, and that all versions form a single parent-child chain. Inductively,
     /// this means that if there are any versions on the server, then `parent_version_id` must be
     /// the only version that does not already have a child.
-    fn add_version(
+    async fn add_version(
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)>;
 
     /// Get the version with the given parent VersionId
-    fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult>;
+    async fn get_child_version(&mut self, parent_version_id: VersionId)
+        -> Result<GetVersionResult>;
 
     /// Add a snapshot on the server
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()>;
+    async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()>;
 
-    fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>>;
+    async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>>;
 }

@@ -36,12 +36,12 @@ macro_rules! other_error {
 }
 other_error!(io::Error);
 other_error!(serde_json::Error);
+other_error!(tokio::sync::oneshot::error::RecvError);
 
 #[cfg(feature = "storage-sqlite")]
 other_error!(rusqlite::Error);
 #[cfg(feature = "storage-sqlite")]
 other_error!(crate::storage::sqlite::SqliteError);
-
 #[cfg(feature = "server-gcp")]
 other_error!(google_cloud_storage::http::Error);
 #[cfg(feature = "server-gcp")]
@@ -51,41 +51,43 @@ other_error!(aws_sdk_s3::Error);
 #[cfg(feature = "server-aws")]
 other_error!(aws_sdk_s3::primitives::ByteStreamError);
 
-/// Convert ureq errors more carefully
-#[cfg(feature = "server-sync")]
-impl From<ureq::Error> for Error {
-    fn from(ureq_err: ureq::Error) -> Self {
-        match ureq_err {
-            ureq::Error::Status(status, response) => {
-                let msg = format!(
-                    "{} responded with {} {}",
-                    response.get_url(),
-                    status,
-                    response.status_text()
-                );
-                Self::Server(msg)
-            }
-            ureq::Error::Transport(_) => Self::Server(ureq_err.to_string()),
+impl<T: Sync + Send + 'static> From<tokio::sync::mpsc::error::SendError<T>> for Error {
+    fn from(err: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        Self::Other(err.into())
+    }
+}
+
+/// Convert [`idb::Error`] into [`Error::Database`]
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+impl From<idb::Error> for Error {
+    fn from(err: idb::Error) -> Self {
+        Error::Database(err.to_string())
+    }
+}
+
+/// Convert [`serde_wasm_bindgen::Error`] into [`Error::Database`]
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+impl From<serde_wasm_bindgen::Error> for Error {
+    fn from(err: serde_wasm_bindgen::Error) -> Self {
+        Error::Database(err.to_string())
+    }
+}
+
+/// Convert reqwest errors more carefully
+#[cfg(feature = "http")]
+impl From<reqwest::Error> for Error {
+    fn from(err: reqwest::Error) -> Self {
+        if let Some(status_code) = err.status() {
+            let msg = format!(
+                "{} responded with {} {}",
+                err.url().map(|u| u.as_str()).unwrap_or("unknown"),
+                status_code.as_u16(),
+                status_code.canonical_reason().unwrap_or("unknown"),
+            );
+            return Self::Server(msg);
         }
+        Self::Server(err.to_string())
     }
 }
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[cfg(feature = "server-sync")]
-    #[test]
-    fn ureq_error_status() {
-        let err = ureq::Error::Status(
-            418,
-            ureq::Response::new(418, "I Am a Teapot", "uhoh").unwrap(),
-        );
-        assert_eq!(
-            Error::from(err).to_string(),
-            "Server Error: https://example.com/ responded with 418 I Am a Teapot"
-        );
-    }
-}

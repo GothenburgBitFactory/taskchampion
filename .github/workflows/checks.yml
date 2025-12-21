@@ -13,23 +13,23 @@ jobs:
     name: "Check & Clippy"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: "1.82.0" # MSRV
+          toolchain: "1.88.0" # MSRV
           override: true
           components: clippy
 
@@ -43,15 +43,22 @@ jobs:
           args: --all-features --no-deps -- -D warnings
           name: "Clippy Results"
 
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: wasm32-unknown-unknown
+          args: --no-default-features --features storage-indexeddb --no-deps -- -D warnings
+          name: "Clippy Results (WASM)"
+
   rustdoc:
     runs-on: ubuntu-latest
     name: "Rustdoc"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
@@ -72,7 +79,7 @@ jobs:
     name: "mdBook Documentation"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
@@ -87,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     name: "Formatting"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: actions-rs/toolchain@v1
         with:
@@ -106,5 +113,5 @@ jobs:
     runs-on: ubuntu-latest
     name: "Cargo Semver Checks"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: obi1kenobi/cargo-semver-checks-action@v2

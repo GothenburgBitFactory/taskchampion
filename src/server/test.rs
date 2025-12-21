@@ -3,6 +3,7 @@ use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
     VersionId, NIL_VERSION_ID,
 };
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -65,10 +66,11 @@ impl TestServer {
     }
 }
 
+#[async_trait]
 impl Server for TestServer {
     /// Add a new version.  If the given version number is incorrect, this responds with the
     /// appropriate version and expects the caller to try again.
-    fn add_version(
+    async fn add_version(
         &mut self,
         parent_version_id: VersionId,
         history_segment: HistorySegment,
@@ -107,7 +109,10 @@ impl Server for TestServer {
     }
 
     /// Get a vector of all versions after `since_version`
-    fn get_child_version(&mut self, parent_version_id: VersionId) -> Result<GetVersionResult> {
+    async fn get_child_version(
+        &mut self,
+        parent_version_id: VersionId,
+    ) -> Result<GetVersionResult> {
         let inner = self.0.lock().unwrap();
 
         if let Some(version) = inner.versions.get(&parent_version_id) {
@@ -121,7 +126,7 @@ impl Server for TestServer {
         }
     }
 
-    fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+    async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         let mut inner = self.0.lock().unwrap();
 
         // test implementation -- does not perform any validation
@@ -129,7 +134,7 @@ impl Server for TestServer {
         Ok(())
     }
 
-    fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
+    async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         let inner = self.0.lock().unwrap();
         Ok(inner.snapshot.clone())
     }

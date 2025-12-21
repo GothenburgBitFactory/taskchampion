@@ -48,6 +48,11 @@ TaskChampion is available from Python via
 [taskchampion-py](https://pypi.org/project/taskchampion-py/). The Python API is
 closely modeled on the Rust API.
 
+### Ruby
+
+TaskChampion is available from Ruby via
+[taskchampion-rb](https://github.com/timcase/taskchampion-rb).
+
 ### C/C++
 
 C/C++ users should use a tool like [cxx](https://cxx.rs) to wrap this package.
