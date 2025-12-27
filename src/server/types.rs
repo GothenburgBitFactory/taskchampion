@@ -51,7 +51,7 @@ pub enum GetVersionResult {
 }
 
 /// A value implementing this trait can act as a server against which a replica can sync.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait Server {
     /// Add a new version.
     ///

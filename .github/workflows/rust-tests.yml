@@ -121,8 +121,8 @@ jobs:
 
       - run: |
           wasm-pack test --headless --firefox \
-            --no-default-features --features storage-indexeddb
+            --no-default-features --features storage-indexeddb,server-sync
 
       - run: |
           wasm-pack test --headless --chrome \
-            --no-default-features --features storage-indexeddb
+            --no-default-features --features storage-indexeddb,server-sync

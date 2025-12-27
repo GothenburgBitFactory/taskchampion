@@ -89,6 +89,7 @@ By default, `sync`, `storage`, `bundled`, and `tls-webpki-roots` are enabled.
 TaskChampion can be built for WASM with the usual WASM tools, such as
 `wasm-pack`. Only the following features are supported:
 
+ * `server-sync` - communicate with the sync server using the Fetch API
  * `storage-indexeddb` - store task data in the browser using IndexedDB (WASM only)
 
 # See Also

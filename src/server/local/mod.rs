@@ -109,7 +109,7 @@ impl LocalServer {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Server for LocalServer {
     // TODO: better transaction isolation for add_version (gets and sets should be in the same
     // transaction)

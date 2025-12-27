@@ -370,7 +370,7 @@ impl<SVC: Service> CloudServer<SVC> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<SVC: Service + Send> Server for CloudServer<SVC> {
     async fn add_version(
         &mut self,
