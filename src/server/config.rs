@@ -80,7 +80,18 @@ pub enum ServerConfig {
     #[cfg(feature = "server-aws")]
     Aws {
         /// Region in which the bucket is located.
-        region: String,
+        /// If `None`, the default region is used.
+        /// The `default` region is based on the AWS SDK
+        /// - <https://docs.aws.amazon.com/sdk-for-rust/latest/dg/region.html>
+        ///
+        /// following, in order:
+        /// 1. `AWS_REGION` environment variable,
+        /// 2. `AWS_CONFIG_FILE` environment variable and the `region` in that file
+        /// 3. `AWS_PROFILE` variable and the region for that file in the config file
+        /// 4. The instance profile if running in an AWS compute environment
+        ///
+        /// Failing all of those, we will default to `us-east-1`.
+        region: Option<String>,
         /// Bucket in which to store the task data.
         ///
         /// This bucket must not be used for any other purpose. No special bucket configuration is
@@ -91,6 +102,12 @@ pub enum ServerConfig {
         /// Private encryption secret used to encrypt all data sent to the server.  This can
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
+        // endpoint_url is an optional URL to specify the hostname of an s3-compatible service.
+        // When endpoint_url is used, region is ignored by the underlying S3 client.
+        endpoint_url: Option<String>,
+        // force_path_style is used to force the S3 client to use path-style URLs instead of
+        // virtual-hosted-style (subdomain) URLs for the bucket.
+        force_path_style: bool,
     },
 }
 
@@ -126,9 +143,12 @@ impl ServerConfig {
                 bucket,
                 credentials,
                 encryption_secret,
+                endpoint_url,
+                force_path_style,
             } => Box::new(
                 CloudServer::new(
-                    AwsService::new(region, bucket, credentials).await?,
+                    AwsService::new(region, bucket, credentials, endpoint_url, force_path_style)
+                        .await?,
                     encryption_secret,
                 )
                 .await?,
