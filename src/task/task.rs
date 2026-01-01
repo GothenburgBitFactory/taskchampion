@@ -187,9 +187,11 @@ impl Task {
             .filter_map(|k| {
                 if let Some(tag) = k.strip_prefix("tag_") {
                     if let Ok(tag) = tag.try_into() {
+                        trace!("success with tag {tag}");
                         return Some(tag);
                     }
                     // note that invalid "tag_*" are ignored
+                    trace!("skipped tag {tag}");
                 }
                 None
             })
@@ -780,20 +782,19 @@ mod test {
 
     #[test]
     fn test_get_tags_invalid_tags() {
-        let task = Task::new(
-            TaskData::new(
-                Uuid::new_v4(),
-                vec![
-                    (String::from("tag_ok"), String::from("")),
-                    (String::from("tag_"), String::from("")),
-                    (String::from("tag_123"), String::from("")),
-                    (String::from("tag_a!!"), String::from("")),
-                ]
-                .drain(..)
-                .collect(),
-            ),
-            dm(),
+        let taskdata = TaskData::new(
+            Uuid::new_v4(),
+            vec![
+                (String::from("tag_ok"), String::from("")),
+                (String::from("tag_"), String::from("")),
+                (String::from("tag_123"), String::from("")),
+                (String::from("tag_a!!"), String::from("")),
+            ]
+            .drain(..)
+            .collect(),
         );
+        trace!("{:?}", taskdata);
+        let task = Task::new(taskdata, dm());
 
         // only "ok" is OK
         let tags: HashSet<_> = task.get_tags().collect();
