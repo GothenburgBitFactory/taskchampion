@@ -788,7 +788,10 @@ mod test {
                 (String::from("tag_ok"), String::from("")),
                 (String::from("tag_"), String::from("")),
                 (String::from("tag_123"), String::from("")),
+                (String::from("tag_!!a"), String::from("")),
                 (String::from("tag_a!!"), String::from("")),
+                (String::from("tag_\u{1f980}a"), String::from("")),
+                (String::from("tag_\u{1f980}"), String::from("")),
             ]
             .drain(..)
             .collect(),
@@ -801,9 +804,12 @@ mod test {
         assert_eq!(
             tags,
             HashSet::from([
-                utag("ok"),
                 stag(SyntheticTag::Pending),
-                stag(SyntheticTag::Unblocked)
+                utag("a!!"),
+                utag("\u{1f980}a"),
+                utag("\u{1f980}"),
+                stag(SyntheticTag::Unblocked),
+                utag("ok"),
             ])
         );
     }

@@ -5,10 +5,11 @@ use std::str::FromStr;
 /// A Tag is a descriptor for a task, that is either present or absent, and can be used for
 /// filtering.  Tags composed of all uppercase letters are reserved for synthetic tags.
 ///
-/// Valid tags must not contain whitespace or any of the characters in `+-*/()<>^!%=~`.
-/// The first characters additionally cannot be a digit, and subsequent characters cannot be `:`.
-/// This definition is based on [that of
-/// TaskWarrior](https://github.com/GothenburgBitFactory/taskwarrior/blob/663c6575ceca5bd0135ae884879339dac89d3142/src/Lexer.cpp#L146-L164).
+/// Valid tags must not contain whitespace.
+/// The first characters cannot be any of the characters in `+-*/()<>^!%=~`.
+/// The first characters additionally cannot be a digit.
+/// Subsequent characters cannot be `:`.
+/// This definition is based on that of TaskWarrior src/Lexer.cpp isSingleCharOperator() isTag()
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Tag(TagInner);
 
@@ -69,7 +70,7 @@ impl FromStr for Tag {
         if !value
             .chars()
             .skip(1)
-            .all(|c| !(c.is_whitespace() || c == ':' || INVALID_TAG_CHARACTERS.contains(c)))
+            .all(|c| !(c.is_whitespace() || c == ':'))
         {
             return err(value);
         }
@@ -147,8 +148,11 @@ mod test {
     use std::convert::TryInto;
 
     #[rstest]
-    #[case::simple("abc")]
+    #[case::simple_single("z")]
+    #[case::simple_word("abc")]
     #[case::colon_prefix(":abc")]
+    #[case::glyph_single("\u{1f980}")]
+    #[case::glyph_prefix("\u{1f980}testing")]
     #[case::letters_and_numbers("a123_456")]
     #[case::synthetic("WAITING")]
     fn test_tag_try_into_success(#[case] s: &'static str) {
@@ -162,7 +166,11 @@ mod test {
     #[case::empty("")]
     #[case::colon_infix("a:b")]
     #[case::digits("999")]
-    #[case::bangs("abc!!!")]
+    #[case::initial_plus("+testing")]
+    #[case::initial_dash_prefix("-testing")]
+    #[case::initial_dash_single("-")]
+    #[case::initial_white(" abcfoobar")]
+    #[case::subsequent_white("abc foobar")]
     #[case::no_such_synthetic("NOSUCH")]
     fn test_tag_try_into_err(#[case] s: &'static str) {
         let tag: Result<Tag, _> = s.try_into();
