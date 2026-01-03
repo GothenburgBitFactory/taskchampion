@@ -119,7 +119,7 @@ reqwest-middleware = { version = "0.4", optional = true }
 tempfile = "3"
 rstest = "0.26"
 pretty_assertions = "1"
-libc = "*"
+libc = "0.2"
 tokio = { version = "*", features = ["time", "rt"] }
 
 ## wasm-only dev-dependencies
