@@ -41,7 +41,6 @@ impl ToSql for StoredUuid {
 }
 
 /// SqliteStorage stores task data in a file on disk.
-#[derive(Clone)]
 pub struct SqliteStorage(Wrapper);
 
 impl SqliteStorage {

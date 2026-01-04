@@ -16,9 +16,12 @@ use uuid::Uuid;
 /// a few types are `!Send` and any async function handling such types are also `!Send`.
 ///
 /// On WASM, the wrapped storage runs in an async task, but not in a thread.
-#[derive(Clone)]
 pub(in crate::storage) struct Wrapper {
-    sender: mpsc::UnboundedSender<ActorMessage>,
+    // Both fields in this struct are `Option<..>` to allow them to be dropped individually
+    // in `Wrapper::drop`.
+    sender: Option<mpsc::UnboundedSender<ActorMessage>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Wrapper {
@@ -62,7 +65,7 @@ impl Wrapper {
         // Otherwise, spawn a new thread, and within that a local Tokio RT that can handle !Send
         // futures.
         #[cfg(not(target_arch = "wasm32"))]
-        {
+        let thread = {
             use std::thread;
             use tokio::runtime;
             thread::spawn(move || {
@@ -75,12 +78,16 @@ impl Wrapper {
                 };
 
                 rt.block_on(in_thread(init_sender));
-            });
-        }
+            })
+        };
 
         // Wait until the thread sends its initialization result.
         init_receiver.await??;
-        Ok(Self { sender })
+        Ok(Self {
+            sender: Some(sender),
+            #[cfg(not(target_arch = "wasm32"))]
+            thread: Some(thread),
+        })
     }
 }
 
@@ -91,9 +98,24 @@ impl Storage for Wrapper {
     // communicates with the underlying sync txn.
     async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + Send + 'a>> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.sender.send(ActorMessage::BeginTxn(reply_tx))?;
+        self.sender
+            .as_mut()
+            .expect("txn called after drop")
+            .send(ActorMessage::BeginTxn(reply_tx))?;
         let txn_sender = reply_rx.await??;
         Ok(Box::new(WrapperTxn::new(txn_sender)))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Wrapper {
+    fn drop(&mut self) {
+        // Deleting the sender signals to the actor thread that it should drop the
+        // wrapped storage and terminate.
+        self.sender = None;
+        // Wait for the thread to terminate, indicating that the wrapped storage has
+        // been fully dropped.
+        let _ = self.thread.take().expect("thread joined twice").join();
     }
 }
 
