@@ -48,7 +48,7 @@ impl FromStr for Tag {
 
     fn from_str(value: &str) -> Result<Tag, anyhow::Error> {
         fn err(value: &str) -> Result<Tag, anyhow::Error> {
-            anyhow::bail!("invalid tag {:?}", value)
+            anyhow::bail!("invalid tag {value:?}")
         }
 
         // first, look for synthetic tags

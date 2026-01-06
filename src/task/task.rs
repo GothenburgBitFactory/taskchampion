@@ -796,7 +796,7 @@ mod test {
             .drain(..)
             .collect(),
         );
-        trace!("{:?}", taskdata);
+        trace!("{taskdata:?}");
         let task = Task::new(taskdata, dm());
 
         // only "ok" is OK

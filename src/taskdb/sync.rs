@@ -23,7 +23,7 @@ pub(super) async fn sync(
         trace!("storage is empty; attempting to apply a snapshot");
         if let Some((version, snap)) = server.get_snapshot().await? {
             snapshot::apply_snapshot(txn, version, snap.as_ref()).await?;
-            trace!("applied snapshot for version {}", version);
+            trace!("applied snapshot for version {version}");
         }
     }
 
@@ -74,7 +74,7 @@ pub(super) async fn sync(
                     let version: Version = serde_json::from_str(version_str).unwrap();
 
                     // apply this version and update base_version in storage
-                    info!("applying version {:?} from server", version_id);
+                    info!("applying version {version_id:?} from server");
                     apply_version(
                         txn,
                         &mut sync_ops_batch,
@@ -85,7 +85,7 @@ pub(super) async fn sync(
                     txn.set_base_version(version_id).await?;
                     base_version_id = version_id;
                 } else {
-                    info!("no child versions of {:?}", base_version_id);
+                    info!("no child versions of {base_version_id:?}");
                     // at the moment, no more child versions, so we can try adding our own
                     break;
                 }
@@ -109,7 +109,7 @@ pub(super) async fn sync(
                 server.add_version(base_version_id, history_segment).await?;
             match res {
                 AddVersionResult::Ok(new_version_id) => {
-                    info!("version {:?} received by server", new_version_id);
+                    info!("version {new_version_id:?} received by server");
                     txn.set_base_version(new_version_id).await?;
                     base_version_id = new_version_id;
 
@@ -125,10 +125,7 @@ pub(super) async fn sync(
                     }
                 }
                 AddVersionResult::ExpectedParentVersion(parent_version_id) => {
-                    info!(
-                        "new version rejected; must be based on {:?}",
-                        parent_version_id
-                    );
+                    info!("new version rejected; must be based on {parent_version_id:?}");
                     if let Some(requested) = requested_parent_version_id {
                         if parent_version_id == requested {
                             return Err(Error::OutOfSync);
@@ -185,31 +182,25 @@ async fn apply_version(
     // indicating no operation is required.  If this happens for a local op, we can just omit
     // it.  If it happens for server op, then we must copy the remaining local ops.
     for server_op in version.operations.drain(..) {
-        trace!(
-            "rebasing local operations onto server operation {:?}",
-            server_op
-        );
+        trace!("rebasing local operations onto server operation {server_op:?}");
         let mut new_local_ops = Vec::with_capacity(local_ops.len());
         let mut svr_op = Some(server_op);
         for local_op in local_ops.drain(..) {
             if let Some(o) = svr_op {
                 let (new_server_op, new_local_op) = SyncOp::transform(o, local_op.clone());
-                trace!("local operation {:?} -> {:?}", local_op, new_local_op);
+                trace!("local operation {local_op:?} -> {new_local_op:?}");
                 svr_op = new_server_op;
                 if let Some(o) = new_local_op {
                     new_local_ops.push(o);
                 }
             } else {
-                trace!(
-                    "local operation {:?} unchanged (server operation consumed)",
-                    local_op
-                );
+                trace!("local operation {local_op:?} unchanged (server operation consumed)");
                 new_local_ops.push(local_op);
             }
         }
         if let Some(o) = svr_op {
             if let Err(e) = apply::apply_op(txn, &o).await {
-                warn!("Invalid operation when syncing: {} (ignored)", e);
+                warn!("Invalid operation when syncing: {e} (ignored)");
             }
             transformed_server_ops.push(o);
         }

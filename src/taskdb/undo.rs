@@ -92,16 +92,16 @@ pub(crate) async fn commit_reversed_operations(
     }
     if !ok {
         info!("Undo failed: concurrent changes to the database occurred.");
-        debug!("local_ops={:#?}\nundo_ops={:#?}", local_ops, undo_ops);
+        debug!("local_ops={local_ops:#?}\nundo_ops={undo_ops:#?}");
         return Ok(applied);
     }
 
     undo_ops.reverse();
     for op in undo_ops {
-        debug!("Reversing operation {:?}", op);
+        debug!("Reversing operation {op:?}");
         let rev_ops = reverse_ops(op.clone());
         for op in rev_ops {
-            trace!("Applying reversed operation {:?}", op);
+            trace!("Applying reversed operation {op:?}");
             apply::apply_op(txn, &op).await?;
             applied = true;
         }

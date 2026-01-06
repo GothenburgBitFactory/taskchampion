@@ -296,7 +296,7 @@ impl<S: Storage> Replica<S> {
         task.update("status", Some(status.to_taskmap().to_string()), &mut ops);
         task.update("entry", Some(now), &mut ops);
         self.commit_operations(ops).await?;
-        trace!("task {} created", uuid);
+        trace!("task {uuid} created");
         Ok(self
             .get_task(uuid)
             .await?
@@ -344,7 +344,7 @@ impl<S: Storage> Replica<S> {
         let mut ops = self.make_operations();
         task.delete(&mut ops);
         self.commit_operations(ops).await?;
-        trace!("task {} deleted", uuid);
+        trace!("task {uuid} deleted");
         Ok(())
     }
 
