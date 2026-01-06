@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "taskchampion"
-version = "3.0.1-pre"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
