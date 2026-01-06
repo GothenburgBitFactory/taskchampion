@@ -71,11 +71,11 @@ fn get_uuid_header(resp: &reqwest::Response, name: &str) -> Result<Uuid> {
     let value = resp
         .headers()
         .get(name)
-        .ok_or_else(|| anyhow::anyhow!("Response does not have {} header", name))?
+        .ok_or_else(|| anyhow::anyhow!("Response does not have {name} header"))?
         .to_str()
-        .map_err(|_| anyhow::anyhow!("Response has invalid {} header", name))?;
+        .map_err(|_| anyhow::anyhow!("Response has invalid {name} header"))?;
     let value = Uuid::parse_str(value)
-        .map_err(|e| anyhow::anyhow!("{} header is not a valid UUID: {}", name, e))?;
+        .map_err(|e| anyhow::anyhow!("{name} header is not a valid UUID: {e}"))?;
     Ok(value)
 }
 
