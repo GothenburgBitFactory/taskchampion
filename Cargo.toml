@@ -130,3 +130,4 @@ wasm-bindgen-test = "0.3"
 # proptest has a number of non-WASM-compatible requirements
 proptest = "^1.9.0"
 httptest = "0.16"
+tokio = { version = "1", features = ["net"] } # see https://github.com/ggriffiniii/httptest/issues/30
