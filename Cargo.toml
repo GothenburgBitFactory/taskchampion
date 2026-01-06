@@ -129,5 +129,4 @@ wasm-bindgen-test = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # proptest has a number of non-WASM-compatible requirements
 proptest = "^1.9.0"
-httptest = "0.16"
-tokio = { version = "1", features = ["net"] } # see https://github.com/ggriffiniii/httptest/issues/30
+httptest = "0.16.4"
