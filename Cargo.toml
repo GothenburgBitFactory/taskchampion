@@ -105,7 +105,7 @@ web-sys = { version = "0.3.83", optional = true, features = [
 
 ## non-wasm dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aws-sdk-s3 = { version = "1.119", default-features = false, optional = true }
+aws-sdk-s3 = { version = "1.120", default-features = false, optional = true }
 aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
 aws-smithy-runtime-api = { version = "1.10", default-features = false, optional = true }
