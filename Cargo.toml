@@ -108,7 +108,7 @@ web-sys = { version = "0.3.83", optional = true, features = [
 aws-sdk-s3 = { version = "1.120", default-features = false, optional = true }
 aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
-aws-smithy-runtime-api = { version = "1.10", default-features = false, optional = true }
+aws-smithy-runtime-api = { version = "1.11", default-features = false, optional = true }
 aws-smithy-types = { version = "1.4", default-features = false, optional = true }
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
 reqwest-middleware = { version = "0.4", optional = true }
