@@ -111,7 +111,7 @@ aws-credential-types = { version = "1", default-features = false, features = ["h
 aws-smithy-runtime-api = { version = "1.11", default-features = false, optional = true }
 aws-smithy-types = { version = "1.4", default-features = false, optional = true }
 google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"], optional = true }
-reqwest-middleware = { version = "0.4", optional = true }
+reqwest-middleware = { version = "0.5", optional = true }
 
 ## common dev-dependencies
 [dev-dependencies]
