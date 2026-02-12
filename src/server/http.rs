@@ -20,12 +20,25 @@ static USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_V
 pub(super) fn client() -> Result<reqwest::Client> {
     use std::time::Duration;
 
-    let mut client = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .use_rustls_tls()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(60));
 
+    let client = configure_proxy(client);
+
+    // Select native or webpki certs depending on features
+    let client = client.tls_built_in_root_certs(false);
+    #[cfg(feature = "tls-native-roots")]
+    let client = client.tls_built_in_native_certs(true);
+    #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
+    let client = client.tls_built_in_webpki_certs(true);
+
+    Ok(client.build()?)
+}
+
+fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     // Configure HTTP proxy if set
     if let Ok(proxy_url) = env::var("HTTP_PROXY").or_else(|_| env::var("http_proxy")) {
         match reqwest::Proxy::http(&proxy_url) {
@@ -33,7 +46,7 @@ pub(super) fn client() -> Result<reqwest::Client> {
                 client = client.proxy(proxy);
             }
             Err(e) => {
-                log::warn!("Invalid HTTP_PROXY '{}': {}. Continuing without HTTP proxy.", proxy_url, e);
+                log::warn!("Invalid HTTP_PROXY '{proxy_url}': {e}. Continuing without HTTP proxy.");
             }
         }
     }
@@ -45,19 +58,11 @@ pub(super) fn client() -> Result<reqwest::Client> {
                 client = client.proxy(proxy);
             }
             Err(e) => {
-                log::warn!("Invalid HTTPS_PROXY '{}': {}. Continuing without HTTPS proxy.", proxy_url, e);
+                log::warn!("Invalid HTTPS_PROXY '{proxy_url}': {e}. Continuing without HTTPS proxy." );
             }
         }
     }
-
-    // Select native or webpki certs depending on features
-    let client = client.tls_built_in_root_certs(false);
-    #[cfg(feature = "tls-native-roots")]
-    let client = client.tls_built_in_native_certs(true);
-    #[cfg(all(feature = "tls-webpki-roots", not(feature = "tls-native-roots")))]
-    let client = client.tls_built_in_webpki_certs(true);
-
-    Ok(client.build()?)
+    client
 }
 
 /// Create a new [`reqwest::Client`] with configuration appropriate to this library.
@@ -72,145 +77,118 @@ pub(super) fn client() -> Result<reqwest::Client> {
     Ok(client.build()?)
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::server::http::client;
+    use super::client;
 
     #[test]
-    fn test_client_without_proxy() {
-        // Ensure no proxy env vars are set
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("http_proxy");
-        std::env::remove_var("HTTPS_PROXY");
-        std::env::remove_var("https_proxy");
+    fn test_client_proxy_configurations() {
+        // Helper function to test a scenario and cleanup
+        let test_scenario = |setup: fn(), description: &str| {
+            setup();
+            let client = client();
+            assert!(client.is_ok(), "{}", description);
+            // Cleanup all possible env vars
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("http_proxy");
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("https_proxy");
+        };
 
-        let client = client();
-        assert!(client.is_ok(), "Client should build without proxy settings");
-    }
+        // Test 1: No proxy
+        test_scenario(
+            || {
+                std::env::remove_var("HTTP_PROXY");
+                std::env::remove_var("http_proxy");
+                std::env::remove_var("HTTPS_PROXY");
+                std::env::remove_var("https_proxy");
+            },
+            "Client should build without proxy settings",
+        );
 
-    #[test]
-    fn test_client_with_http_proxy() {
-        std::env::set_var("HTTP_PROXY", "http://proxy.example.com:8080");
-        std::env::remove_var("HTTPS_PROXY");
-        std::env::remove_var("https_proxy");
+        // Test 2: HTTP proxy
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "http://proxy.example.com:8080");
+            },
+            "Client should build with HTTP_PROXY set",
+        );
 
-        let client = client();
-        assert!(client.is_ok(), "Client should build with HTTP_PROXY set");
+        // Test 3: HTTPS proxy
+        test_scenario(
+            || {
+                std::env::set_var("HTTPS_PROXY", "http://proxy.example.com:8443");
+            },
+            "Client should build with HTTPS_PROXY set",
+        );
 
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-    }
+        // Test 4: Both proxies
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "http://http-proxy.example.com:8080");
+                std::env::set_var("HTTPS_PROXY", "http://https-proxy.example.com:8443");
+            },
+            "Client should build with both proxies set",
+        );
 
-    #[test]
-    fn test_client_with_https_proxy() {
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("http_proxy");
-        std::env::set_var("HTTPS_PROXY", "http://proxy.example.com:8443");
+        // Test 5: Lowercase proxy vars
+        test_scenario(
+            || {
+                std::env::set_var("http_proxy", "http://proxy.example.com:8080");
+                std::env::set_var("https_proxy", "http://proxy.example.com:8443");
+            },
+            "Client should build with lowercase proxy vars",
+        );
 
-        let client = client();
-        assert!(client.is_ok(), "Client should build with HTTPS_PROXY set");
+        // Test 6: Proxy with authentication
+        test_scenario(
+            || {
+                std::env::set_var("HTTPS_PROXY", "http://user:password@proxy.example.com:8443");
+            },
+            "Client should build with authenticated proxy",
+        );
 
-        // Cleanup
-        std::env::remove_var("HTTPS_PROXY");
-    }
+        // Test 7: Invalid proxy URL
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "not-a-valid-url");
+            },
+            "Client should build even with invalid proxy URL",
+        );
 
-    #[test]
-    fn test_client_with_both_proxies() {
-        std::env::set_var("HTTP_PROXY", "http://http-proxy.example.com:8080");
-        std::env::set_var("HTTPS_PROXY", "http://https-proxy.example.com:8443");
+        // Test 8: Uppercase takes precedence
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "http://uppercase.example.com:8080");
+                std::env::set_var("http_proxy", "http://lowercase.example.com:8080");
+            },
+            "Client should build with precedence rules",
+        );
 
-        let client = client();
-        assert!(client.is_ok(), "Client should build with both proxies set");
+        // Test 9: Mixed case proxies
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "http://http-upper.example.com:8080");
+                std::env::set_var("https_proxy", "http://https-lower.example.com:8443");
+            },
+            "Client should build with mixed case proxy vars",
+        );
 
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("HTTPS_PROXY");
-    }
+        // Test 10: Empty proxy value
+        test_scenario(
+            || {
+                std::env::set_var("HTTP_PROXY", "");
+            },
+            "Client should build with empty proxy value",
+        );
 
-    #[test]
-    fn test_client_with_lowercase_proxy_vars() {
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("HTTPS_PROXY");
-        std::env::set_var("http_proxy", "http://proxy.example.com:8080");
-        std::env::set_var("https_proxy", "http://proxy.example.com:8443");
-
-        let client = client();
-        assert!(client.is_ok(), "Client should build with lowercase proxy vars");
-
-        // Cleanup
-        std::env::remove_var("http_proxy");
-        std::env::remove_var("https_proxy");
-    }
-
-    #[test]
-    fn test_client_with_proxy_auth() {
-        std::env::set_var("HTTPS_PROXY", "http://user:password@proxy.example.com:8443");
-
-        let client = client();
-        assert!(client.is_ok(), "Client should build with authenticated proxy");
-
-        // Cleanup
-        std::env::remove_var("HTTPS_PROXY");
-    }
-
-    #[test]
-    fn test_client_with_invalid_proxy_url() {
-        std::env::set_var("HTTP_PROXY", "not-a-valid-url");
-
-        let client = client();
-        // Should still succeed but log a warning
-        assert!(client.is_ok(), "Client should build even with invalid proxy URL");
-
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-    }
-
-    #[test]
-    fn test_client_uppercase_takes_precedence() {
-        std::env::set_var("HTTP_PROXY", "http://uppercase.example.com:8080");
-        std::env::set_var("http_proxy", "http://lowercase.example.com:8080");
-
-        let client = client();
-        assert!(client.is_ok(), "Client should build with precedence rules");
-
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("http_proxy");
-    }
-
-    #[test]
-    fn test_client_mixed_case_proxies() {
-        std::env::set_var("HTTP_PROXY", "http://http-upper.example.com:8080");
-        std::env::set_var("https_proxy", "http://https-lower.example.com:8443");
-
-        let client = client();
-        assert!(client.is_ok(), "Client should build with mixed case proxy vars");
-
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-        std::env::remove_var("https_proxy");
-    }
-
-    #[test]
-    fn test_client_empty_proxy_value() {
-        std::env::set_var("HTTP_PROXY", "");
-
-        let client = client();
-        // Empty string should be treated as "not set"
-        assert!(client.is_ok(), "Client should build with empty proxy value");
-
-        // Cleanup
-        std::env::remove_var("HTTP_PROXY");
-    }
-
-    #[test]
-    fn test_client_socks_proxy() {
-        std::env::set_var("HTTPS_PROXY", "socks5://proxy.example.com:1080");
-
-        let client = client();
-        assert!(client.is_ok(), "Client should build with SOCKS proxy");
-
-        // Cleanup
-        std::env::remove_var("HTTPS_PROXY");
+        // Test 11: SOCKS proxy
+        test_scenario(
+            || {
+                std::env::set_var("HTTPS_PROXY", "socks5://proxy.example.com:1080");
+            },
+            "Client should build with SOCKS proxy",
+        );
     }
 }
 
