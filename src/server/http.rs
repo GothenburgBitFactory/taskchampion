@@ -26,8 +26,8 @@ pub(super) fn client() -> Result<reqwest::Client> {
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(60));
 
+    /// configure client proxy
     let client = configure_proxy(client);
-
     // Select native or webpki certs depending on features
     let client = client.tls_built_in_root_certs(false);
     #[cfg(feature = "tls-native-roots")]
@@ -58,7 +58,9 @@ fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder
                 client = client.proxy(proxy);
             }
             Err(e) => {
-                log::warn!("Invalid HTTPS_PROXY '{proxy_url}': {e}. Continuing without HTTPS proxy." );
+                log::warn!(
+                    "Invalid HTTPS_PROXY '{proxy_url}': {e}. Continuing without HTTPS proxy."
+                );
             }
         }
     }
@@ -191,4 +193,3 @@ mod tests {
         );
     }
 }
-
