@@ -26,7 +26,8 @@ pub(super) fn client() -> Result<reqwest::Client> {
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(60));
 
-    /// configure client proxy
+    // configure client proxy
+    #[cfg(not(target_arch = "wasm32"))]
     let client = configure_proxy(client);
     // Select native or webpki certs depending on features
     let client = client.tls_built_in_root_certs(false);
