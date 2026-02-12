@@ -38,7 +38,7 @@ pub(super) fn client() -> Result<reqwest::Client> {
 
     Ok(client.build()?)
 }
-
+#[cfg(not(target_arch = "wasm32"))]
 fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     // Configure HTTP proxy if set
     if let Ok(proxy_url) = env::var("HTTP_PROXY").or_else(|_| env::var("http_proxy")) {
