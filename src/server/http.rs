@@ -3,7 +3,8 @@
 //! This contains some utilities to make using `reqwest` easier, including getting
 //! the correct TLS certificate store.
 
-use crate::errors::Result;
+use crate::errors::{Error, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use std::env;
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -27,8 +28,7 @@ pub(super) fn client() -> Result<reqwest::Client> {
         .read_timeout(Duration::from_secs(60));
 
     // configure client proxy
-    #[cfg(not(target_arch = "wasm32"))]
-    let client = configure_proxy(client);
+    let client = configure_proxy(client)?;
     // Select native or webpki certs depending on features
     let client = client.tls_built_in_root_certs(false);
     #[cfg(feature = "tls-native-roots")]
@@ -39,7 +39,7 @@ pub(super) fn client() -> Result<reqwest::Client> {
     Ok(client.build()?)
 }
 #[cfg(not(target_arch = "wasm32"))]
-fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+fn configure_proxy(mut client: reqwest::ClientBuilder) -> Result<reqwest::ClientBuilder> {
     // Configure HTTP proxy if set
     if let Ok(proxy_url) = env::var("HTTP_PROXY").or_else(|_| env::var("http_proxy")) {
         match reqwest::Proxy::http(&proxy_url) {
@@ -47,7 +47,9 @@ fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder
                 client = client.proxy(proxy);
             }
             Err(e) => {
-                log::warn!("Invalid HTTP_PROXY '{proxy_url}': {e}. Continuing without HTTP proxy.");
+                return Err(Error::Server(format!(
+                    "Invalid HTTP_PROXY '{proxy_url}': {e}"
+                )));
             }
         }
     }
@@ -59,13 +61,13 @@ fn configure_proxy(mut client: reqwest::ClientBuilder) -> reqwest::ClientBuilder
                 client = client.proxy(proxy);
             }
             Err(e) => {
-                log::warn!(
-                    "Invalid HTTPS_PROXY '{proxy_url}': {e}. Continuing without HTTPS proxy."
-                );
+                return Err(Error::Server(format!(
+                    "Invalid HTTPS_PROXY '{proxy_url}': {e}"
+                )));
             }
         }
     }
-    client
+    Ok(client)
 }
 
 /// Create a new [`reqwest::Client`] with configuration appropriate to this library.
@@ -84,13 +86,18 @@ pub(super) fn client() -> Result<reqwest::Client> {
 mod tests {
     use super::client;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_client_proxy_configurations() {
         // Helper function to test a scenario and cleanup
-        let test_scenario = |setup: fn(), description: &str| {
+        let test_scenario = |setup: fn(), description: &str, should_succeed: bool| {
             setup();
             let client = client();
-            assert!(client.is_ok(), "{}", description);
+            if should_succeed {
+                assert!(client.is_ok(), "{}", description);
+            } else {
+                assert!(client.is_err(), "{}", description);
+            }
             // Cleanup all possible env vars
             std::env::remove_var("HTTP_PROXY");
             std::env::remove_var("http_proxy");
@@ -107,6 +114,7 @@ mod tests {
                 std::env::remove_var("https_proxy");
             },
             "Client should build without proxy settings",
+            true,
         );
 
         // Test 2: HTTP proxy
@@ -115,6 +123,7 @@ mod tests {
                 std::env::set_var("HTTP_PROXY", "http://proxy.example.com:8080");
             },
             "Client should build with HTTP_PROXY set",
+            true,
         );
 
         // Test 3: HTTPS proxy
@@ -123,6 +132,7 @@ mod tests {
                 std::env::set_var("HTTPS_PROXY", "http://proxy.example.com:8443");
             },
             "Client should build with HTTPS_PROXY set",
+            true,
         );
 
         // Test 4: Both proxies
@@ -132,6 +142,7 @@ mod tests {
                 std::env::set_var("HTTPS_PROXY", "http://https-proxy.example.com:8443");
             },
             "Client should build with both proxies set",
+            true,
         );
 
         // Test 5: Lowercase proxy vars
@@ -141,6 +152,7 @@ mod tests {
                 std::env::set_var("https_proxy", "http://proxy.example.com:8443");
             },
             "Client should build with lowercase proxy vars",
+            true,
         );
 
         // Test 6: Proxy with authentication
@@ -149,14 +161,16 @@ mod tests {
                 std::env::set_var("HTTPS_PROXY", "http://user:password@proxy.example.com:8443");
             },
             "Client should build with authenticated proxy",
+            true,
         );
 
         // Test 7: Invalid proxy URL
         test_scenario(
             || {
-                std::env::set_var("HTTP_PROXY", "not-a-valid-url");
+                std::env::set_var("HTTP_PROXY", "http://[invalid-bracket-usage");
             },
-            "Client should build even with invalid proxy URL",
+            "Client should fail with invalid proxy URL",
+            false,
         );
 
         // Test 8: Uppercase takes precedence
@@ -166,6 +180,7 @@ mod tests {
                 std::env::set_var("http_proxy", "http://lowercase.example.com:8080");
             },
             "Client should build with precedence rules",
+            true,
         );
 
         // Test 9: Mixed case proxies
@@ -175,6 +190,7 @@ mod tests {
                 std::env::set_var("https_proxy", "http://https-lower.example.com:8443");
             },
             "Client should build with mixed case proxy vars",
+            true,
         );
 
         // Test 10: Empty proxy value
@@ -182,7 +198,8 @@ mod tests {
             || {
                 std::env::set_var("HTTP_PROXY", "");
             },
-            "Client should build with empty proxy value",
+            "Client should fail with empty proxy value",
+            false,
         );
 
         // Test 11: SOCKS proxy
@@ -191,6 +208,14 @@ mod tests {
                 std::env::set_var("HTTPS_PROXY", "socks5://proxy.example.com:1080");
             },
             "Client should build with SOCKS proxy",
+            true,
         );
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn test_client_wasm() {
+        let client = client();
+        assert!(client.is_ok(), "WASM client should build");
     }
 }
