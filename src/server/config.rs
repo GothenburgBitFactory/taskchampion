@@ -21,6 +21,10 @@ use uuid::Uuid;
 ///
 /// This enum is non-exhaustive, as users should only be constructing required
 /// variants, not matching on it.
+///
+/// Proxy configuration is read from environment variables (HTTP_PROXY, HTTPS_PROXY,
+/// and lowercase variants) and applied automatically during client creation.
+
 #[non_exhaustive]
 pub enum ServerConfig {
     /// A local task database, for situations with a single replica.
