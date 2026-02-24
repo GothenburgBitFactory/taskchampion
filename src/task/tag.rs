@@ -70,7 +70,7 @@ impl FromStr for Tag {
         if !value
             .chars()
             .skip(1)
-            .all(|c| !(c.is_whitespace() || c == ':'))
+            .all(|c| !(c.is_whitespace() || c == ':' || INVALID_TAG_CHARACTERS.contains(c)))
         {
             return err(value);
         }
@@ -172,6 +172,7 @@ mod test {
     #[case::initial_white(" abcfoobar")]
     #[case::subsequent_white("abc foobar")]
     #[case::no_such_synthetic("NOSUCH")]
+    #[case::invalid_chars("a/b")]
     fn test_tag_try_into_err(#[case] s: &'static str) {
         let tag: Result<Tag, _> = s.try_into();
         assert_eq!(
