@@ -140,8 +140,7 @@ impl<S: Storage> TaskDb<S> {
         server: &mut Box<dyn Server>,
         avoid_snapshots: bool,
     ) -> Result<()> {
-        let mut txn = self.storage.txn().await?;
-        sync::sync(server, txn.as_mut(), avoid_snapshots).await
+        sync::sync(server, &mut self.storage, avoid_snapshots).await
     }
 
     /// Return the operations back to and including the last undo point, or since the last sync if
@@ -215,7 +214,7 @@ impl<S: Storage> TaskDb<S> {
     #[cfg(test)]
     pub(crate) async fn operations(&mut self) -> Vec<Operation> {
         let mut txn = self.storage.txn().await.unwrap();
-        txn.unsynced_operations().await.unwrap().to_vec()
+        txn.unsynced_operations().await.unwrap()
     }
 }
 

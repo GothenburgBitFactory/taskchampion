@@ -12,6 +12,7 @@ implement their own storage backends can implement the traits defined here and p
 use crate::errors::Result;
 use crate::operation::Operation;
 use async_trait::async_trait;
+use std::any::Any;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -53,6 +54,23 @@ use crate::server::VersionId;
 
 /// The default for base_version, if none exists in the DB.
 const DEFAULT_BASE_VERSION: Uuid = crate::server::NIL_VERSION_ID;
+
+/// Opaque sync state produced by [`StorageTxn::get_sync_point`], consumed by
+/// [`StorageTxn::sync_complete`].
+///
+/// The taskdb carries this between transactions but only uses the trait methods.
+/// Each storage backend implements this with its own internal bookkeeping
+/// (e.g., max operation ID) so that storage-level IDs never leak into the taskdb layer.
+pub trait SyncPoint: Send + Sync {
+    /// The unsynced operations captured at the time of the sync point.
+    fn operations(&self) -> &[Operation];
+
+    /// Collect a transformed server operation (in memory, no DB writes).
+    fn add_synced_operation(&mut self, op: Operation);
+
+    /// Convert to Any for backend-specific downcasting in sync_complete.
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
+}
 
 /// A Storage transaction, in which storage operations are performed.
 ///
@@ -119,9 +137,18 @@ pub trait StorageTxn: Send {
     /// `add_operation` this only affects the list of operations.
     async fn remove_operation(&mut self, op: Operation) -> Result<()>;
 
-    /// A sync has been completed, so all operations should be marked as synced. The storage
-    /// may perform additional cleanup at this time.
-    async fn sync_complete(&mut self) -> Result<()>;
+    /// Capture a sync point: the current unsynced operations along with an internal
+    /// bookmark for use by [`sync_complete`](StorageTxn::sync_complete).
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>>;
+
+    /// Complete a sync by consuming the sync point. Inserts any operations collected
+    /// via [`SyncPoint::add_synced_operation`] as already-synced, marks the originally
+    /// captured operations as synced, and performs cleanup (e.g., removing operations
+    /// for deleted tasks).
+    ///
+    /// Returns `true` if the sync point was still valid, `false` if an undo occurred
+    /// during sync (the originally captured operations are no longer present).
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool>;
 
     /// Get the entire working set, with each task UUID at its appropriate (1-based) index.
     /// Element 0 is always None.

@@ -3,7 +3,7 @@ use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::inmemory::InMemoryStorage;
 use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn};
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId};
+use crate::storage::{Storage, StorageTxn, SyncPoint, TaskMap, VersionId};
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use uuid::Uuid;
@@ -68,8 +68,12 @@ impl WrappedStorageTxn for Box<dyn StorageTxn + Send + '_> {
         self.as_mut().remove_operation(op).await
     }
 
-    async fn sync_complete(&mut self) -> Result<()> {
-        self.as_mut().sync_complete().await
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>> {
+        self.as_mut().get_sync_point().await
+    }
+
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool> {
+        self.as_mut().sync_complete(sync_point).await
     }
 
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {

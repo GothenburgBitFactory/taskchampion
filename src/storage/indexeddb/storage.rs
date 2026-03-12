@@ -2,10 +2,11 @@ use super::schema;
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
 use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn, Wrapper};
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::{Storage, StorageTxn, SyncPoint, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use async_trait::async_trait;
 use idb::{CursorDirection, DatabaseEvent, Query, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use wasm_bindgen::JsValue;
@@ -110,6 +111,26 @@ fn op2js(operation: Operation, unsynced: bool) -> Result<JsValue> {
         unsynced: unsynced as u8,
     };
     Ok(serde_wasm_bindgen::to_value(&operation)?)
+}
+
+pub(crate) struct IdbSyncPoint {
+    max_op_id: Option<i64>,
+    unsynced: Vec<Operation>,
+    synced_to_add: Vec<Operation>,
+}
+
+impl SyncPoint for IdbSyncPoint {
+    fn operations(&self) -> &[Operation] {
+        &self.unsynced
+    }
+
+    fn add_synced_operation(&mut self, op: Operation) {
+        self.synced_to_add.push(op);
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
+    }
 }
 
 struct InnerTxn(Option<Transaction>);
@@ -314,17 +335,66 @@ impl WrappedStorageTxn for InnerTxn {
         Ok(())
     }
 
-    async fn sync_complete(&mut self) -> Result<()> {
-        let ops = self.idb_txn()?.object_store(schema::OPERATIONS)?;
-        let ops_by_synced = ops.index(schema::OPERATIONS_BY_UNSYNCED)?;
-
-        // Update all operations to indicate they are sync'd. Using no query here returns only
-        // values with the `unsynced` property set.
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>> {
+        let ops_by_synced = self
+            .idb_txn()?
+            .object_store(schema::OPERATIONS)?
+            .index(schema::OPERATIONS_BY_UNSYNCED)?;
+        let mut unsynced = Vec::new();
+        let mut max_op_id: Option<i64> = None;
+        // Using no query here returns only values with the `unsynced` property set.
         let mut maybe_cursor = ops_by_synced.open_cursor(None, None)?.await?;
         while let Some(cursor) = maybe_cursor {
-            let op = js2op(cursor.value()?)?;
-            cursor.update(&op2js(op, false)?)?.await?;
+            let key = cursor
+                .primary_key()?
+                .as_f64()
+                .ok_or_else(invalid)? as i64;
+            max_op_id = Some(max_op_id.map_or(key, |m: i64| m.max(key)));
+            unsynced.push(js2op(cursor.value()?)?);
             maybe_cursor = cursor.next(None)?.await?;
+        }
+        Ok(Box::new(IdbSyncPoint {
+            max_op_id,
+            unsynced,
+            synced_to_add: Vec::new(),
+        }))
+    }
+
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool> {
+        let sp = sync_point
+            .into_any()
+            .downcast::<IdbSyncPoint>()
+            .expect("wrong SyncPoint type for IndexedDbStorage");
+        let ops = self.idb_txn()?.object_store(schema::OPERATIONS)?;
+
+        // Check if sync point is still valid (undo removes from the end,
+        // so if max_op_id is gone, undo happened).
+        let valid = match sp.max_op_id {
+            Some(max_id) => {
+                let key_js: JsValue = (max_id as f64).into();
+                ops.get(Query::Key(key_js))?.await?.is_some()
+            }
+            None => true,
+        };
+
+        // Insert transformed server ops as already-synced (always).
+        for op in sp.synced_to_add {
+            ops.add(&op2js(op, false)?, None)?.await?;
+        }
+
+        // Only mark original ops as synced if the sync point is still valid.
+        if valid {
+            if let Some(max_id) = sp.max_op_id {
+                let mut maybe_cursor = ops.open_cursor(None, None)?.await?;
+                while let Some(cursor) = maybe_cursor {
+                    let key = cursor.primary_key()?.as_f64().ok_or_else(invalid)? as i64;
+                    if key <= max_id {
+                        let op = js2op(cursor.value()?)?;
+                        cursor.update(&op2js(op, false)?)?.await?;
+                    }
+                    maybe_cursor = cursor.next(None)?.await?;
+                }
+            }
         }
 
         // Now delete all operations for which no task exists (usually deleted tasks).
@@ -341,7 +411,7 @@ impl WrappedStorageTxn for InnerTxn {
             maybe_cursor = cursor.next(None)?.await?;
         }
 
-        Ok(())
+        Ok(valid)
     }
 
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {

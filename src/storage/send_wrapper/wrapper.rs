@@ -2,7 +2,7 @@ use super::actor::{ActorImpl, ActorMessage, TxnMessage};
 use super::WrappedStorage;
 use crate::errors::Result;
 use crate::operation::Operation;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId};
+use crate::storage::{Storage, StorageTxn, SyncPoint, TaskMap, VersionId};
 use async_trait::async_trait;
 use std::future::Future;
 use tokio::sync::{mpsc, oneshot};
@@ -224,8 +224,13 @@ impl StorageTxn for WrapperTxn {
         self.call(|tx| TxnMessage::RemoveOperation(op, tx)).await
     }
 
-    async fn sync_complete(&mut self) -> Result<()> {
-        self.call(TxnMessage::SyncComplete).await
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>> {
+        self.call(TxnMessage::GetSyncPoint).await
+    }
+
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool> {
+        self.call(|tx| TxnMessage::SyncComplete(sync_point, tx))
+            .await
     }
 
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {

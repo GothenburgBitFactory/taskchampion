@@ -1,6 +1,6 @@
 use crate::errors::Result;
 use crate::operation::Operation;
-use crate::storage::{TaskMap, VersionId};
+use crate::storage::{SyncPoint, TaskMap, VersionId};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -21,7 +21,8 @@ pub(in crate::storage) trait WrappedStorageTxn {
     async fn num_unsynced_operations(&mut self) -> Result<usize>;
     async fn add_operation(&mut self, op: Operation) -> Result<()>;
     async fn remove_operation(&mut self, op: Operation) -> Result<()>;
-    async fn sync_complete(&mut self) -> Result<()>;
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>>;
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool>;
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>>;
     async fn add_to_working_set(&mut self, uuid: Uuid) -> Result<usize>;
     async fn set_working_set_item(&mut self, index: usize, uuid: Option<Uuid>) -> Result<()>;

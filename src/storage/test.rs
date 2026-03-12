@@ -113,6 +113,11 @@ macro_rules! storage_tests_base {
         }
 
         #[$macro]
+        async fn sync_complete_undo_invalidation() -> Result<()> {
+            $crate::storage::test::sync_complete_undo_invalidation($storage).await
+        }
+
+        #[$macro]
         async fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage).await
         }
@@ -474,10 +479,11 @@ pub(super) async fn unsynced_operations(mut storage: impl Storage) -> Result<()>
         assert_eq!(txn.num_unsynced_operations().await?, 2);
     }
 
-    // Sync them.
+    // Sync them via get_sync_point / sync_complete.
     {
         let mut txn = storage.txn().await?;
-        txn.sync_complete().await?;
+        let sp = txn.get_sync_point().await?;
+        txn.sync_complete(sp).await?;
         txn.commit().await?;
     }
 
@@ -581,7 +587,8 @@ pub(super) async fn remove_operations(mut storage: impl Storage) -> Result<()> {
     // Mark operations as synced.
     {
         let mut txn = storage.txn().await?;
-        txn.sync_complete().await?;
+        let sp = txn.get_sync_point().await?;
+        txn.sync_complete(sp).await?;
         txn.commit().await?;
     }
 
@@ -683,8 +690,8 @@ pub(super) async fn task_operations(mut storage: impl Storage) -> Result<()> {
     // Sync and verify the task operations still exist.
     {
         let mut txn = storage.txn().await?;
-
-        txn.sync_complete().await?;
+        let sp = txn.get_sync_point().await?;
+        txn.sync_complete(sp).await?;
 
         let ops = txn.get_task_operations(uuid1).await?;
         assert_eq!(ops.len(), 2);
@@ -717,8 +724,8 @@ pub(super) async fn sync_complete(mut storage: impl Storage) -> Result<()> {
     // Sync and verify the task operations still exist.
     {
         let mut txn = storage.txn().await?;
-
-        txn.sync_complete().await?;
+        let sp = txn.get_sync_point().await?;
+        txn.sync_complete(sp).await?;
 
         let ops = txn.get_task_operations(uuid1).await?;
         assert_eq!(ops.len(), 1);
@@ -743,13 +750,66 @@ pub(super) async fn sync_complete(mut storage: impl Storage) -> Result<()> {
     // Sync and verify that uuid1's operations still exist, but uuid2's do not.
     {
         let mut txn = storage.txn().await?;
-
-        txn.sync_complete().await?;
+        let sp = txn.get_sync_point().await?;
+        txn.sync_complete(sp).await?;
 
         let ops = txn.get_task_operations(uuid1).await?;
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid2).await?;
         assert_eq!(ops.len(), 0);
+    }
+
+    Ok(())
+}
+
+pub(super) async fn sync_complete_undo_invalidation(mut storage: impl Storage) -> Result<()> {
+    let uuid1 = Uuid::new_v4();
+    let now = Utc::now();
+    let update_op = Operation::Update {
+        uuid: uuid1,
+        property: "title".into(),
+        value: Some("test".into()),
+        old_value: None,
+        timestamp: now,
+    };
+
+    // Create a task and some operations.
+    {
+        let mut txn = storage.txn().await?;
+        txn.create_task(uuid1).await?;
+        txn.add_operation(Operation::Create { uuid: uuid1 }).await?;
+        txn.add_operation(update_op.clone()).await?;
+        txn.commit().await?;
+    }
+
+    // Get a sync point, then simulate undo by removing the last operation.
+    let sync_point;
+    {
+        let mut txn = storage.txn().await?;
+        sync_point = txn.get_sync_point().await?;
+        txn.commit().await?;
+    }
+    {
+        let mut txn = storage.txn().await?;
+        txn.remove_operation(update_op).await?;
+        txn.commit().await?;
+    }
+
+    // sync_complete should detect the invalidation and return false.
+    {
+        let mut txn = storage.txn().await?;
+        let valid = txn.sync_complete(sync_point).await?;
+        assert!(!valid, "sync_complete should return false when undo occurred");
+        txn.commit().await?;
+    }
+
+    // The remaining operation (Create) should NOT be marked as synced,
+    // since the sync point was invalidated.
+    {
+        let mut txn = storage.txn().await?;
+        let ops = txn.unsynced_operations().await?;
+        assert_eq!(ops.len(), 1, "Create op should remain unsynced");
+        assert_eq!(ops[0], Operation::Create { uuid: uuid1 });
     }
 
     Ok(())

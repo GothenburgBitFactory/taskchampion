@@ -2,18 +2,40 @@
 
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
-use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::{Storage, StorageTxn, SyncPoint, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use async_trait::async_trait;
+use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(PartialEq, Debug, Clone)]
 struct Data {
+    next_op_id: i64,
     tasks: HashMap<Uuid, TaskMap>,
     base_version: VersionId,
-    operations: Vec<(bool, Operation)>,
+    operations: Vec<(i64, bool, Operation)>,
     working_set: Vec<Option<Uuid>>,
+}
+
+pub(crate) struct InMemorySyncPoint {
+    max_op_id: Option<i64>,
+    unsynced: Vec<Operation>,
+    synced_to_add: Vec<Operation>,
+}
+
+impl SyncPoint for InMemorySyncPoint {
+    fn operations(&self) -> &[Operation] {
+        &self.unsynced
+    }
+
+    fn add_synced_operation(&mut self, op: Operation) {
+        self.synced_to_add.push(op);
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
+    }
 }
 
 struct Txn<'t> {
@@ -127,8 +149,8 @@ impl StorageTxn for Txn<'_> {
             .data_ref()
             .operations
             .iter()
-            .filter(|(_, op)| op.get_uuid() == Some(uuid))
-            .map(|(_, op)| op.clone())
+            .filter(|(_, _, op)| op.get_uuid() == Some(uuid))
+            .map(|(_, _, op)| op.clone())
             .collect())
     }
 
@@ -137,8 +159,8 @@ impl StorageTxn for Txn<'_> {
             .data_ref()
             .operations
             .iter()
-            .filter(|(synced, _)| !synced)
-            .map(|(_, op)| op.clone())
+            .filter(|(_, synced, _)| !synced)
+            .map(|(_, _, op)| op.clone())
             .collect())
     }
 
@@ -147,17 +169,20 @@ impl StorageTxn for Txn<'_> {
             .data_ref()
             .operations
             .iter()
-            .filter(|(synced, _)| !synced)
+            .filter(|(_, synced, _)| !synced)
             .count())
     }
 
     async fn add_operation(&mut self, op: Operation) -> Result<()> {
-        self.mut_data_ref().operations.push((false, op));
+        let data = self.mut_data_ref();
+        let id = data.next_op_id;
+        data.next_op_id += 1;
+        data.operations.push((id, false, op));
         Ok(())
     }
 
     async fn remove_operation(&mut self, op: Operation) -> Result<()> {
-        if let Some((synced, last_op)) = self.data_ref().operations.last() {
+        if let Some((_, synced, last_op)) = self.data_ref().operations.last() {
             if *synced {
                 return Err(Error::Database(
                     "Last operation has been synced -- cannot remove".to_string(),
@@ -173,26 +198,66 @@ impl StorageTxn for Txn<'_> {
         ))
     }
 
-    async fn sync_complete(&mut self) -> Result<()> {
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>> {
         let data = self.data_ref();
+        let mut unsynced = Vec::new();
+        let mut max_op_id: Option<i64> = None;
+        for (id, synced, op) in &data.operations {
+            if !synced {
+                max_op_id = Some(max_op_id.map_or(*id, |m: i64| m.max(*id)));
+                unsynced.push(op.clone());
+            }
+        }
+        Ok(Box::new(InMemorySyncPoint {
+            max_op_id,
+            unsynced,
+            synced_to_add: Vec::new(),
+        }))
+    }
 
-        // Mark all operations as synced, but drop operations which no longer have a
-        // corresponding task.
-        let new_operations = data
-            .operations
-            .iter()
-            .filter(|(_, op)| {
-                if let Some(uuid) = op.get_uuid() {
-                    data.tasks.contains_key(&uuid)
-                } else {
-                    true
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool> {
+        let sp = sync_point
+            .into_any()
+            .downcast::<InMemorySyncPoint>()
+            .expect("wrong SyncPoint type for InMemoryStorage");
+        let data = self.mut_data_ref();
+
+        // Check if sync point is still valid (undo removes from the end,
+        // so if max_op_id is gone, undo happened).
+        let valid = match sp.max_op_id {
+            Some(max_id) => data.operations.iter().any(|(id, _, _)| *id == max_id),
+            None => true, // no ops were captured, nothing to invalidate
+        };
+
+        // Insert transformed server ops as synced (always — pulled versions
+        // are already applied to task data regardless of undo).
+        for op in sp.synced_to_add {
+            let id = data.next_op_id;
+            data.next_op_id += 1;
+            data.operations.push((id, true, op));
+        }
+
+        // Only mark original ops as synced if the sync point is still valid.
+        if valid {
+            if let Some(max_id) = sp.max_op_id {
+                for (id, synced, _) in data.operations.iter_mut() {
+                    if *id <= max_id {
+                        *synced = true;
+                    }
                 }
-            })
-            .map(|(_, op)| (true, op.clone()))
-            .collect();
-        self.mut_data_ref().operations = new_operations;
+            }
+        }
 
-        Ok(())
+        // Drop operations which no longer have a corresponding task.
+        data.operations.retain(|(_, _, op)| {
+            if let Some(uuid) = op.get_uuid() {
+                data.tasks.contains_key(&uuid)
+            } else {
+                true
+            }
+        });
+
+        Ok(valid)
     }
 
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
@@ -243,6 +308,7 @@ impl InMemoryStorage {
     pub fn new() -> InMemoryStorage {
         InMemoryStorage {
             data: Data {
+                next_op_id: 0,
                 tasks: HashMap::new(),
                 base_version: DEFAULT_BASE_VERSION,
                 operations: vec![],

@@ -3,11 +3,12 @@ use crate::operation::Operation;
 use crate::storage::config::AccessMode;
 use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn};
 use crate::storage::sqlite::{schema, SqliteError, StoredUuid};
-use crate::storage::{TaskMap, VersionId, DEFAULT_BASE_VERSION};
+use crate::storage::{SyncPoint, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use anyhow::Context;
 use async_trait::async_trait;
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use std::any::Any;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -47,6 +48,26 @@ impl ToSql for Operation {
         let s = serde_json::to_string(&self)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         Ok(s.into())
+    }
+}
+
+pub(crate) struct SqliteSyncPoint {
+    max_op_id: Option<i64>,
+    unsynced: Vec<Operation>,
+    synced_to_add: Vec<Operation>,
+}
+
+impl SyncPoint for SqliteSyncPoint {
+    fn operations(&self) -> &[Operation] {
+        &self.unsynced
+    }
+
+    fn add_synced_operation(&mut self, op: Operation) {
+        self.synced_to_add.push(op);
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
     }
 }
 
@@ -367,14 +388,76 @@ impl WrappedStorageTxn for Txn<'_> {
         ))
     }
 
-    async fn sync_complete(&mut self) -> Result<()> {
-        self.check_write_access()?;
+    async fn get_sync_point(&mut self) -> Result<Box<dyn SyncPoint>> {
         let t = self.get_txn()?;
-        t.execute(
-            "UPDATE operations SET synced = true WHERE synced = false",
-            [],
-        )
-        .context("Marking operations as synced")?;
+
+        let mut q =
+            t.prepare("SELECT id, data FROM operations WHERE NOT synced ORDER BY id ASC")?;
+        let rows = q.query_map([], |r| {
+            let id: i64 = r.get("id")?;
+            let data: Operation = r.get("data")?;
+            Ok((id, data))
+        })?;
+
+        let mut unsynced = Vec::new();
+        let mut max_op_id: Option<i64> = None;
+        for r in rows {
+            let (id, op) = r?;
+            max_op_id = Some(max_op_id.map_or(id, |m: i64| m.max(id)));
+            unsynced.push(op);
+        }
+
+        Ok(Box::new(SqliteSyncPoint {
+            max_op_id,
+            unsynced,
+            synced_to_add: Vec::new(),
+        }))
+    }
+
+    async fn sync_complete(&mut self, sync_point: Box<dyn SyncPoint>) -> Result<bool> {
+        self.check_write_access()?;
+        let sp = sync_point
+            .into_any()
+            .downcast::<SqliteSyncPoint>()
+            .expect("wrong SyncPoint type for SqliteStorage");
+        let t = self.get_txn()?;
+
+        // Check if sync point is still valid (undo removes from the end,
+        // so if max_op_id is gone, undo happened).
+        let valid = match sp.max_op_id {
+            Some(max_id) => {
+                let exists: bool = t
+                    .query_row(
+                        "SELECT 1 FROM operations WHERE id = ? LIMIT 1",
+                        params![max_id],
+                        |_| Ok(true),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
+                exists
+            }
+            None => true,
+        };
+
+        // Insert transformed server ops as already-synced (always).
+        for op in sp.synced_to_add {
+            t.execute(
+                "INSERT INTO operations (data, synced) VALUES (?, true)",
+                params![&op],
+            )
+            .context("Insert synced operation")?;
+        }
+
+        // Only mark original ops as synced if the sync point is still valid.
+        if valid {
+            if let Some(max_id) = sp.max_op_id {
+                t.execute(
+                    "UPDATE operations SET synced = true WHERE id <= ?",
+                    params![max_id],
+                )
+                .context("Marking operations as synced")?;
+            }
+        }
 
         // Delete all operations for non-existent (usually, deleted) tasks.
         t.execute(
@@ -386,7 +469,7 @@ impl WrappedStorageTxn for Txn<'_> {
         )
         .context("Deleting orphaned operations")?;
 
-        Ok(())
+        Ok(valid)
     }
 
     async fn get_working_set(&mut self) -> Result<Vec<Option<Uuid>>> {
@@ -765,7 +848,8 @@ mod test {
         assert!(is_read_only_err(txn.set_base_version(Uuid::new_v4()).await));
         assert!(is_read_only_err(txn.add_operation(op.clone()).await));
         assert!(is_read_only_err(txn.remove_operation(op).await));
-        assert!(is_read_only_err(txn.sync_complete().await));
+        let sp = txn.get_sync_point().await?;
+        assert!(is_read_only_err(txn.sync_complete(sp).await));
         assert!(is_read_only_err(
             txn.add_to_working_set(Uuid::new_v4()).await
         ));

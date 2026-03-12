@@ -1,7 +1,7 @@
 use super::{WrappedStorage, WrappedStorageTxn};
 use crate::errors::Result;
 use crate::operation::Operation;
-use crate::storage::{TaskMap, VersionId};
+use crate::storage::{SyncPoint, TaskMap, VersionId};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -30,7 +30,8 @@ pub(super) enum TxnMessage {
     NumUnsyncedOperations(oneshot::Sender<Result<usize>>),
     AddOperation(Operation, oneshot::Sender<Result<()>>),
     RemoveOperation(Operation, oneshot::Sender<Result<()>>),
-    SyncComplete(oneshot::Sender<Result<()>>),
+    GetSyncPoint(oneshot::Sender<Result<Box<dyn SyncPoint>>>),
+    SyncComplete(Box<dyn SyncPoint>, oneshot::Sender<Result<bool>>),
     GetWorkingSet(oneshot::Sender<Result<Vec<Option<Uuid>>>>),
     AddToWorkingSet(Uuid, oneshot::Sender<Result<usize>>),
     SetWorkingSetItem(usize, Option<Uuid>, oneshot::Sender<Result<()>>),
@@ -128,8 +129,11 @@ impl<S: WrappedStorage> ActorImpl<S> {
                 TxnMessage::RemoveOperation(o, resp) => {
                     let _ = resp.send(txn.remove_operation(o).await);
                 }
-                TxnMessage::SyncComplete(resp) => {
-                    let _ = resp.send(txn.sync_complete().await);
+                TxnMessage::GetSyncPoint(resp) => {
+                    let _ = resp.send(txn.get_sync_point().await);
+                }
+                TxnMessage::SyncComplete(sp, resp) => {
+                    let _ = resp.send(txn.sync_complete(sp).await);
                 }
                 TxnMessage::GetWorkingSet(resp) => {
                     let _ = resp.send(txn.get_working_set().await);
