@@ -62,7 +62,7 @@ additional-targets = ["wasm32-unknown-unknown"]
 anyhow = "1.0"
 async-trait = "0.1.89"
 byteorder = "1.5"
-chrono = { version = "^0.4.38", features = ["serde"] }
+chrono = { version = "^0.4.44", features = ["serde"] }
 flate2 = "1"
 idb = { version = "0.6.4", optional = true }
 log = "^0.4.17"
