@@ -134,6 +134,14 @@ pub(super) async fn sync(
                 info!("version {new_version_id:?} received by server");
                 {
                     let mut txn = storage.txn().await?;
+                    // If base_version has advanced, a concurrent sync already
+                    // pulled and applied our pushed version (the version chain
+                    // is linear, so it must have processed all versions up to
+                    // and including ours). Our work is already accounted for.
+                    if txn.base_version().await? != base_version_id {
+                        info!("Concurrent sync detected after push, aborting");
+                        return Ok(());
+                    }
                     txn.set_base_version(new_version_id).await?;
                     txn.commit().await?;
                 }
