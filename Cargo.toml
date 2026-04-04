@@ -76,7 +76,7 @@ strum = "0.28"
 strum_macros = "0.28"
 tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
-uuid = { version = "^1.22.0", features = ["serde", "v4"] }
+uuid = { version = "^1.23.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
 
 ## wasm-only dependencies.
@@ -128,5 +128,5 @@ wasm-bindgen-test = "0.3"
 ## non-wasm dev-dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # proptest has a number of non-WASM-compatible requirements
-proptest = "^1.10.0"
+proptest = "^1.11.0"
 httptest = "0.16.4"
