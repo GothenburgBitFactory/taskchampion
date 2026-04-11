@@ -2,7 +2,7 @@ use crate::errors::Result;
 use crate::server::encryption::Cryptor;
 use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
-    VersionId,
+    VersionId, NIL_VERSION_ID,
 };
 use crate::Error;
 use async_trait::async_trait;
@@ -211,6 +211,23 @@ impl GitSyncServer {
             .status()?;
         Ok(status.success())
     }
+
+    /// Encrypt and write a version file. Returns the file path.
+    fn add_version_by_parent_version_id(&self, version: &Version) -> Result<PathBuf> {
+        use crate::server::encryption::{Sealed, Unsealed};
+        let sealed = self.cryptor.seal(Unsealed {
+            version_id: version.version_id,
+            payload: version.history_segment.clone(),
+        })?;
+        let filename = format!(
+            "v-{}-{}",
+            version.parent_version_id.simple(),
+            version.version_id.simple()
+        );
+        let path = self.local_path.join(&filename);
+        std::fs::write(&path, Vec::<u8>::from(sealed))?;
+        Ok(path)
+    }
 }
 
 #[async_trait(?Send)]
@@ -220,37 +237,46 @@ impl Server for GitSyncServer {
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
-        todo!();
-        // check the parent_version_id for linearity
-        // if parent_version_id != self.meta.latest {
-        //     // Pull and try again if remote exists and not local_only
+        // Accept any parent when the repo is empty (latest == NIL).
+        // Otherwise check if parent is in latest. If it isn't, pull recheck.
+        if self.meta.latest != Uuid::nil() && parent_version_id != self.meta.latest {
+            self.pull()?;
+            self.read_meta()?;
+            if parent_version_id != self.meta.latest {
+                return Ok((
+                    AddVersionResult::ExpectedParentVersion(self.meta.latest),
+                    SnapshotUrgency::None,
+                ));
+            }
+        }
 
-        //     // Else fail
-        //     return Ok((
-        //         AddVersionResult::ExpectedParentVersion(self.meta.latest),
-        //         SnapshotUrgency::None,
-        //     ));
-        // }
+        // Create the new version and write it to file.
+        let version_id = Uuid::new_v4();
+        let version = Version {
+            version_id,
+            parent_version_id,
+            history_segment,
+        };
+        let version_path = self.add_version_by_parent_version_id(&version)?;
+        self.meta.latest = version_id;
+        let meta_path = self.write_meta()?;
 
-        // // invent a new ID for this version
-        // let version_id = Uuid::new_v4();
-        // let version_path = self.add_version_by_parent_version_id(Version {
-        //     version_id,
-        //     parent_version_id,
-        //     history_segment,
-        // })?;
-        // let meta = self.set_latest_version_id(version_id)?;
-        // git add and commit version_path and meta
-        // if remote mode:
-        //   push
-        //   if push fails
-        //     revert local commit
-        //     re-read latest
-        //     return Ok((
-        //         AddVersionResult::ExpectedParentVersion(self.meta.latest),
-        //         SnapshotUrgency::None,
-        //     ));
-        // Ok((AddVersionResult::Ok(version_id), SnapshotUrgency::None))
+        // Commit and push, reverting if push fails.
+        self.stage_and_commit(&[&version_path, &meta_path], "add version")?;
+
+        if !self.push()? {
+            // Push was rejected (non-fast-forward). Undo the commit and re-read remote state.
+            git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
+            std::fs::remove_file(&version_path)?;
+            self.pull()?;
+            self.read_meta()?;
+            return Ok((
+                AddVersionResult::ExpectedParentVersion(self.meta.latest),
+                SnapshotUrgency::None,
+            ));
+        }
+
+        Ok((AddVersionResult::Ok(version_id), SnapshotUrgency::None))
     }
 
     async fn get_child_version(
@@ -351,21 +377,6 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_stage_and_commit() -> Result<()> {
-        let tmp = TempDir::new()?;
-        let server = make_server(tmp.path())?;
-
-        // Write a new file, stage and commit it.
-        let new_file = tmp.path().join("testfile");
-        std::fs::write(&new_file, b"hello, taskchampion")?;
-        server.stage_and_commit(&[&new_file], "test commit")?;
-        // Verify the commit exists, git show HEAD succeeds only if there is a HEAD commit.
-        git_cmd(tmp.path(), &["show", "HEAD"])?;
-        // eprintln!("tmp dir: {}", tmp.path().display());
-        //  std::mem::forget(tmp);
-        Ok(())
-    }
 
     #[test]
     fn test_push_and_pull() -> Result<()> {
@@ -407,42 +418,111 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_push_rejected_on_conflict() -> Result<()> {
+
+    #[tokio::test]
+    async fn test_add_zero_base() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        let history = b"1234".to_vec();
+        match server.add_version(NIL_VERSION_ID, history.clone()).await?.0 {
+            AddVersionResult::ExpectedParentVersion(_) => {
+                panic!("should have accepted the version")
+            }
+            AddVersionResult::Ok(version_id) => {
+                // Verify the version file exists on disk.
+                let filename = format!("v-{}-{}", NIL_VERSION_ID.simple(), version_id.simple());
+                assert!(
+                    tmp.path().join(&filename).exists(),
+                    "version file missing: {filename}"
+                );
+                // Verify meta was updated.
+                assert_eq!(server.meta.latest, version_id);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_nonzero_base() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        let history = b"1234".to_vec();
+        let parent_version_id = Uuid::new_v4();
+
+        // OK because latest == NIL (repo is empty).
+        match server.add_version(parent_version_id, history).await?.0 {
+            AddVersionResult::ExpectedParentVersion(_) => {
+                panic!("should have accepted the version")
+            }
+            AddVersionResult::Ok(version_id) => {
+                assert_eq!(server.meta.latest, version_id);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_nonzero_base_forbidden() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        let history = b"1234".to_vec();
+        let parent_version_id = Uuid::new_v4();
+
+        // Add a first version.
+        if let (AddVersionResult::ExpectedParentVersion(_), _) = server
+            .add_version(parent_version_id, history.clone())
+            .await?
+        {
+            panic!("should have accepted the first version");
+        }
+
+        // Try to add another with the same (now stale) parent, should be rejected.
+        match server.add_version(parent_version_id, history).await?.0 {
+            AddVersionResult::Ok(_) => panic!("should not have accepted the version"),
+            AddVersionResult::ExpectedParentVersion(expected) => {
+                assert_eq!(expected, server.meta.latest);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_version_conflict_with_remote() -> Result<()> {
         let tmp = TempDir::new()?;
         let bare = tmp.path().join("bare");
         let clone1 = tmp.path().join("clone1");
         let clone2 = tmp.path().join("clone2");
 
-        let server1 = make_server_with_remote(&bare, &clone1)?;
+        let mut server1 = make_server_with_remote(&bare, &clone1)?;
         server1.push()?;
 
-        // Clone a second copy.
         let bare_url = bare.to_str().unwrap();
         git_cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
         git_cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
         git_cmd(&clone2, &["config", "user.name", "taskchampion"])?;
-
         let mut server2 = GitSyncServer::new(
-            clone2.clone(),
+            clone2,
             "main".into(),
             bare_url.into(),
             false,
             b"test-secret".to_vec(),
         )?;
 
-        // clone1 pushes first.
-        let f1 = clone1.join("f1");
-        std::fs::write(&f1, b"from clone1")?;
-        server1.stage_and_commit(&[&f1], "clone1 commit")?;
-        assert!(server1.push()?);
+        // server1 adds a version from NIL parent and pushes successfully.
+        let (result1, _) = server1.add_version(NIL_VERSION_ID, b"v1".to_vec()).await?;
+        let v1_id = match result1 {
+            AddVersionResult::Ok(id) => id,
+            AddVersionResult::ExpectedParentVersion(_) => panic!("server1 add failed"),
+        };
 
-        // clone2 also commits (diverged history) and tries to push — should be rejected.
-        let f2 = clone2.join("f2");
-        std::fs::write(&f2, b"from clone2")?;
-        server2.stage_and_commit(&[&f2], "clone2 commit")?;
-        assert!(!server2.push()?);
-
+        // server2 also tries to add from NIL, should fail with ExpectedParentVersion pointing at v1.
+        let (result2, _) = server2.add_version(NIL_VERSION_ID, b"v2".to_vec()).await?;
+        match result2 {
+            AddVersionResult::Ok(_) => panic!("server2 should have been rejected"),
+            AddVersionResult::ExpectedParentVersion(expected) => {
+                assert_eq!(expected, v1_id);
+            }
+        }
         Ok(())
     }
 }
