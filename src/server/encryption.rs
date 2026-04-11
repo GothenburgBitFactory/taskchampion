@@ -172,6 +172,7 @@ impl<'a> Envelope<'a> {
 
 /// A unsealed payload with an attached version_id.  The version_id is used to
 /// validate the context of the payload on unsealing.
+#[derive(Debug)]
 pub(super) struct Unsealed {
     pub(super) version_id: Uuid,
     pub(super) payload: Vec<u8>,
@@ -184,6 +185,7 @@ impl From<Unsealed> for Vec<u8> {
 }
 
 /// An encrypted payload
+#[derive(Debug)]
 pub(super) struct Sealed {
     pub(super) version_id: Uuid,
     pub(super) payload: Vec<u8>,

@@ -1,11 +1,12 @@
 use crate::errors::Result;
-use crate::server::encryption::Cryptor;
+use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
     VersionId, NIL_VERSION_ID,
 };
 use crate::Error;
 use async_trait::async_trait;
+use glob::glob;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -116,7 +117,7 @@ impl GitSyncServer {
             .status()?
             .success();
         if !checkout_ok {
-            // For a brand-new repo (no commits) `git checkout -b` also fails, so use
+            // For a brand-new repo `git checkout -b` also fails, so use
             // `git symbolic-ref` to point HEAD at the desired branch without needing a commit.
             let has_commits = Command::new("git")
                 .args(["rev-parse", "HEAD"])
@@ -214,11 +215,11 @@ impl GitSyncServer {
 
     /// Encrypt and write a version file. Returns the file path.
     fn add_version_by_parent_version_id(&self, version: &Version) -> Result<PathBuf> {
-        use crate::server::encryption::{Sealed, Unsealed};
-        let sealed = self.cryptor.seal(Unsealed {
+        let unsealed = Unsealed {
             version_id: version.version_id,
             payload: version.history_segment.clone(),
-        })?;
+        };
+        let sealed = self.cryptor.seal(unsealed)?;
         let filename = format!(
             "v-{}-{}",
             version.parent_version_id.simple(),
@@ -227,6 +228,37 @@ impl GitSyncServer {
         let path = self.local_path.join(&filename);
         std::fs::write(&path, Vec::<u8>::from(sealed))?;
         Ok(path)
+    }
+
+    /// Read and decrypt a version file. Returns a Version if found, None if not.
+    fn get_version_by_parent_version_id(&self, version: &VersionId) -> Option<Version> {
+        // glob to find file.
+        // v-PARENT-CHILD
+        let pattern = format!("{}/v-{}-*", self.local_path.to_str()?, version.simple());
+        for entry in glob(&pattern).ok()? {
+            let result = (|| -> Option<Version> {
+                let path = entry.ok()?;
+                let mut buf = Vec::new();
+                File::open(&path).ok()?.read_to_end(&mut buf).ok()?;
+                let filename = path.to_str()?;
+                let (_, version_id_str) = filename.rsplit_once('-')?;
+                let version_id = Uuid::parse_str(version_id_str).ok()?;
+                let sealed = Sealed {
+                    version_id,
+                    payload: buf,
+                };
+                let unsealed = self.cryptor.unseal(sealed).ok()?;
+                Some(Version {
+                    version_id: unsealed.version_id,
+                    parent_version_id: *version,
+                    history_segment: unsealed.payload,
+                })
+            })();
+            if let Some(v) = result {
+                return Some(v);
+            }
+        }
+        None
     }
 }
 
@@ -377,7 +409,6 @@ mod test {
         Ok(())
     }
 
-
     #[test]
     fn test_push_and_pull() -> Result<()> {
         let tmp = TempDir::new()?;
@@ -404,7 +435,7 @@ mod test {
         // Build a server for clone2 and pull
         // It should see the new file.
         let bare_url_str: String = bare_url.into();
-        let mut server2 = GitSyncServer::new(
+        let server2 = GitSyncServer::new(
             clone2.clone(),
             "main".into(),
             bare_url_str,
@@ -417,7 +448,6 @@ mod test {
         // std::mem::forget(tmp);
         Ok(())
     }
-
 
     #[tokio::test]
     async fn test_add_zero_base() -> Result<()> {
@@ -523,6 +553,39 @@ mod test {
                 assert_eq!(expected, v1_id);
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_version_by_parent_id() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        let history = b"1234".to_vec();
+        let parent_version_id = Uuid::new_v4();
+
+        // Version doesn't exist yet -> None
+        assert!(server
+            .get_version_by_parent_version_id(&parent_version_id)
+            .is_none());
+
+        // Add a first version.
+        let (rst, _) = server
+            .add_version(parent_version_id, history.clone())
+            .await?;
+
+        let AddVersionResult::Ok(version_id) = rst else {
+            panic!("Couldn't add version");
+        };
+
+        match server.get_version_by_parent_version_id(&parent_version_id) {
+            Some(version) => {
+                assert_eq!(version.parent_version_id, parent_version_id);
+                assert_eq!(version.history_segment, history);
+                assert_eq!(version.version_id, version_id);
+            }
+            None => panic!("Failed to read version"),
+        }
+
         Ok(())
     }
 }

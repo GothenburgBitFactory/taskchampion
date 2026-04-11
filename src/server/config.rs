@@ -1,5 +1,4 @@
 use super::types::Server;
-use crate::errors::Result;
 #[cfg(feature = "server-aws")]
 pub use crate::server::cloud::aws::AwsCredentials;
 #[cfg(feature = "server-aws")]
@@ -12,6 +11,7 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
+use crate::{errors::Result, server::gitsync::GitSyncServer};
 #[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
@@ -188,7 +188,13 @@ impl ServerConfig {
                 remote,
                 local_only,
                 encryption_secret,
-            } => todo!(),
+            } => Box::new(GitSyncServer::new(
+                local_path,
+                branch,
+                remote,
+                local_only,
+                encryption_secret,
+            )?),
         })
     }
 }
