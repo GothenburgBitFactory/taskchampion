@@ -118,6 +118,26 @@ pub enum ServerConfig {
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
     },
+    /// A git repository
+    #[cfg(feature = "git-sync")]
+    Git {
+        /// The path to the local repo.
+        local_path: PathBuf,
+        /// The branch to use.
+        branch: String,
+        /// The remote repo.
+        ///
+        /// This can either be a named remote such as `origin` or a full git
+        /// url such as `git@myserver.com:/path/to/repo.git`
+        /// If `None` will use `origin` if the local repo has one.
+        /// Otherwise will operate in local only mode.
+        remote: String,
+        /// Don't clone/push/pull to `remote` even if it is defined.
+        local_only: bool,
+        /// Private encryption secret used to encrypt all data sent to the server.  This can
+        /// be any suitably un-guessable string of bytes.
+        encryption_secret: Vec<u8>,
+    },
 }
 
 impl ServerConfig {
@@ -162,6 +182,13 @@ impl ServerConfig {
                 )
                 .await?,
             ),
+            ServerConfig::Git {
+                local_path,
+                branch,
+                remote,
+                local_only,
+                encryption_secret,
+            } => todo!(),
         })
     }
 }

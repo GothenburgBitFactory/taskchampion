@@ -2478,6 +2478,7 @@ dependencies = [
  "flate2",
  "getrandom 0.4.2",
  "google-cloud-storage",
+ "hex",
  "httptest",
  "idb",
  "libc",
