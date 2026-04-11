@@ -25,7 +25,7 @@ struct Version {
 struct Meta {
     #[serde(with = "uuid::serde::simple")]
     latest: VersionId,
-    salt: String,  // hex-encoded
+    salt: String, // hex-encoded
 }
 
 pub(crate) struct GitSyncServer {
@@ -187,6 +187,30 @@ impl GitSyncServer {
         serde_json::to_writer(f, &self.meta)?;
         Ok(meta_path)
     }
+
+    /// Fetch and fast-forward to the remote branch. No-op in local-only mode.
+    fn pull(&self) -> Result<()> {
+        if self.local_only {
+            return Ok(());
+        }
+        git_cmd(&self.local_path, &["fetch", &self.remote, &self.branch])?;
+        git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
+        Ok(())
+    }
+
+    /// Push to the remote branch. Returns `true` on success, `false` if the push is rejected
+    /// Always returns `true` in local-only mode.
+    fn push(&self) -> Result<bool> {
+        if self.local_only {
+            return Ok(true);
+        }
+        let status = Command::new("git")
+            .args(["push", &self.remote, &self.branch])
+            .current_dir(&self.local_path)
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        Ok(status.success())
+    }
 }
 
 #[async_trait(?Send)]
@@ -269,14 +293,36 @@ mod test {
         )
     }
 
+    /// Create a bare repo to act as a remote, then clone it into `clone_dir`.
+    /// Returns a GitSyncServer backed by the clone, with the bare repo as its remote.
+    fn make_server_with_remote(bare_dir: &Path, clone_dir: &Path) -> Result<GitSyncServer> {
+        // Initialise the bare remote.
+        git_cmd(
+            bare_dir.parent().unwrap(),
+            &[
+                "init",
+                "--bare",
+                bare_dir.file_name().unwrap().to_str().unwrap(),
+            ],
+        )?;
+        let bare_url = bare_dir.to_str().unwrap();
+        GitSyncServer::new(
+            clone_dir.to_path_buf(),
+            "main".into(),
+            bare_url.into(),
+            false,
+            b"test-secret".to_vec(),
+        )
+    }
+
     #[test]
     fn test_init_creates_repo_and_meta() -> Result<()> {
         let tmp = TempDir::new()?;
         let server = make_server(tmp.path())?;
         assert!(tmp.path().join("meta").exists());
         assert_eq!(server.meta.latest, Uuid::nil());
-        eprintln!("tmp dir: {}", tmp.path().display());
-        std::mem::forget(tmp);
+        // eprintln!("tmp dir: {}", tmp.path().display());
+        // std::mem::forget(tmp);
         Ok(())
     }
 
@@ -314,29 +360,89 @@ mod test {
         let new_file = tmp.path().join("testfile");
         std::fs::write(&new_file, b"hello, taskchampion")?;
         server.stage_and_commit(&[&new_file], "test commit")?;
-
         // Verify the commit exists, git show HEAD succeeds only if there is a HEAD commit.
         git_cmd(tmp.path(), &["show", "HEAD"])?;
-        eprintln!("tmp dir: {}", tmp.path().display());
-        std::mem::forget(tmp);
+        // eprintln!("tmp dir: {}", tmp.path().display());
+        //  std::mem::forget(tmp);
         Ok(())
     }
 
-    // #[tokio::test]
-    // async fn test_empty() -> Result<()> { ... }
+    #[test]
+    fn test_push_and_pull() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let bare = tmp.path().join("bare");
+        let clone1 = tmp.path().join("clone1");
+        let clone2 = tmp.path().join("clone2");
 
-    // #[tokio::test]
-    // async fn test_add_zero_base() -> Result<()> { ... }
+        // Set up first clone (initialises remote with the meta commit).
+        let server1 = make_server_with_remote(&bare, &clone1)?;
+        server1.push()?;
 
-    // #[tokio::test]
-    // async fn test_add_nonzero_base() -> Result<()> { ... }
+        // Clone a second copy directly via git.
+        let bare_url = bare.to_str().unwrap();
+        git_cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
+        git_cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
+        git_cmd(&clone2, &["config", "user.name", "taskchampion"])?;
 
-    // #[tokio::test]
-    // async fn test_add_nonzero_base_forbidden() -> Result<()> { ... }
+        // Write a new file in clone1 and push it.
+        let new_file = clone1.join("testfile");
+        std::fs::write(&new_file, b"hello")?;
+        server1.stage_and_commit(&[&new_file], "add testfile")?;
+        assert!(server1.push()?);
 
-    // #[tokio::test]
-    // async fn test_snapshot() -> Result<()> { ... }
+        // Build a server for clone2 and pull
+        // It should see the new file.
+        let bare_url_str: String = bare_url.into();
+        let mut server2 = GitSyncServer::new(
+            clone2.clone(),
+            "main".into(),
+            bare_url_str,
+            false,
+            b"test-secret".to_vec(),
+        )?;
+        server2.pull()?;
+        assert!(clone2.join("testfile").exists());
+        // eprintln!("tmp dir: {}", tmp.path().display());
+        // std::mem::forget(tmp);
+        Ok(())
+    }
 
-    // #[tokio::test]
-    // async fn test_conflict_with_local_remote() -> Result<()> { ... }
+    #[test]
+    fn test_push_rejected_on_conflict() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let bare = tmp.path().join("bare");
+        let clone1 = tmp.path().join("clone1");
+        let clone2 = tmp.path().join("clone2");
+
+        let server1 = make_server_with_remote(&bare, &clone1)?;
+        server1.push()?;
+
+        // Clone a second copy.
+        let bare_url = bare.to_str().unwrap();
+        git_cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
+        git_cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
+        git_cmd(&clone2, &["config", "user.name", "taskchampion"])?;
+
+        let mut server2 = GitSyncServer::new(
+            clone2.clone(),
+            "main".into(),
+            bare_url.into(),
+            false,
+            b"test-secret".to_vec(),
+        )?;
+
+        // clone1 pushes first.
+        let f1 = clone1.join("f1");
+        std::fs::write(&f1, b"from clone1")?;
+        server1.stage_and_commit(&[&f1], "clone1 commit")?;
+        assert!(server1.push()?);
+
+        // clone2 also commits (diverged history) and tries to push — should be rejected.
+        let f2 = clone2.join("f2");
+        std::fs::write(&f2, b"from clone2")?;
+        server2.stage_and_commit(&[&f2], "clone2 commit")?;
+        assert!(!server2.push()?);
+
+        Ok(())
+    }
 }
