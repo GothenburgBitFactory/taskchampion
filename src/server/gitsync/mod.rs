@@ -156,6 +156,9 @@ impl GitSyncServer {
             }
         };
 
+        // Remove any untracked files left behind by interrupted writes.
+        git_cmd(local_path, &["clean", "-fd"])?;
+
         Ok(meta)
     }
 
@@ -196,6 +199,9 @@ impl GitSyncServer {
         }
         git_cmd(&self.local_path, &["fetch", &self.remote, &self.branch])?;
         git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
+        // Remove any untracked files so orphaned version/snapshot files from
+        // interrupted writes cannot be served as valid versions.
+        git_cmd(&self.local_path, &["clean", "-fd"])?;
         Ok(())
     }
 
@@ -231,11 +237,17 @@ impl GitSyncServer {
     }
 
     /// Read and decrypt a version file. Returns a Version if found, None if not.
-    fn get_version_by_parent_version_id(&self, version: &VersionId) -> Option<Version> {
+    fn get_version_by_parent_version_id(&self, version: &VersionId) -> Result<Option<Version>> {
         // glob to find file.
         // v-PARENT-CHILD
-        let pattern = format!("{}/v-{}-*", self.local_path.to_str()?, version.simple());
-        for entry in glob(&pattern).ok()? {
+        let pattern = format!(
+            "{}/v-{}-*",
+            self.local_path
+                .to_str()
+                .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?,
+            version.simple()
+        );
+        for entry in glob(&pattern).map_err(|e| Error::Server(format!("{:?}", e)))? {
             let result = (|| -> Option<Version> {
                 let path = entry.ok()?;
                 let mut buf = Vec::new();
@@ -255,10 +267,10 @@ impl GitSyncServer {
                 })
             })();
             if let Some(v) = result {
-                return Some(v);
+                return Ok(Some(v));
             }
         }
-        None
+        Ok(None)
     }
 }
 
@@ -315,16 +327,21 @@ impl Server for GitSyncServer {
         &mut self,
         parent_version_id: VersionId,
     ) -> Result<GetVersionResult> {
-        todo!();
-        // if let Some(version) = self.get_version_by_parent_version_id(parent_version_id)? {
-        //     Ok(GetVersionResult::Version {
-        //         version_id: version.version_id,
-        //         parent_version_id: version.parent_version_id,
-        //         history_segment: version.history_segment,
-        //     })
-        // } else {
-        //     Ok(GetVersionResult::NoSuchVersion)
-        // }
+        let version = match self.get_version_by_parent_version_id(&parent_version_id)? {
+            Some(v) => Some(v),
+            None => {
+                self.pull()?;
+                self.get_version_by_parent_version_id(&parent_version_id)?
+            }
+        };
+        match version {
+            Some(v) => Ok(GetVersionResult::Version {
+                version_id: v.version_id,
+                parent_version_id: v.parent_version_id,
+                history_segment: v.history_segment,
+            }),
+            None => Ok(GetVersionResult::NoSuchVersion),
+        }
     }
 
     async fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> Result<()> {
@@ -338,6 +355,8 @@ impl Server for GitSyncServer {
 
 #[cfg(test)]
 mod test {
+    use std::any::Any;
+
     use super::*;
     use tempfile::TempDir;
 
@@ -557,16 +576,17 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_get_version_by_parent_id() -> Result<()> {
+    async fn get_child_version() -> Result<()> {
         let tmp = TempDir::new()?;
         let mut server = make_server(tmp.path())?;
         let history = b"1234".to_vec();
         let parent_version_id = Uuid::new_v4();
 
-        // Version doesn't exist yet -> None
-        assert!(server
-            .get_version_by_parent_version_id(&parent_version_id)
-            .is_none());
+        // Version doesn't exist yet
+        assert_eq!(
+            server.get_child_version(parent_version_id).await?,
+            GetVersionResult::NoSuchVersion
+        );
 
         // Add a first version.
         let (rst, _) = server
@@ -577,13 +597,17 @@ mod test {
             panic!("Couldn't add version");
         };
 
-        match server.get_version_by_parent_version_id(&parent_version_id) {
-            Some(version) => {
-                assert_eq!(version.parent_version_id, parent_version_id);
-                assert_eq!(version.history_segment, history);
-                assert_eq!(version.version_id, version_id);
+        match server.get_child_version(parent_version_id).await? {
+            GetVersionResult::Version {
+                version_id: v_id,
+                parent_version_id: p_id,
+                history_segment: h_seg,
+            } => {
+                assert_eq!(v_id, version_id);
+                assert_eq!(p_id, parent_version_id);
+                assert_eq!(h_seg, history);
             }
-            None => panic!("Failed to read version"),
+            GetVersionResult::NoSuchVersion => panic!("Failed to read version"),
         }
 
         Ok(())
