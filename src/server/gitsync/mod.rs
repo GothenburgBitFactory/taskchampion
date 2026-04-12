@@ -14,7 +14,6 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::TryFromFloatSecsError;
 use uuid::Uuid;
 
 #[serde_as]
@@ -43,8 +42,6 @@ struct SnapshotFile {
 struct Meta {
     #[serde(with = "uuid::serde::simple")]
     latest_version: VersionId,
-    #[serde(with = "uuid::serde::simple")]
-    latest_snapshot: VersionId,
     #[serde_as(as = "Base64")]
     salt: Vec<u8>,
 }
@@ -165,7 +162,6 @@ impl GitSyncServer {
                 let m = Meta {
                     latest_version: Uuid::nil(),
                     salt: Cryptor::gen_salt()?,
-                    latest_snapshot: Uuid::nil(),
                 };
                 let f = File::create_new(&meta_path)?;
                 serde_json::to_writer(f, &m)?;
@@ -176,7 +172,10 @@ impl GitSyncServer {
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        git_cmd(local_path, &["clean", "-fd"])?;
+        git_cmd(
+            local_path,
+            &["clean", "-f", "--", "v-*", "snapshot", "meta"],
+        )?;
 
         Ok(meta)
     }
@@ -217,9 +216,11 @@ impl GitSyncServer {
         }
         git_cmd(&self.local_path, &["fetch", &self.remote, &self.branch])?;
         git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
-        // Remove any untracked files so orphaned version/snapshot files from
-        // interrupted writes cannot be served as valid versions.
-        git_cmd(&self.local_path, &["clean", "-fd"])?;
+        // Remove any untracked files left behind by interrupted writes.
+        git_cmd(
+            &self.local_path,
+            &["clean", "-f", "--", "v-*", "snapshot", "meta"],
+        );
         Ok(())
     }
 
@@ -299,6 +300,7 @@ impl Server for GitSyncServer {
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
+        // TODO: Fix snapshot urgency.
         // Accept any parent when the repo is empty (latest == NIL).
         // Otherwise check if parent is in latest. If it isn't, pull recheck.
         if self.meta.latest_version != Uuid::nil() && parent_version_id != self.meta.latest_version
@@ -364,23 +366,20 @@ impl Server for GitSyncServer {
     }
 
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+        self.pull()?;
         // Write the snapshot to a file.
         let unsealed = Unsealed {
-            version_id: version_id,
+            version_id,
             payload: snapshot,
         };
         let sealed = self.cryptor.seal(unsealed)?;
         let snapshot_file = SnapshotFile {
-            version_id: version_id,
+            version_id,
             payload: Vec::<u8>::from(sealed),
         };
         let snapshot_path = self.local_path.join("snapshot");
         let f = File::create(&snapshot_path)?;
         serde_json::to_writer(f, &snapshot_file)?;
-
-        // Update the meta so it contains the latest snapshot.
-        self.meta.latest_snapshot = version_id;
-        let meta_path = self.write_meta()?;
 
         // Commit and push, reverting if push fails.
         self.stage_and_commit(&[&snapshot_path, &meta_path], "add snapshot")?;
@@ -389,6 +388,7 @@ impl Server for GitSyncServer {
             // Push was rejected (non-fast-forward). Undo the commit and re-read remote state.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             std::fs::remove_file(&snapshot_path)?;
+            self.pull()?;
             self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
         }

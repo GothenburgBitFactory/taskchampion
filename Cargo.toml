@@ -63,7 +63,7 @@ encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
 # (private) Support for Git based sync
-git-sync = ["dep:serde_with", "dep:glob"]
+git-sync = ["dep:serde_with", "dep:glob", "encryption"]
 # static bundling of dependencies
 bundled = ["rusqlite/bundled"]
 # use CA roots built into the library for all HTTPS access

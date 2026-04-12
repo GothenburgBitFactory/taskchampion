@@ -11,7 +11,9 @@ use crate::server::cloud::CloudServer;
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
-use crate::{errors::Result, server::gitsync::GitSyncServer};
+#[cfg(feature = "git-sync")]
+use crate::server::gitsync::GitSyncServer;
+use crate::errors::Result;
 #[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
@@ -182,6 +184,7 @@ impl ServerConfig {
                 )
                 .await?,
             ),
+            #[cfg(feature = "git-sync")]
             ServerConfig::Git {
                 local_path,
                 branch,
