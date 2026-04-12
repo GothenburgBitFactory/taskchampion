@@ -63,7 +63,7 @@ encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
 # (private) Support for Git based sync
-git-sync = ["dep:hex"]
+git-sync = ["dep:serde_with", "dep:glob"]
 # static bundling of dependencies
 bundled = ["rusqlite/bundled"]
 # use CA roots built into the library for all HTTPS access
@@ -83,7 +83,7 @@ async-trait = "0.1.89"
 byteorder = "1.5"
 chrono = { version = "^0.4.44", features = ["serde"] }
 flate2 = "1"
-hex = { version = "0.4", optional = true }
+serde_with = { version = "3.18.0", features = ["base64"], optional = true }
 idb = { version = "0.6.4", optional = true }
 log = "^0.4.17"
 # Reqwest is "stuck" at 0.12 because that's what google-cloud-storage depends on.
@@ -98,7 +98,7 @@ tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
 uuid = { version = "^1.23.0", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
-glob = "0.3.3"
+glob = { version = "0.3.3", optional = true }
 
 ## wasm-only dependencies.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -2,31 +2,51 @@ use crate::errors::Result;
 use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
     AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
-    VersionId, NIL_VERSION_ID,
+    VersionId,
 };
 use crate::Error;
 use async_trait::async_trait;
 use glob::glob;
 use log::info;
 use serde::{Deserialize, Serialize};
+use serde_with::{base64::Base64, serde_as};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::TryFromFloatSecsError;
 use uuid::Uuid;
+
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 struct Version {
+    #[serde(with = "uuid::serde::simple")]
     version_id: VersionId,
+    #[serde(with = "uuid::serde::simple")]
     parent_version_id: VersionId,
+    #[serde_as(as = "Base64")]
     history_segment: HistorySegment,
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize, Debug)]
+struct SnapshotFile {
+    #[serde(with = "uuid::serde::simple")]
+    version_id: VersionId,
+    #[serde_as(as = "Base64")]
+    payload: Vec<u8>,
+}
+
 /// The meta file holds the UUID of the most recent Version and the salt.
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 struct Meta {
     #[serde(with = "uuid::serde::simple")]
-    latest: VersionId,
-    salt: String, // hex-encoded
+    latest_version: VersionId,
+    #[serde(with = "uuid::serde::simple")]
+    latest_snapshot: VersionId,
+    #[serde_as(as = "Base64")]
+    salt: Vec<u8>,
 }
 
 pub(crate) struct GitSyncServer {
@@ -60,9 +80,7 @@ impl GitSyncServer {
         encryption_secret: Vec<u8>,
     ) -> Result<GitSyncServer> {
         let meta = Self::init_repo(&local_path, &branch, &remote, local_only)?;
-        let salt_bytes = hex::decode(&meta.salt)
-            .map_err(|e| Error::Server(format!("invalid salt in meta file: {e}")))?;
-        let cryptor = Cryptor::new(&salt_bytes, &encryption_secret.into())?;
+        let cryptor = Cryptor::new(&meta.salt, &encryption_secret.into())?;
         let server = GitSyncServer {
             meta,
             local_path,
@@ -145,8 +163,9 @@ impl GitSyncServer {
             }
             Err(_) => {
                 let m = Meta {
-                    latest: Uuid::nil(),
-                    salt: hex::encode(Cryptor::gen_salt()?),
+                    latest_version: Uuid::nil(),
+                    salt: Cryptor::gen_salt()?,
+                    latest_snapshot: Uuid::nil(),
                 };
                 let f = File::create_new(&meta_path)?;
                 serde_json::to_writer(f, &m)?;
@@ -177,10 +196,9 @@ impl GitSyncServer {
     /// Read the meta file from disk and update self.meta.
     fn read_meta(&mut self) -> Result<()> {
         let meta_path = self.local_path.join("meta");
-        let mut file = File::open(&meta_path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        self.meta = serde_json::from_str(&contents)?;
+        let file = File::open(&meta_path)?;
+        let reader = BufReader::new(file);
+        self.meta = serde_json::from_reader(reader)?;
         Ok(())
     }
 
@@ -283,12 +301,13 @@ impl Server for GitSyncServer {
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
         // Accept any parent when the repo is empty (latest == NIL).
         // Otherwise check if parent is in latest. If it isn't, pull recheck.
-        if self.meta.latest != Uuid::nil() && parent_version_id != self.meta.latest {
+        if self.meta.latest_version != Uuid::nil() && parent_version_id != self.meta.latest_version
+        {
             self.pull()?;
             self.read_meta()?;
-            if parent_version_id != self.meta.latest {
+            if parent_version_id != self.meta.latest_version {
                 return Ok((
-                    AddVersionResult::ExpectedParentVersion(self.meta.latest),
+                    AddVersionResult::ExpectedParentVersion(self.meta.latest_version),
                     SnapshotUrgency::None,
                 ));
             }
@@ -302,7 +321,7 @@ impl Server for GitSyncServer {
             history_segment,
         };
         let version_path = self.add_version_by_parent_version_id(&version)?;
-        self.meta.latest = version_id;
+        self.meta.latest_version = version_id;
         let meta_path = self.write_meta()?;
 
         // Commit and push, reverting if push fails.
@@ -315,7 +334,7 @@ impl Server for GitSyncServer {
             self.pull()?;
             self.read_meta()?;
             return Ok((
-                AddVersionResult::ExpectedParentVersion(self.meta.latest),
+                AddVersionResult::ExpectedParentVersion(self.meta.latest_version),
                 SnapshotUrgency::None,
             ));
         }
@@ -344,18 +363,59 @@ impl Server for GitSyncServer {
         }
     }
 
-    async fn add_snapshot(&mut self, _version_id: VersionId, _snapshot: Snapshot) -> Result<()> {
-        todo!();
+    async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
+        // Write the snapshot to a file.
+        let unsealed = Unsealed {
+            version_id: version_id,
+            payload: snapshot,
+        };
+        let sealed = self.cryptor.seal(unsealed)?;
+        let snapshot_file = SnapshotFile {
+            version_id: version_id,
+            payload: Vec::<u8>::from(sealed),
+        };
+        let snapshot_path = self.local_path.join("snapshot");
+        let f = File::create(&snapshot_path)?;
+        serde_json::to_writer(f, &snapshot_file)?;
+
+        // Update the meta so it contains the latest snapshot.
+        self.meta.latest_snapshot = version_id;
+        let meta_path = self.write_meta()?;
+
+        // Commit and push, reverting if push fails.
+        self.stage_and_commit(&[&snapshot_path, &meta_path], "add snapshot")?;
+
+        if !self.push()? {
+            // Push was rejected (non-fast-forward). Undo the commit and re-read remote state.
+            git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
+            std::fs::remove_file(&snapshot_path)?;
+            self.read_meta()?;
+            return Err(Error::Server("Couldn't push to remote.".into()));
+        }
+        Ok(())
     }
 
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
-        todo!();
+        self.pull()?;
+        let snapshot_path = self.local_path.join("snapshot");
+        if let Ok(file) = File::open(&snapshot_path) {
+            let reader = BufReader::new(file);
+            let s: SnapshotFile = serde_json::from_reader(reader)?;
+            let sealed = Sealed {
+                version_id: s.version_id,
+                payload: s.payload,
+            };
+            let unsealed = self.cryptor.unseal(sealed)?;
+            return Ok(Some((unsealed.version_id, unsealed.payload)));
+        } else {
+            return Ok(None);
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::any::Any;
+    use crate::server::NIL_VERSION_ID;
 
     use super::*;
     use tempfile::TempDir;
@@ -397,7 +457,7 @@ mod test {
         let tmp = TempDir::new()?;
         let server = make_server(tmp.path())?;
         assert!(tmp.path().join("meta").exists());
-        assert_eq!(server.meta.latest, Uuid::nil());
+        assert_eq!(server.meta.latest_version, Uuid::nil());
         // eprintln!("tmp dir: {}", tmp.path().display());
         // std::mem::forget(tmp);
         Ok(())
@@ -419,12 +479,12 @@ mod test {
         let mut server = make_server(tmp.path())?;
 
         let new_id = Uuid::new_v4();
-        server.meta.latest = new_id;
+        server.meta.latest_version = new_id;
         server.write_meta()?;
 
-        server.meta.latest = Uuid::nil(); // clobber in-memory value
+        server.meta.latest_version = Uuid::nil(); // clobber in-memory value
         server.read_meta()?;
-        assert_eq!(server.meta.latest, new_id);
+        assert_eq!(server.meta.latest_version, new_id);
         Ok(())
     }
 
@@ -485,7 +545,7 @@ mod test {
                     "version file missing: {filename}"
                 );
                 // Verify meta was updated.
-                assert_eq!(server.meta.latest, version_id);
+                assert_eq!(server.meta.latest_version, version_id);
             }
         }
         Ok(())
@@ -504,7 +564,7 @@ mod test {
                 panic!("should have accepted the version")
             }
             AddVersionResult::Ok(version_id) => {
-                assert_eq!(server.meta.latest, version_id);
+                assert_eq!(server.meta.latest_version, version_id);
             }
         }
         Ok(())
@@ -529,7 +589,7 @@ mod test {
         match server.add_version(parent_version_id, history).await?.0 {
             AddVersionResult::Ok(_) => panic!("should not have accepted the version"),
             AddVersionResult::ExpectedParentVersion(expected) => {
-                assert_eq!(expected, server.meta.latest);
+                assert_eq!(expected, server.meta.latest_version);
             }
         }
         Ok(())
@@ -596,7 +656,7 @@ mod test {
         let AddVersionResult::Ok(version_id) = rst else {
             panic!("Couldn't add version");
         };
-
+        // Now we should be able to get the version.
         match server.get_child_version(parent_version_id).await? {
             GetVersionResult::Version {
                 version_id: v_id,
@@ -610,6 +670,104 @@ mod test {
             GetVersionResult::NoSuchVersion => panic!("Failed to read version"),
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_child_version_from_remote() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let bare = tmp.path().join("bare");
+        let clone1 = tmp.path().join("clone1");
+        let clone2 = tmp.path().join("clone2");
+
+        let mut server1 = make_server_with_remote(&bare, &clone1)?;
+        let bare_url = bare.to_str().unwrap();
+
+        // server1 adds a version and pushes it.
+        let (result, _) = server1
+            .add_version(NIL_VERSION_ID, b"history".to_vec())
+            .await?;
+        let AddVersionResult::Ok(version_id) = result else {
+            panic!("server1 add_version failed");
+        };
+
+        let mut server2 = GitSyncServer::new(
+            clone2,
+            "main".into(),
+            bare_url.into(),
+            false,
+            b"test-secret".to_vec(),
+        )?;
+
+        // get_child_version should pull and find the version.
+        match server2.get_child_version(NIL_VERSION_ID).await? {
+            GetVersionResult::Version {
+                version_id: v_id,
+                history_segment,
+                ..
+            } => {
+                assert_eq!(v_id, version_id);
+                assert_eq!(history_segment, b"history".to_vec());
+            }
+            GetVersionResult::NoSuchVersion => panic!("should have found the version after pull"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_empty() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        assert_eq!(server.get_snapshot().await?, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_roundtrip() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+
+        let version_id = Uuid::new_v4();
+        let data = b"my snapshot data".to_vec();
+        server.add_snapshot(version_id, data.clone()).await?;
+
+        let result = server.get_snapshot().await?;
+        assert!(result.is_some(), "expected a snapshot");
+        let (got_id, got_data) = result.unwrap();
+        assert_eq!(got_id, version_id);
+        assert_eq!(got_data, data);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_from_remote() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let bare = tmp.path().join("bare");
+        let clone1 = tmp.path().join("clone1");
+        let clone2 = tmp.path().join("clone2");
+
+        let mut server1 = make_server_with_remote(&bare, &clone1)?;
+        let bare_url = bare.to_str().unwrap();
+
+        // server1 stores a snapshot and pushes it.
+        let version_id = Uuid::new_v4();
+        let data = b"snapshot payload".to_vec();
+        server1.add_snapshot(version_id, data.clone()).await?;
+
+        // server2 should pull and find it.
+        let mut server2 = GitSyncServer::new(
+            clone2,
+            "main".into(),
+            bare_url.into(),
+            false,
+            b"test-secret".to_vec(),
+        )?;
+        let result = server2.get_snapshot().await?;
+        assert!(result.is_some(), "expected snapshot from remote");
+        let (got_id, got_data) = result.unwrap();
+        assert_eq!(got_id, version_id);
+        assert_eq!(got_data, data);
         Ok(())
     }
 }
