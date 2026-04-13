@@ -220,7 +220,7 @@ impl GitSyncServer {
         git_cmd(
             &self.local_path,
             &["clean", "-f", "--", "v-*", "snapshot", "meta"],
-        );
+        )?;
         Ok(())
     }
 
@@ -230,12 +230,17 @@ impl GitSyncServer {
         if self.local_only {
             return Ok(true);
         }
-        let status = Command::new("git")
+        let output = Command::new("git")
             .args(["push", &self.remote, &self.branch])
             .current_dir(&self.local_path)
-            .stderr(std::process::Stdio::null())
-            .status()?;
-        Ok(status.success())
+            .output()?;
+        if !output.status.success() {
+            log::debug!(
+                "git push failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(output.status.success())
     }
 
     /// Encrypt and write a version file. Returns the file path.
@@ -255,7 +260,7 @@ impl GitSyncServer {
         Ok(path)
     }
 
-    /// Read and decrypt a version file. Returns a Version if found, None if not.
+    /// Read and decrypt a version file. Returns a Version if found, None if not, Err on filesystem/encryption errors.
     fn get_version_by_parent_version_id(&self, version: &VersionId) -> Result<Option<Version>> {
         // glob to find file.
         // v-PARENT-CHILD
@@ -266,30 +271,64 @@ impl GitSyncServer {
                 .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?,
             version.simple()
         );
+
         for entry in glob(&pattern).map_err(|e| Error::Server(format!("{:?}", e)))? {
-            let result = (|| -> Option<Version> {
-                let path = entry.ok()?;
-                let mut buf = Vec::new();
-                File::open(&path).ok()?.read_to_end(&mut buf).ok()?;
-                let filename = path.to_str()?;
-                let (_, version_id_str) = filename.rsplit_once('-')?;
-                let version_id = Uuid::parse_str(version_id_str).ok()?;
-                let sealed = Sealed {
-                    version_id,
-                    payload: buf,
-                };
-                let unsealed = self.cryptor.unseal(sealed).ok()?;
-                Some(Version {
-                    version_id: unsealed.version_id,
-                    parent_version_id: *version,
-                    history_segment: unsealed.payload,
-                })
-            })();
-            if let Some(v) = result {
-                return Ok(Some(v));
-            }
+            let path = match entry {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("glob entry error: {e}");
+                    continue;
+                }
+            };
+            let filename = match path.to_str() {
+                Some(f) => f,
+                None => {
+                    log::warn!("non-UTF-8 path, skipping");
+                    continue;
+                }
+            };
+            let (_, version_id_str) = match filename.rsplit_once('-') {
+                Some(parts) => parts,
+                None => {
+                    log::warn!("unexpected filename format: {filename}");
+                    continue;
+                }
+            };
+            let version_id = match Uuid::parse_str(version_id_str) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::warn!("bad version id in {filename}: {e}");
+                    continue;
+                }
+            };
+            // Real errors past this point
+            let mut buf = Vec::new();
+            File::open(&path)?.read_to_end(&mut buf)?;
+            let sealed = Sealed {
+                version_id,
+                payload: buf,
+            };
+            let unsealed = self.cryptor.unseal(sealed)?;
+            return Ok(Some(Version {
+                version_id: unsealed.version_id,
+                parent_version_id: *version,
+                history_segment: unsealed.payload,
+            }));
         }
         Ok(None)
+    }
+
+    /// Determine snapshot urgency.
+    ///
+    /// In general, the more files there are, the slower many of the sync functions will be.
+    fn snapshot_urgency(&self) -> SnapshotUrgency {
+        let pattern = format!("{}/v-*", self.local_path.display());
+        let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
+        match count {
+            0..=10 => SnapshotUrgency::None,
+            11..=50 => SnapshotUrgency::Low,
+            _ => SnapshotUrgency::High,
+        }
     }
 }
 
@@ -341,7 +380,7 @@ impl Server for GitSyncServer {
             ));
         }
 
-        Ok((AddVersionResult::Ok(version_id), SnapshotUrgency::None))
+        Ok((AddVersionResult::Ok(version_id), self.snapshot_urgency()))
     }
 
     async fn get_child_version(
@@ -366,7 +405,9 @@ impl Server for GitSyncServer {
     }
 
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
-        self.pull()?;
+        if self.meta.latest_version != Uuid::nil() {
+            self.pull()?;
+        }
         // Write the snapshot to a file.
         let unsealed = Unsealed {
             version_id,
@@ -382,16 +423,19 @@ impl Server for GitSyncServer {
         serde_json::to_writer(f, &snapshot_file)?;
 
         // Commit and push, reverting if push fails.
-        self.stage_and_commit(&[&snapshot_path, &meta_path], "add snapshot")?;
+        self.stage_and_commit(&[&snapshot_path, &snapshot_path], "add snapshot")?;
 
         if !self.push()? {
-            // Push was rejected (non-fast-forward). Undo the commit and re-read remote state.
+            // Push was rejected.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             std::fs::remove_file(&snapshot_path)?;
             self.pull()?;
             self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
+
+        // TODO: Cleanup old files after a sucessful snapshot.
+        //
         Ok(())
     }
 
@@ -749,15 +793,13 @@ mod test {
 
         let mut server1 = make_server_with_remote(&bare, &clone1)?;
         let bare_url = bare.to_str().unwrap();
-
         // server1 stores a snapshot and pushes it.
         let version_id = Uuid::new_v4();
         let data = b"snapshot payload".to_vec();
         server1.add_snapshot(version_id, data.clone()).await?;
-
         // server2 should pull and find it.
         let mut server2 = GitSyncServer::new(
-            clone2,
+            clone2.clone(),
             "main".into(),
             bare_url.into(),
             false,
