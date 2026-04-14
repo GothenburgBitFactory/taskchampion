@@ -366,9 +366,10 @@ impl GitSyncServer {
     fn snapshot_urgency(&self) -> SnapshotUrgency {
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
+        // For reviewers: Is this reasonable?
         match count {
-            0..=10 => SnapshotUrgency::None,
-            11..=50 => SnapshotUrgency::Low,
+            0..=50 => SnapshotUrgency::None,
+            51..=100 => SnapshotUrgency::Low,
             _ => SnapshotUrgency::High,
         }
     }
@@ -846,6 +847,110 @@ mod test {
         let (got_id, got_data) = result.unwrap();
         assert_eq!(got_id, version_id);
         assert_eq!(got_data, data);
+        Ok(())
+    }
+
+    /// A second `add_snapshot` should overwrite the first: only the latest snapshot is
+    /// returned by `get_snapshot`.
+    #[tokio::test]
+    async fn test_snapshot_overwrite() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+
+        let v1 = Uuid::new_v4();
+        server.add_snapshot(v1, b"first snapshot".to_vec()).await?;
+
+        let v2 = Uuid::new_v4();
+        server.add_snapshot(v2, b"second snapshot".to_vec()).await?;
+
+        let result = server.get_snapshot().await?;
+        assert!(result.is_some());
+        let (got_id, got_data) = result.unwrap();
+        assert_eq!(got_id, v2, "expected the second snapshot's version_id");
+        assert_eq!(got_data, b"second snapshot".to_vec());
+        Ok(())
+    }
+
+    /// `add_snapshot` push-failure rollback: install a pre-receive hook on the bare repo that
+    /// rejects all pushes (while still allowing fetches), forcing a push rejection.
+    /// After the Err, the working tree must be clean and the snapshot file must be absent.
+    #[tokio::test]
+    async fn test_snapshot_push_rejected_rollback() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let bare = tmp.path().join("bare");
+        let clone1 = tmp.path().join("clone1");
+
+        let mut server = make_server_with_remote(&bare, &clone1)?;
+
+        // Add a version so the remote branch exists (required for pull's ls-remote check).
+        server.add_version(NIL_VERSION_ID, b"v1".to_vec()).await?;
+
+        // Install a pre-receive hook that rejects all pushes.
+        // Fetches still work because hooks only run on the receive side.
+        let hooks_dir = bare.join("hooks");
+        fs::create_dir_all(&hooks_dir)?;
+        let hook = hooks_dir.join("pre-receive");
+        std::fs::write(&hook, b"#!/bin/sh\nexit 1\n")?;
+        // Make the hook executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+        }
+
+        // add_snapshot should pull successfully then fail to push (hook rejects it).
+        let v1 = Uuid::new_v4();
+        let result = server.add_snapshot(v1, b"snap".to_vec()).await;
+        assert!(
+            result.is_err(),
+            "expected Err when push is rejected by hook"
+        );
+
+        // The snapshot file must not remain in the working tree.
+        assert!(
+            !server.local_path.join("snapshot").exists(),
+            "snapshot file should be removed after rollback"
+        );
+
+        // The git index must be clean (no staged changes left over).
+        let status = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&server.local_path)
+            .output()?;
+        assert!(
+            status.stdout.is_empty(),
+            "git index should be clean after rollback, got: {}",
+            String::from_utf8_lossy(&status.stdout)
+        );
+
+        Ok(())
+    }
+
+    /// A corrupted version file should return `Err`.
+    #[tokio::test]
+    async fn test_get_child_version_corrupted_file() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+
+        // Add a real version so we know the parent UUID.
+        let parent = Uuid::new_v4();
+        let (result, _) = server.add_version(parent, b"good data".to_vec()).await?;
+        let AddVersionResult::Ok(child) = result else {
+            panic!("add_version failed");
+        };
+
+        // Overwrite the version file with garbage to simulate corruption.
+        let filename = format!("v-{}-{}", parent.simple(), child.simple());
+        std::fs::write(tmp.path().join(&filename), b"this is not valid ciphertext")?;
+
+        // get_child_version should return Err (decryption failure), not NoSuchVersion.
+        let result = server.get_child_version(parent).await;
+        assert!(
+            result.is_err(),
+            "expected Err on decryption failure, got: {:?}",
+            result
+        );
+
         Ok(())
     }
 }
