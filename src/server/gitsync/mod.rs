@@ -441,18 +441,17 @@ impl Server for GitSyncServer {
 
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         self.pull()?;
+
         let snapshot_path = self.local_path.join("snapshot");
         if let Ok(file) = File::open(&snapshot_path) {
-            let reader = BufReader::new(file);
-            let s: SnapshotFile = serde_json::from_reader(reader)?;
-            let sealed = Sealed {
+            let s: SnapshotFile = serde_json::from_reader(BufReader::new(file))?;
+            let unsealed = self.cryptor.unseal(Sealed {
                 version_id: s.version_id,
                 payload: s.payload,
-            };
-            let unsealed = self.cryptor.unseal(sealed)?;
-            return Ok(Some((unsealed.version_id, unsealed.payload)));
+            })?;
+            Ok(Some((unsealed.version_id, unsealed.payload)))
         } else {
-            return Ok(None);
+            Ok(None)
         }
     }
 }
