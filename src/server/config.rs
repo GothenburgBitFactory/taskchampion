@@ -16,6 +16,8 @@ use crate::server::gitsync::GitSyncServer;
 use crate::errors::Result;
 #[cfg(feature = "server-local")]
 use std::path::PathBuf;
+#[cfg(all(feature = "git-sync", not(feature = "server-local")))]
+use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
 

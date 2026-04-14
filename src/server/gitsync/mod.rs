@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
+/// A version record stored in a version file on disk.
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 struct Version {
@@ -27,6 +28,9 @@ struct Version {
     history_segment: HistorySegment,
 }
 
+/// The snapshot record stored in the `snapshot` file on disk.
+///
+/// It is overwritten when a newer snapshot is added
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 struct SnapshotFile {
@@ -36,7 +40,7 @@ struct SnapshotFile {
     payload: Vec<u8>,
 }
 
-/// The meta file holds the UUID of the most recent Version and the salt.
+/// Repository metadata.
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 struct Meta {
@@ -46,6 +50,12 @@ struct Meta {
     salt: Vec<u8>,
 }
 
+/// A [`Server`] backed by a local git repository.
+///
+///
+/// When `local_only` is `false` the server pushes to and pulls from `remote` on the `branch`
+/// branch after each write. Conflict resolution is handled as: commit locally,
+/// attempt push, and on rejection pull-and-reset before returning.
 pub(crate) struct GitSyncServer {
     meta: Meta,
     local_path: PathBuf,
@@ -69,6 +79,12 @@ fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
 }
 
 impl GitSyncServer {
+    /// Create (or re-open) a git-backed sync server.
+    ///
+    /// If `local_path` does not yet exist it is created. If it exists but is not a git
+    /// repository:
+    /// - In `local_only` mode a new repo is initialised there.
+    /// - In remote mode the repo is cloned from `remote`.
     pub(crate) fn new(
         local_path: PathBuf,
         branch: String,
@@ -89,6 +105,10 @@ impl GitSyncServer {
         Ok(server)
     }
 
+    /// Initialise or open the git repository and return the current [`Meta`].
+    ///
+    /// Creates the directory, initialises or clones the repo, switches to `branch`, and
+    /// creates the `meta` file on first run.
     fn init_repo(local_path: &Path, branch: &str, remote: &str, local_only: bool) -> Result<Meta> {
         // Create the local directory if needed.
         fs::create_dir_all(local_path)?;
@@ -101,6 +121,7 @@ impl GitSyncServer {
             .status
             .success();
 
+        // Create one if not.
         if !is_repo {
             if local_only {
                 info!("Creating new repo at {:?}", local_path);
@@ -210,8 +231,26 @@ impl GitSyncServer {
     }
 
     /// Fetch and fast-forward to the remote branch. No-op in local-only mode.
+    /// If the remote branch does not yet exist (e.g. fresh bare repo), this is also a no-op.
     fn pull(&self) -> Result<()> {
         if self.local_only {
+            return Ok(());
+        }
+        // Check whether the remote branch exists before fetching. A bare repo with no commits
+        // has no refs yet, and `git fetch origin <branch>` would fail in that case.
+        let has_remote_branch = Command::new("git")
+            .args([
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                &self.remote,
+                &self.branch,
+            ])
+            .current_dir(&self.local_path)
+            .stderr(std::process::Stdio::null())
+            .status()?
+            .success();
+        if !has_remote_branch {
             return Ok(());
         }
         git_cmd(&self.local_path, &["fetch", &self.remote, &self.branch])?;
@@ -243,7 +282,9 @@ impl GitSyncServer {
         Ok(output.status.success())
     }
 
-    /// Encrypt and write a version file. Returns the file path.
+    /// Encrypt and write a version file named `v-{parent_version_id}-{version_id}`.
+    ///
+    /// Returns the path of the newly written file.
     fn add_version_by_parent_version_id(&self, version: &Version) -> Result<PathBuf> {
         let unsealed = Unsealed {
             version_id: version.version_id,
@@ -260,7 +301,7 @@ impl GitSyncServer {
         Ok(path)
     }
 
-    /// Read and decrypt a version file. Returns a Version if found, None if not, Err on filesystem/encryption errors.
+    /// Find, read, and decrypt the version file whose parent matches `version`.
     fn get_version_by_parent_version_id(&self, version: &VersionId) -> Result<Option<Version>> {
         // glob to find file.
         // v-PARENT-CHILD
@@ -318,9 +359,10 @@ impl GitSyncServer {
         Ok(None)
     }
 
-    /// Determine snapshot urgency.
+    /// Return the appropriate [`SnapshotUrgency`] based on the number of uncommitted version files.
     ///
-    /// In general, the more files there are, the slower many of the sync functions will be.
+    /// More version files means more work for [`get_child_version`] callers walking the chain,
+    /// so urgency rises with the file count.
     fn snapshot_urgency(&self) -> SnapshotUrgency {
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
@@ -339,7 +381,6 @@ impl Server for GitSyncServer {
         parent_version_id: VersionId,
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
-        // TODO: Fix snapshot urgency.
         // Accept any parent when the repo is empty (latest == NIL).
         // Otherwise check if parent is in latest. If it isn't, pull recheck.
         if self.meta.latest_version != Uuid::nil() && parent_version_id != self.meta.latest_version
@@ -405,9 +446,7 @@ impl Server for GitSyncServer {
     }
 
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
-        if self.meta.latest_version != Uuid::nil() {
-            self.pull()?;
-        }
+        self.pull()?;
         // Write the snapshot to a file.
         let unsealed = Unsealed {
             version_id,
@@ -423,7 +462,7 @@ impl Server for GitSyncServer {
         serde_json::to_writer(f, &snapshot_file)?;
 
         // Commit and push, reverting if push fails.
-        self.stage_and_commit(&[&snapshot_path, &snapshot_path], "add snapshot")?;
+        self.stage_and_commit(&[&snapshot_path], "add snapshot")?;
 
         if !self.push()? {
             // Push was rejected.
@@ -434,8 +473,10 @@ impl Server for GitSyncServer {
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
 
-        // TODO: Cleanup old files after a sucessful snapshot.
-        //
+        // TODO: After a successful snapshot, delete all superseded version files (v-* files
+        // whose child version ID predates the snapshot version). The cloud server does this
+        // in its cleanup() method. Without cleanup, version files accumulate indefinitely
+        // and snapshot_urgency() will keep returning High even after a snapshot is stored.
         Ok(())
     }
 
@@ -501,8 +542,6 @@ mod test {
         let server = make_server(tmp.path())?;
         assert!(tmp.path().join("meta").exists());
         assert_eq!(server.meta.latest_version, Uuid::nil());
-        // eprintln!("tmp dir: {}", tmp.path().display());
-        // std::mem::forget(tmp);
         Ok(())
     }
 
@@ -566,8 +605,6 @@ mod test {
         )?;
         server2.pull()?;
         assert!(clone2.join("testfile").exists());
-        // eprintln!("tmp dir: {}", tmp.path().display());
-        // std::mem::forget(tmp);
         Ok(())
     }
 
