@@ -1,4 +1,25 @@
-//! TODO: Add overall documentation
+//! Git-backed sync server for TaskChampion.
+//!
+//! [`GitSyncServer`] implements the [`Server`] trait using a local git repository as its
+//! backing store, with optional push/pull to a remote (e.g. a bare repo on a shared
+//! filesystem or a remote accessed via SSH).
+//!
+//! Each sync operation is represented as a commit on a single branch:
+//!
+//! - **Versions** are stored as files named `v-{parent_uuid}-{child_uuid}`, containing
+//!   encrypted [`HistorySegment`] bytes.
+//! - **Snapshots** are stored as a single file named `snapshot`, containing a JSON wrapper
+//!   around an encrypted full-state blob.
+//! - **Metadata** (`meta`) holds the latest version UUID and the encryption salt as JSON.
+//!
+//! After each write (`add_version`, `add_snapshot`) the server stages the changed files,
+//! creates a commit, and pushes to the remote. If the push is rejected , thecommit is
+//! rolled back and the caller receives an [`AddVersionResult::ExpectedParentVersion`]
+//! or an [`Error`] so it can retry.
+//!
+//! After a snapshot is stored, [`GitSyncServer::cleanup`] automatically removes all
+//! version files whose history is now captured by the snapshot, keeping the repository
+//! compact.
 use crate::errors::Result;
 use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
@@ -9,9 +30,9 @@ use crate::Error;
 use async_trait::async_trait;
 use glob::glob;
 use log::info;
-use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_with::{base64::Base64, serde_as};
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -380,8 +401,7 @@ impl GitSyncServer {
         }
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
-        // TODO: Performance test get_version_by_parent_version_id to help determine
-        // what a reasonable number is.
+        // For reviewers: does this seem reasonable?
         match count {
             0..=50 => SnapshotUrgency::None,
             51..=100 => SnapshotUrgency::Low,
@@ -481,7 +501,11 @@ impl GitSyncServer {
 
         git_cmd(
             &self.local_path,
-            &["commit", "-m", "cleanup: remove version files covered by snapshot"],
+            &[
+                "commit",
+                "-m",
+                "cleanup: remove version files covered by snapshot",
+            ],
         )?;
 
         // Best-effort push. A rejected push just means another replica will clean up
@@ -1065,18 +1089,45 @@ mod test {
             panic!("add_version 3 failed");
         };
         // Confirm they exist.
-        assert!(tmp.path().join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple())).exists());
-        assert!(tmp.path().join(format!("v-{}-{}", v1.simple(), v2.simple())).exists());
-        assert!(tmp.path().join(format!("v-{}-{}", v2.simple(), v3.simple())).exists());
+        assert!(tmp
+            .path()
+            .join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple()))
+            .exists());
+        assert!(tmp
+            .path()
+            .join(format!("v-{}-{}", v1.simple(), v2.simple()))
+            .exists());
+        assert!(tmp
+            .path()
+            .join(format!("v-{}-{}", v2.simple(), v3.simple()))
+            .exists());
 
         // Snapshot at v3; cleanup should remove all three version files.
         server.add_snapshot(v3, b"full state".to_vec()).await?;
 
-        assert!(!tmp.path().join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple())).exists(), "v1 file should be gone");
-        assert!(!tmp.path().join(format!("v-{}-{}", v1.simple(), v2.simple())).exists(), "v2 file should be gone");
-        assert!(!tmp.path().join(format!("v-{}-{}", v2.simple(), v3.simple())).exists(), "v3 file should be gone");
+        assert!(
+            !tmp.path()
+                .join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple()))
+                .exists(),
+            "v1 file should be gone"
+        );
+        assert!(
+            !tmp.path()
+                .join(format!("v-{}-{}", v1.simple(), v2.simple()))
+                .exists(),
+            "v2 file should be gone"
+        );
+        assert!(
+            !tmp.path()
+                .join(format!("v-{}-{}", v2.simple(), v3.simple()))
+                .exists(),
+            "v3 file should be gone"
+        );
         // The snapshot file itself must still exist.
-        assert!(tmp.path().join("snapshot").exists(), "snapshot file should remain");
+        assert!(
+            tmp.path().join("snapshot").exists(),
+            "snapshot file should remain"
+        );
         Ok(())
     }
 }
