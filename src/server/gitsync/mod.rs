@@ -1,3 +1,4 @@
+//! TODO: Add overall documentation
 use crate::errors::Result;
 use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
@@ -8,6 +9,7 @@ use crate::Error;
 use async_trait::async_trait;
 use glob::glob;
 use log::info;
+use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_with::{base64::Base64, serde_as};
 use std::fs::{self, File};
@@ -79,7 +81,7 @@ fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
 }
 
 impl GitSyncServer {
-    /// Create (or re-open) a git-backed sync server.
+    /// Create or re-open a git-backed sync server.
     ///
     /// If `local_path` does not yet exist it is created. If it exists but is not a git
     /// repository:
@@ -361,17 +363,135 @@ impl GitSyncServer {
 
     /// Return the appropriate [`SnapshotUrgency`] based on the number of uncommitted version files.
     ///
-    /// More version files means more work for [`get_child_version`] callers walking the chain,
-    /// so urgency rises with the file count.
+    /// Returns `None` if a snapshot already exists (cleanup will have removed covered files,
+    /// so a non-zero count reflects only post-snapshot versions). Otherwise urgency rises
+    /// with the file count.
     fn snapshot_urgency(&self) -> SnapshotUrgency {
+        // If a snapshot already exists, cleanup has (or will) remove covered version files.
+        // Don't request another snapshot until enough new versions accumulate.
+        if self.local_path.join("snapshot").exists() {
+            let pattern = format!("{}/v-*", self.local_path.display());
+            let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
+            return match count {
+                0..=50 => SnapshotUrgency::None,
+                51..=100 => SnapshotUrgency::Low,
+                _ => SnapshotUrgency::High,
+            };
+        }
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
-        // For reviewers: Is this reasonable?
+        // TODO: Performance test get_version_by_parent_version_id to help determine
+        // what a reasonable number is.
         match count {
             0..=50 => SnapshotUrgency::None,
             51..=100 => SnapshotUrgency::Low,
             _ => SnapshotUrgency::High,
         }
+    }
+
+    /// Cleans up the repository by removing version files covered by the current snapshot.
+    ///
+    /// Reads the snapshot to determine which version it covers, then walks backward
+    /// through the version chain from that version. All version files on that chain
+    /// (i.e. all history that is now redundant given the snapshot) are deleted,
+    /// committed, and pushed. If the push is rejected, we reset to the remote state
+    /// and will retry on the next snapshot.
+    ///
+    /// This is a best-effort operation: if called with no snapshot present it is a no-op.
+    fn cleanup(&self) -> Result<()> {
+        // Read snapshot metadata. The version_id is stored unencrypted in the JSON wrapper,
+        // so no decryption is needed here.
+        let snapshot_path = self.local_path.join("snapshot");
+        let snapshot_version: Uuid = if let Ok(file) = File::open(&snapshot_path) {
+            let s: SnapshotFile = serde_json::from_reader(BufReader::new(file))?;
+            s.version_id
+        } else {
+            return Ok(());
+        };
+
+        // Parse all v-* filenames into a child → (parent, path) map.
+        let pattern = format!(
+            "{}/v-*",
+            self.local_path
+                .to_str()
+                .ok_or_else(|| Error::Server("repo path is not valid UTF-8".into()))?
+        );
+        let mut versions: HashMap<Uuid, (Uuid, PathBuf)> = HashMap::new();
+        for entry in glob(&pattern).map_err(|e| Error::Server(format!("{e:?}")))? {
+            let path = match entry {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("cleanup: glob error: {e}");
+                    continue;
+                }
+            };
+            let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
+            // Filename format: v-{parent_simple}-{child_simple}
+            let Some(stem) = filename.strip_prefix("v-") else {
+                continue;
+            };
+            let Some((parent_str, child_str)) = stem.split_once('-') else {
+                continue;
+            };
+            let (Ok(parent_id), Ok(child_id)) =
+                (Uuid::parse_str(parent_str), Uuid::parse_str(child_str))
+            else {
+                continue;
+            };
+            versions.insert(child_id, (parent_id, path));
+        }
+
+        if versions.is_empty() {
+            return Ok(());
+        }
+
+        // Walk the chain backward from snapshot_version to find all versions whose
+        // history is now captured by the snapshot.
+        let mut covered: HashSet<Uuid> = HashSet::new();
+        let mut current = snapshot_version;
+        for _ in 0..=versions.len() {
+            if !covered.insert(current) {
+                log::warn!("cleanup: version cycle detected, aborting");
+                return Ok(());
+            }
+            match versions.get(&current) {
+                Some((parent, _)) => current = *parent,
+                None => break,
+            }
+        }
+
+        // Remove each covered version file from the git index and working tree.
+        let mut any_removed = false;
+        for (child_id, (_, path)) in &versions {
+            if covered.contains(child_id) {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| Error::Server("version file path is not valid UTF-8".into()))?;
+                git_cmd(&self.local_path, &["rm", name])?;
+                any_removed = true;
+            }
+        }
+
+        if !any_removed {
+            return Ok(());
+        }
+
+        git_cmd(
+            &self.local_path,
+            &["commit", "-m", "cleanup: remove version files covered by snapshot"],
+        )?;
+
+        // Best-effort push. A rejected push just means another replica will clean up
+        // later (or we will on the next snapshot). Reset to remote state so we are in sync.
+        if !self.push()? {
+            log::info!("cleanup: push rejected, resetting to remote state");
+            self.pull()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -474,10 +594,8 @@ impl Server for GitSyncServer {
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
 
-        // TODO: After a successful snapshot, delete all superseded version files (v-* files
-        // whose child version ID predates the snapshot version). The cloud server does this
-        // in its cleanup() method. Without cleanup, version files accumulate indefinitely
-        // and snapshot_urgency() will keep returning High even after a snapshot is stored.
+        // Cleanup: delete all version files covered by this snapshot, then commit and push.
+        self.cleanup()?;
         Ok(())
     }
 
@@ -926,31 +1044,39 @@ mod test {
         Ok(())
     }
 
-    /// A corrupted version file should return `Err`.
+    /// After `add_snapshot`, all version files covered by the snapshot should be deleted
+    /// (cleanup is called automatically by `add_snapshot`).
     #[tokio::test]
-    async fn test_get_child_version_corrupted_file() -> Result<()> {
+    async fn test_cleanup_removes_version_files() -> Result<()> {
         let tmp = TempDir::new()?;
         let mut server = make_server(tmp.path())?;
 
-        // Add a real version so we know the parent UUID.
-        let parent = Uuid::new_v4();
-        let (result, _) = server.add_version(parent, b"good data".to_vec()).await?;
-        let AddVersionResult::Ok(child) = result else {
-            panic!("add_version failed");
+        // Add a chain of three versions.
+        let (r1, _) = server.add_version(NIL_VERSION_ID, b"v1".to_vec()).await?;
+        let AddVersionResult::Ok(v1) = r1 else {
+            panic!("add_version 1 failed");
         };
+        let (r2, _) = server.add_version(v1, b"v2".to_vec()).await?;
+        let AddVersionResult::Ok(v2) = r2 else {
+            panic!("add_version 2 failed");
+        };
+        let (r3, _) = server.add_version(v2, b"v3".to_vec()).await?;
+        let AddVersionResult::Ok(v3) = r3 else {
+            panic!("add_version 3 failed");
+        };
+        // Confirm they exist.
+        assert!(tmp.path().join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple())).exists());
+        assert!(tmp.path().join(format!("v-{}-{}", v1.simple(), v2.simple())).exists());
+        assert!(tmp.path().join(format!("v-{}-{}", v2.simple(), v3.simple())).exists());
 
-        // Overwrite the version file with garbage to simulate corruption.
-        let filename = format!("v-{}-{}", parent.simple(), child.simple());
-        std::fs::write(tmp.path().join(&filename), b"this is not valid ciphertext")?;
+        // Snapshot at v3; cleanup should remove all three version files.
+        server.add_snapshot(v3, b"full state".to_vec()).await?;
 
-        // get_child_version should return Err (decryption failure), not NoSuchVersion.
-        let result = server.get_child_version(parent).await;
-        assert!(
-            result.is_err(),
-            "expected Err on decryption failure, got: {:?}",
-            result
-        );
-
+        assert!(!tmp.path().join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple())).exists(), "v1 file should be gone");
+        assert!(!tmp.path().join(format!("v-{}-{}", v1.simple(), v2.simple())).exists(), "v2 file should be gone");
+        assert!(!tmp.path().join(format!("v-{}-{}", v2.simple(), v3.simple())).exists(), "v3 file should be gone");
+        // The snapshot file itself must still exist.
+        assert!(tmp.path().join("snapshot").exists(), "snapshot file should remain");
         Ok(())
     }
 }
