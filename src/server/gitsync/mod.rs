@@ -57,15 +57,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
-/// A version record stored in a version file on disk.
-#[serde_as]
-#[derive(Serialize, Deserialize, Debug)]
+/// A version record; used as an in-memory carrier between read/write helpers.
+#[derive(Debug)]
 struct Version {
-    #[serde(with = "uuid::serde::simple")]
     version_id: VersionId,
-    #[serde(with = "uuid::serde::simple")]
     parent_version_id: VersionId,
-    #[serde_as(as = "Base64")]
     history_segment: HistorySegment,
 }
 
@@ -104,6 +100,22 @@ pub(crate) struct GitSyncServer {
     remote: String,
     local_only: bool,
     cryptor: Cryptor,
+}
+
+/// Load and deserialise a [`Meta`] from the given path.
+fn load_meta(path: &Path) -> Result<Meta> {
+    let file = File::open(path)?;
+    Ok(serde_json::from_reader(BufReader::new(file))?)
+}
+
+/// Parse a version filename of the form `v-{parent_simple}-{child_simple}` into
+/// `(parent_id, child_id)`. Returns `None` if the filename does not match.
+fn parse_version_filename(name: &str) -> Option<(Uuid, Uuid)> {
+    let stem = name.strip_prefix("v-")?;
+    let (parent_str, child_str) = stem.split_once('-')?;
+    let parent_id = Uuid::parse_str(parent_str).ok()?;
+    let child_id = Uuid::parse_str(child_str).ok()?;
+    Some((parent_id, child_id))
 }
 
 /// Run a git command in a given directory, returning an error if it exits non-zero.
@@ -214,12 +226,8 @@ impl GitSyncServer {
 
         // Check for meta file, create and commit if missing.
         let meta_path = local_path.join("meta");
-        let meta = match File::open(&meta_path) {
-            Ok(mut file) => {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)?;
-                serde_json::from_str(&contents)?
-            }
+        let meta = match load_meta(&meta_path) {
+            Ok(m) => m,
             Err(_) => {
                 let m = Meta {
                     latest_version: Uuid::nil(),
@@ -256,10 +264,7 @@ impl GitSyncServer {
 
     /// Read the meta file from disk and update self.meta.
     fn read_meta(&mut self) -> Result<()> {
-        let meta_path = self.local_path.join("meta");
-        let file = File::open(&meta_path)?;
-        let reader = BufReader::new(file);
-        self.meta = serde_json::from_reader(reader)?;
+        self.meta = load_meta(&self.local_path.join("meta"))?;
         Ok(())
     }
 
@@ -347,15 +352,11 @@ impl GitSyncServer {
         &self,
         parent_version_id: &VersionId,
     ) -> Result<Option<Version>> {
-        // glob to find file.
-        // v-PARENT-CHILD
-        let pattern = format!(
-            "{}/v-{}-*",
-            self.local_path
-                .to_str()
-                .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?,
-            parent_version_id.simple()
-        );
+        let path_str = self
+            .local_path
+            .to_str()
+            .ok_or_else(|| Error::Server("local_path is not valid UTF-8".into()))?;
+        let pattern = format!("{}/v-{}-*", path_str, parent_version_id.simple());
 
         for entry in glob(&pattern).map_err(|e| Error::Server(format!("{:?}", e)))? {
             let path = match entry {
@@ -365,35 +366,27 @@ impl GitSyncServer {
                     continue;
                 }
             };
-            let filename = match path.to_str() {
+            let filename = match path.file_name().and_then(|n| n.to_str()) {
                 Some(f) => f,
                 None => {
                     log::warn!("non-UTF-8 path, skipping");
                     continue;
                 }
             };
-            let (_, version_id_str) = match filename.rsplit_once('-') {
-                Some(parts) => parts,
+            let version_id = match parse_version_filename(filename) {
+                Some((_, child)) => child,
                 None => {
                     log::warn!("unexpected filename format: {filename}");
                     continue;
                 }
             };
-            let version_id = match Uuid::parse_str(version_id_str) {
-                Ok(id) => id,
-                Err(e) => {
-                    log::warn!("bad version id in {filename}: {e}");
-                    continue;
-                }
-            };
-            // Real errors past this point
+            // Real errors past this point.
             let mut buf = Vec::new();
             File::open(&path)?.read_to_end(&mut buf)?;
-            let sealed = Sealed {
+            let unsealed = self.cryptor.unseal(Sealed {
                 version_id,
                 payload: buf,
-            };
-            let unsealed = self.cryptor.unseal(sealed)?;
+            })?;
             return Ok(Some(Version {
                 version_id: unsealed.version_id,
                 parent_version_id: *parent_version_id,
@@ -440,12 +433,11 @@ impl GitSyncServer {
         };
 
         // Parse all v-* filenames into a child -> (parent, path) map.
-        let pattern = format!(
-            "{}/v-*",
-            self.local_path
-                .to_str()
-                .ok_or_else(|| Error::Server("repo path is not valid UTF-8".into()))?
-        );
+        let path_str = self
+            .local_path
+            .to_str()
+            .ok_or_else(|| Error::Server("local_path is not valid UTF-8".into()))?;
+        let pattern = format!("{}/v-*", path_str);
         let mut versions: HashMap<Uuid, (Uuid, PathBuf)> = HashMap::new();
         for entry in glob(&pattern).map_err(|e| Error::Server(format!("{e:?}")))? {
             let path = match entry {
@@ -458,16 +450,7 @@ impl GitSyncServer {
             let Some(filename) = path.file_name().and_then(|f| f.to_str()) else {
                 continue;
             };
-            // Filename format: v-{parent_simple}-{child_simple}
-            let Some(stem) = filename.strip_prefix("v-") else {
-                continue;
-            };
-            let Some((parent_str, child_str)) = stem.split_once('-') else {
-                continue;
-            };
-            let (Ok(parent_id), Ok(child_id)) =
-                (Uuid::parse_str(parent_str), Uuid::parse_str(child_str))
-            else {
+            let Some((parent_id, child_id)) = parse_version_filename(filename) else {
                 continue;
             };
             versions.insert(child_id, (parent_id, path));
@@ -573,9 +556,9 @@ impl Server for GitSyncServer {
         self.stage_and_commit(&[&version_path, &meta_path], "add version")?;
 
         if !self.push()? {
-            // Push was rejected, reset and re-read state.
+            // Push was rejected. Undo the commit; pull will reset --hard and git clean
+            // away the stray version file.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
-            std::fs::remove_file(&version_path)?;
             self.pull()?;
             self.read_meta()?;
             return Ok((
@@ -591,14 +574,15 @@ impl Server for GitSyncServer {
         &mut self,
         parent_version_id: VersionId,
     ) -> Result<GetVersionResult> {
-        let version = match self.get_version_by_parent_version_id(&parent_version_id)? {
-            Some(v) => Some(v),
-            None => {
-                self.pull()?;
-                self.get_version_by_parent_version_id(&parent_version_id)?
-            }
-        };
-        match version {
+        if let Some(v) = self.get_version_by_parent_version_id(&parent_version_id)? {
+            return Ok(GetVersionResult::Version {
+                version_id: v.version_id,
+                parent_version_id: v.parent_version_id,
+                history_segment: v.history_segment,
+            });
+        }
+        self.pull()?;
+        match self.get_version_by_parent_version_id(&parent_version_id)? {
             Some(v) => Ok(GetVersionResult::Version {
                 version_id: v.version_id,
                 parent_version_id: v.parent_version_id,
