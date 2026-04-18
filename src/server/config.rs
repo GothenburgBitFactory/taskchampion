@@ -1,4 +1,5 @@
 use super::types::Server;
+use crate::errors::Result;
 #[cfg(feature = "server-aws")]
 pub use crate::server::cloud::aws::AwsCredentials;
 #[cfg(feature = "server-aws")]
@@ -7,13 +8,12 @@ use crate::server::cloud::aws::AwsService;
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
 use crate::server::cloud::CloudServer;
+#[cfg(feature = "git-sync")]
+use crate::server::gitsync::GitSyncServer;
 #[cfg(feature = "server-local")]
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
-#[cfg(feature = "git-sync")]
-use crate::server::gitsync::GitSyncServer;
-use crate::errors::Result;
 #[cfg(feature = "server-local")]
 use std::path::PathBuf;
 #[cfg(all(feature = "git-sync", not(feature = "server-local")))]
