@@ -1,16 +1,13 @@
 //! Git-backed sync server for TaskChampion.
 //!
 //! [`GitSyncServer`] implements the [`Server`] trait using a local git repository as its
-//! backing store, with optional push/pull to a remote (e.g. a bare repo on a shared
-//! filesystem or a remote accessed via SSH).
+//! backing store, with optional push/pull to a remote.
 //!
-//! Each sync operation is represented as a commit on a single branch:
-//!
-//! - **Versions** are stored as files named `v-{parent_uuid}-{child_uuid}`, containing
+//! - Versions are stored as files named `v-{parent_uuid}-{child_uuid}`, containing
 //!   encrypted [`HistorySegment`] bytes.
-//! - **Snapshots** are stored as a single file named `snapshot`, containing a JSON wrapper
+//! - Snapshots are stored as a single file named `snapshot`, containing a JSON wrapper
 //!   around an encrypted full-state blob.
-//! - **Metadata** (`meta`) holds the latest version UUID and the encryption salt as JSON.
+//! - Metadata (`meta`) holds the latest version UUID and the encryption salt as JSON.
 //!
 //! After each write (`add_version`, `add_snapshot`) the server stages the changed files,
 //! creates a commit, and pushes to the remote. If the push is rejected , thecommit is
@@ -20,6 +17,27 @@
 //! After a snapshot is stored, [`GitSyncServer::cleanup`] automatically removes all
 //! version files whose history is now captured by the snapshot, keeping the repository
 //! compact.
+//!
+//! Notes and Expectations
+//!
+//! - Since this shells out to git, it assumes that you havea reasonably functional git
+//!   setup. I.e. 'git init', 'git add', 'git commit', etc shoud just work.
+//! - If you are using a remote, 'git push' and 'git pull' shoud work.
+//! - Due to the nature of the version and snapshot history, you probably shouldn't do
+//!   a lot of the things you normally would with a git repo, like merge, squash, etc.
+//!   Just let TaskChampion manage it.
+//! - If you are planning on using it for other things, it is HIGHLY recommended that you
+//!   create a 'task' branch and let TaskChampion manage that branch.
+//! - This does support both defining a remote and having `local_only` mode set at the same
+//!   time. The idea is that maybe the remote isn't ready yet, or eithe rtemporarily or
+//!   permanantly down. Either way, you can use this in local mode in the mean time.
+//! - Remember, a remote can be on the same machine as local. This is used for testing.
+//!
+//! Notes for Reviewers
+//!
+//! - I haven't done any performance testing, but it seems reasonably quick for manual use.
+//! - Currently is uses the same salt for all files. This isn't great security practice,
+//!   but does seem to be what the other servers are doing.
 use crate::errors::Result;
 use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
@@ -324,8 +342,11 @@ impl GitSyncServer {
         Ok(path)
     }
 
-    /// Find, read, and decrypt the version file whose parent matches `version`.
-    fn get_version_by_parent_version_id(&self, version: &VersionId) -> Result<Option<Version>> {
+    /// Find, read, and decrypt the version file whose parent matches `parent_version_id`.
+    fn get_version_by_parent_version_id(
+        &self,
+        parent_version_id: &VersionId,
+    ) -> Result<Option<Version>> {
         // glob to find file.
         // v-PARENT-CHILD
         let pattern = format!(
@@ -333,7 +354,7 @@ impl GitSyncServer {
             self.local_path
                 .to_str()
                 .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?,
-            version.simple()
+            parent_version_id.simple()
         );
 
         for entry in glob(&pattern).map_err(|e| Error::Server(format!("{:?}", e)))? {
@@ -375,33 +396,23 @@ impl GitSyncServer {
             let unsealed = self.cryptor.unseal(sealed)?;
             return Ok(Some(Version {
                 version_id: unsealed.version_id,
-                parent_version_id: *version,
+                parent_version_id: *parent_version_id,
                 history_segment: unsealed.payload,
             }));
         }
         Ok(None)
     }
 
-    /// Return the appropriate [`SnapshotUrgency`] based on the number of uncommitted version files.
+    /// Return the [`SnapshotUrgency`] based on the number of version files present.
     ///
-    /// Returns `None` if a snapshot already exists (cleanup will have removed covered files,
-    /// so a non-zero count reflects only post-snapshot versions). Otherwise urgency rises
-    /// with the file count.
+    /// Since cleanup runs after every successful add_snapshot and removes
+    /// all version files covered by the snapshot, the count here reflects only post-snapshot
+    /// versions.
     fn snapshot_urgency(&self) -> SnapshotUrgency {
-        // If a snapshot already exists, cleanup has (or will) remove covered version files.
-        // Don't request another snapshot until enough new versions accumulate.
-        if self.local_path.join("snapshot").exists() {
-            let pattern = format!("{}/v-*", self.local_path.display());
-            let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
-            return match count {
-                0..=50 => SnapshotUrgency::None,
-                51..=100 => SnapshotUrgency::Low,
-                _ => SnapshotUrgency::High,
-            };
-        }
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
-        // For reviewers: does this seem reasonable?
+        // TODO: Performance test get_version_by_parent_version_id to help determine
+        // what reasonable thresholds are.
         match count {
             0..=50 => SnapshotUrgency::None,
             51..=100 => SnapshotUrgency::Low,
@@ -413,11 +424,10 @@ impl GitSyncServer {
     ///
     /// Reads the snapshot to determine which version it covers, then walks backward
     /// through the version chain from that version. All version files on that chain
-    /// (i.e. all history that is now redundant given the snapshot) are deleted,
-    /// committed, and pushed. If the push is rejected, we reset to the remote state
+    /// are deleted, committed, and pushed. If the push is rejected, we reset to the remote state
     /// and will retry on the next snapshot.
     ///
-    /// This is a best-effort operation: if called with no snapshot present it is a no-op.
+    /// If called with no snapshot present it is a no-op.
     fn cleanup(&self) -> Result<()> {
         // Read snapshot metadata. The version_id is stored unencrypted in the JSON wrapper,
         // so no decryption is needed here.
@@ -429,7 +439,7 @@ impl GitSyncServer {
             return Ok(());
         };
 
-        // Parse all v-* filenames into a child → (parent, path) map.
+        // Parse all v-* filenames into a child -> (parent, path) map.
         let pattern = format!(
             "{}/v-*",
             self.local_path
@@ -483,16 +493,24 @@ impl GitSyncServer {
         }
 
         // Remove each covered version file from the git index and working tree.
+        // If any `git rm` fails partway through we `git reset HEAD` to unstage, leaving
+        // the working tree dirty but the index clean for subsequent operations.
         let mut any_removed = false;
-        for (child_id, (_, path)) in &versions {
-            if covered.contains(child_id) {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .ok_or_else(|| Error::Server("version file path is not valid UTF-8".into()))?;
-                git_cmd(&self.local_path, &["rm", name])?;
-                any_removed = true;
+        let rm_result: Result<()> = (|| {
+            for (child_id, (_, path)) in &versions {
+                if covered.contains(child_id) {
+                    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                        Error::Server("version file path is not valid UTF-8".into())
+                    })?;
+                    git_cmd(&self.local_path, &["rm", name])?;
+                    any_removed = true;
+                }
             }
+            Ok(())
+        })();
+        if let Err(e) = rm_result {
+            let _ = git_cmd(&self.local_path, &["reset", "HEAD"]);
+            return Err(e);
         }
 
         if !any_removed {
@@ -508,8 +526,8 @@ impl GitSyncServer {
             ],
         )?;
 
-        // Best-effort push. A rejected push just means another replica will clean up
-        // later (or we will on the next snapshot). Reset to remote state so we are in sync.
+        // A rejected push means another replica will clean up later, or we will
+        // on the next snapshot. Reset to remote state so we are in sync.
         if !self.push()? {
             log::info!("cleanup: push rejected, resetting to remote state");
             self.pull()?;
@@ -555,7 +573,7 @@ impl Server for GitSyncServer {
         self.stage_and_commit(&[&version_path, &meta_path], "add version")?;
 
         if !self.push()? {
-            // Push was rejected (non-fast-forward). Undo the commit and re-read remote state.
+            // Push was rejected, reset and re-read state.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             std::fs::remove_file(&version_path)?;
             self.pull()?;
@@ -593,6 +611,10 @@ impl Server for GitSyncServer {
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         self.pull()?;
         // Write the snapshot to a file.
+        // Note: If another replica has pushed a snapshot for a
+        // later version in the chain between our pull and our push, we will overwrite it.
+        // This should be harmless: a replica with newer state will overwrite again,
+        // and push rejection handles concurrent writes.
         let unsealed = Unsealed {
             version_id,
             payload: snapshot,
@@ -610,16 +632,18 @@ impl Server for GitSyncServer {
         self.stage_and_commit(&[&snapshot_path], "add snapshot")?;
 
         if !self.push()? {
-            // Push was rejected.
+            // Push was rejected. Undo the commit, pull and clean to restore state.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
-            std::fs::remove_file(&snapshot_path)?;
             self.pull()?;
             self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
 
-        // Cleanup: delete all version files covered by this snapshot, then commit and push.
-        self.cleanup()?;
+        // Cleanup is best-effort: the snapshot is already safely stored on the remote.
+        // A cleanup failure just means version files will linger until the next successful snapshot.
+        if let Err(e) = self.cleanup() {
+            log::warn!("snapshot stored but cleanup failed: {e}");
+        }
         Ok(())
     }
 
@@ -775,25 +799,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_add_nonzero_base() -> Result<()> {
-        let tmp = TempDir::new()?;
-        let mut server = make_server(tmp.path())?;
-        let history = b"1234".to_vec();
-        let parent_version_id = Uuid::new_v4();
-
-        // OK because latest == NIL (repo is empty).
-        match server.add_version(parent_version_id, history).await?.0 {
-            AddVersionResult::ExpectedParentVersion(_) => {
-                panic!("should have accepted the version")
-            }
-            AddVersionResult::Ok(version_id) => {
-                assert_eq!(server.meta.latest_version, version_id);
-            }
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_add_nonzero_base_forbidden() -> Result<()> {
         let tmp = TempDir::new()?;
         let mut server = make_server(tmp.path())?;
@@ -859,27 +864,26 @@ mod test {
     }
 
     #[tokio::test]
-    async fn get_child_version() -> Result<()> {
+    async fn test_get_child_version_local() -> Result<()> {
         let tmp = TempDir::new()?;
         let mut server = make_server(tmp.path())?;
-        let history = b"1234".to_vec();
         let parent_version_id = Uuid::new_v4();
 
-        // Version doesn't exist yet
+        // With no versions written, lookup returns NoSuchVersion.
         assert_eq!(
             server.get_child_version(parent_version_id).await?,
             GetVersionResult::NoSuchVersion
         );
 
-        // Add a first version.
-        let (rst, _) = server
+        // After add_version, lookup returns the Version with matching ids and payload.
+        let history = b"1234".to_vec();
+        let AddVersionResult::Ok(version_id) = server
             .add_version(parent_version_id, history.clone())
-            .await?;
-
-        let AddVersionResult::Ok(version_id) = rst else {
-            panic!("Couldn't add version");
+            .await?
+            .0
+        else {
+            panic!("add_version failed");
         };
-        // Now we should be able to get the version.
         match server.get_child_version(parent_version_id).await? {
             GetVersionResult::Version {
                 version_id: v_id,
@@ -1128,6 +1132,34 @@ mod test {
             tmp.path().join("snapshot").exists(),
             "snapshot file should remain"
         );
+        Ok(())
+    }
+
+    /// A corrupted version file should return `Err`.
+    #[tokio::test]
+    async fn test_get_child_version_corrupted_file() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+
+        // Add a real version so we know the parent UUID.
+        let parent = Uuid::new_v4();
+        let (result, _) = server.add_version(parent, b"good data".to_vec()).await?;
+        let AddVersionResult::Ok(child) = result else {
+            panic!("add_version failed");
+        };
+
+        // Overwrite the version file with garbage to simulate corruption.
+        let filename = format!("v-{}-{}", parent.simple(), child.simple());
+        std::fs::write(tmp.path().join(&filename), b"this is not valid ciphertext")?;
+
+        // get_child_version should return Err (decryption failure), not NoSuchVersion.
+        let result = server.get_child_version(parent).await;
+        assert!(
+            result.is_err(),
+            "expected Err on decryption failure, got: {:?}",
+            result
+        );
+
         Ok(())
     }
 }
