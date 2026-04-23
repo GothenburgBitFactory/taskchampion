@@ -10,7 +10,7 @@
 //! - Metadata (`meta`) holds the latest version UUID and the encryption salt as JSON.
 //!
 //! After each write (`add_version`, `add_snapshot`) the server stages the changed files,
-//! creates a commit, and pushes to the remote. If the push is rejected , thecommit is
+//! creates a commit, and pushes to the remote. If the push is rejected, the commit is
 //! rolled back and the caller receives an [`AddVersionResult::ExpectedParentVersion`]
 //! or an [`Error`] so it can retry.
 //!
@@ -20,7 +20,7 @@
 //!
 //! Notes and Expectations
 //!
-//! - Since this shells out to git, it assumes that you havea reasonably functional git
+//! - Since this shells out to git, it assumes that you have a reasonably functional git
 //!   setup. I.e. 'git init', 'git add', 'git commit', etc shoud just work.
 //! - If you are using a remote, 'git push' and 'git pull' shoud work.
 //! - Due to the nature of the version and snapshot history, you probably shouldn't do
@@ -29,7 +29,7 @@
 //! - If you are planning on using it for other things, it is HIGHLY recommended that you
 //!   create a 'task' branch and let TaskChampion manage that branch.
 //! - This does support both defining a remote and having `local_only` mode set at the same
-//!   time. The idea is that maybe the remote isn't ready yet, or eithe rtemporarily or
+//!   time. The idea is that maybe the remote isn't ready yet, or either temporarily or
 //!   permanantly down. Either way, you can use this in local mode in the mean time.
 //! - Remember, a remote can be on the same machine as local. This is used for testing.
 //!
@@ -206,7 +206,7 @@ impl GitSyncServer {
             .status()?
             .success();
         if !checkout_ok {
-            // For a brand-new repo `git checkout -b` also fails, so use
+            // For a repo with no commits yet, `git checkout -b` also fails, so use
             // `git symbolic-ref` to point HEAD at the desired branch without needing a commit.
             let has_commits = Command::new("git")
                 .args(["rev-parse", "HEAD"])
