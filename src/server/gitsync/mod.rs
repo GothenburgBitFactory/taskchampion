@@ -141,6 +141,22 @@ fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Remove untracked TaskChampion files left behind by interrupted writes.
+fn clean_stray_files(dir: &Path) -> Result<()> {
+    git_cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
+}
+
+/// Stage each path and create a commit in `dir`.
+fn stage_and_commit_files(dir: &Path, paths: &[&Path], message: &str) -> Result<()> {
+    for path in paths {
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?;
+        git_cmd(dir, &["add", path_str])?;
+    }
+    git_cmd(dir, &["commit", "-m", message])
+}
+
 impl GitSyncServer {
     /// Create or re-open a git-backed sync server.
     ///
@@ -235,31 +251,20 @@ impl GitSyncServer {
                 };
                 let f = File::create_new(&meta_path)?;
                 serde_json::to_writer(f, &m)?;
-                git_cmd(local_path, &["add", "meta"])?;
-                git_cmd(local_path, &["commit", "-m", "init taskchampion repo"])?;
+                stage_and_commit_files(local_path, &[&meta_path], "init taskchampion repo")?;
                 m
             }
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        git_cmd(
-            local_path,
-            &["clean", "-f", "--", "v-*", "snapshot", "meta"],
-        )?;
+        clean_stray_files(local_path)?;
 
         Ok(meta)
     }
 
     /// Stage the given paths and create a commit.
     fn stage_and_commit(&self, paths: &[&Path], message: &str) -> Result<()> {
-        for path in paths {
-            let path_str = path
-                .to_str()
-                .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?;
-            git_cmd(&self.local_path, &["add", path_str])?;
-        }
-        git_cmd(&self.local_path, &["commit", "-m", message])?;
-        Ok(())
+        stage_and_commit_files(&self.local_path, paths, message)
     }
 
     /// Read the meta file from disk and update self.meta.
@@ -276,10 +281,10 @@ impl GitSyncServer {
         Ok(meta_path)
     }
 
-    /// Fetch and fast-forward to the remote branch. No-op when there is no remote or in
-    /// local-only mode. If the remote branch does not yet exist (e.g. fresh bare repo), this is
-    /// also a no-op.
-    fn pull(&self) -> Result<()> {
+    /// Fetch from remote and hard-reset the local branch to match. No-op when there is no remote
+    /// or in local-only mode. If the remote branch does not yet exist (e.g. fresh bare repo),
+    /// this is also a no-op.
+    fn reset_to_remote(&self) -> Result<()> {
         let Some(remote) = self.remote.as_deref() else {
             return Ok(());
         };
@@ -297,10 +302,7 @@ impl GitSyncServer {
         git_cmd(&self.local_path, &["fetch", remote, &self.branch])?;
         git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
         // Remove any untracked files left behind by interrupted writes.
-        git_cmd(
-            &self.local_path,
-            &["clean", "-f", "--", "v-*", "snapshot", "meta"],
-        )?;
+        clean_stray_files(&self.local_path)?;
         Ok(())
     }
 
@@ -511,7 +513,7 @@ impl GitSyncServer {
         // on the next snapshot. Reset to remote state so we are in sync.
         if !self.push()? {
             log::info!("cleanup: push rejected, resetting to remote state");
-            self.pull()?;
+            self.reset_to_remote()?;
         }
 
         Ok(())
@@ -529,7 +531,7 @@ impl Server for GitSyncServer {
         // Otherwise check if parent is in latest. If it isn't, pull recheck.
         if self.meta.latest_version != Uuid::nil() && parent_version_id != self.meta.latest_version
         {
-            self.pull()?;
+            self.reset_to_remote()?;
             self.read_meta()?;
             if parent_version_id != self.meta.latest_version {
                 return Ok((
@@ -557,7 +559,7 @@ impl Server for GitSyncServer {
             // Push was rejected. Undo the commit; pull will reset --hard and git clean
             // away the stray version file.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
-            self.pull()?;
+            self.reset_to_remote()?;
             self.read_meta()?;
             return Ok((
                 AddVersionResult::ExpectedParentVersion(self.meta.latest_version),
@@ -579,7 +581,7 @@ impl Server for GitSyncServer {
                 history_segment: v.history_segment,
             });
         }
-        self.pull()?;
+        self.reset_to_remote()?;
         match self.get_version_by_parent_version_id(&parent_version_id)? {
             Some(v) => Ok(GetVersionResult::Version {
                 version_id: v.version_id,
@@ -591,7 +593,7 @@ impl Server for GitSyncServer {
     }
 
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
-        self.pull()?;
+        self.reset_to_remote()?;
         // Write the snapshot to a file.
         // Note: If another replica has pushed a snapshot for a
         // later version in the chain between our pull and our push, we will overwrite it.
@@ -616,7 +618,7 @@ impl Server for GitSyncServer {
         if !self.push()? {
             // Push was rejected. Undo the commit, pull and clean to restore state.
             git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
-            self.pull()?;
+            self.reset_to_remote()?;
             self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
@@ -630,7 +632,7 @@ impl Server for GitSyncServer {
     }
 
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
-        self.pull()?;
+        self.reset_to_remote()?;
 
         let snapshot_path = self.local_path.join("snapshot");
         if let Ok(file) = File::open(&snapshot_path) {
@@ -751,7 +753,7 @@ mod test {
             false,
             b"test-secret".to_vec(),
         )?;
-        server2.pull()?;
+        server2.reset_to_remote()?;
         assert!(clone2.join("testfile").exists());
         Ok(())
     }
