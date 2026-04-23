@@ -118,13 +118,22 @@ fn parse_version_filename(name: &str) -> Option<(Uuid, Uuid)> {
 }
 
 /// Run a git command in a given directory, returning an error if it exits non-zero.
+/// stdout and stderr are captured and forwarded to the log at debug level.
 fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
-    let status = Command::new("git").args(args).current_dir(dir).status()?;
-    if !status.success() {
+    let output = Command::new("git").args(args).current_dir(dir).output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stdout.is_empty() {
+        log::debug!("git {}: stdout: {}", args.join(" "), stdout.trim_end());
+    }
+    if !stderr.is_empty() {
+        log::debug!("git {}: stderr: {}", args.join(" "), stderr.trim_end());
+    }
+    if !output.status.success() {
         return Err(Error::Server(format!(
             "git {} failed with status {}",
             args.join(" "),
-            status
+            output.status
         )));
     }
     Ok(())
