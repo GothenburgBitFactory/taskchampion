@@ -8,7 +8,7 @@ use crate::server::cloud::aws::AwsService;
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
 use crate::server::cloud::CloudServer;
-#[cfg(feature = "git-sync")]
+#[cfg(feature = "server-git")]
 use crate::server::gitsync::GitSyncServer;
 #[cfg(feature = "server-local")]
 use crate::server::local::LocalServer;
@@ -16,7 +16,7 @@ use crate::server::local::LocalServer;
 use crate::server::sync::SyncServer;
 #[cfg(feature = "server-local")]
 use std::path::PathBuf;
-#[cfg(all(feature = "git-sync", not(feature = "server-local")))]
+#[cfg(all(feature = "server-git", not(feature = "server-local")))]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
@@ -123,7 +123,7 @@ pub enum ServerConfig {
         encryption_secret: Vec<u8>,
     },
     /// A git repository
-    #[cfg(feature = "git-sync")]
+    #[cfg(feature = "server-git")]
     Git {
         /// The path to the local repo.
         local_path: PathBuf,
@@ -186,7 +186,7 @@ impl ServerConfig {
                 )
                 .await?,
             ),
-            #[cfg(feature = "git-sync")]
+            #[cfg(feature = "server-git")]
             ServerConfig::Git {
                 local_path,
                 branch,
