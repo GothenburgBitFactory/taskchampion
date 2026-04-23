@@ -89,15 +89,14 @@ struct Meta {
 
 /// A [`Server`] backed by a local git repository.
 ///
-///
-/// When `local_only` is `false` the server pushes to and pulls from `remote` on the `branch`
-/// branch after each write. Conflict resolution is handled as: commit locally,
-/// attempt push, and on rejection pull-and-reset before returning.
+/// When `remote` is `Some` and `local_only` is `false`, the server pushes to and pulls from
+/// `remote` on the `branch` branch after each write. Conflict resolution is handled as: commit
+/// locally, attempt push, and on rejection pull-and-reset before returning.
 pub(crate) struct GitSyncServer {
     meta: Meta,
     local_path: PathBuf,
     branch: String,
-    remote: String,
+    remote: Option<String>,
     local_only: bool,
     cryptor: Cryptor,
 }
@@ -141,11 +140,11 @@ impl GitSyncServer {
     pub(crate) fn new(
         local_path: PathBuf,
         branch: String,
-        remote: String,
+        remote: Option<String>,
         local_only: bool,
         encryption_secret: Vec<u8>,
     ) -> Result<GitSyncServer> {
-        let meta = Self::init_repo(&local_path, &branch, &remote, local_only)?;
+        let meta = Self::init_repo(&local_path, &branch, remote.as_deref(), local_only)?;
         let cryptor = Cryptor::new(&meta.salt, &encryption_secret.into())?;
         let server = GitSyncServer {
             meta,
@@ -162,7 +161,12 @@ impl GitSyncServer {
     ///
     /// Creates the directory, initialises or clones the repo, switches to `branch`, and
     /// creates the `meta` file on first run.
-    fn init_repo(local_path: &Path, branch: &str, remote: &str, local_only: bool) -> Result<Meta> {
+    fn init_repo(
+        local_path: &Path,
+        branch: &str,
+        remote: Option<&str>,
+        local_only: bool,
+    ) -> Result<Meta> {
         // Create the local directory if needed.
         fs::create_dir_all(local_path)?;
 
@@ -176,10 +180,11 @@ impl GitSyncServer {
 
         // Create one if not.
         if !is_repo {
-            if local_only {
+            if local_only || remote.is_none() {
                 info!("Creating new repo at {:?}", local_path);
                 git_cmd(local_path, &["init"])?;
             } else {
+                let remote = remote.unwrap();
                 info!("Cloning repo from {:?} to {:?}", remote, local_path);
                 let parent = local_path
                     .parent()
@@ -276,9 +281,13 @@ impl GitSyncServer {
         Ok(meta_path)
     }
 
-    /// Fetch and fast-forward to the remote branch. No-op in local-only mode.
-    /// If the remote branch does not yet exist (e.g. fresh bare repo), this is also a no-op.
+    /// Fetch and fast-forward to the remote branch. No-op when there is no remote or in
+    /// local-only mode. If the remote branch does not yet exist (e.g. fresh bare repo), this is
+    /// also a no-op.
     fn pull(&self) -> Result<()> {
+        let Some(remote) = self.remote.as_deref() else {
+            return Ok(());
+        };
         if self.local_only {
             return Ok(());
         }
@@ -289,7 +298,7 @@ impl GitSyncServer {
                 "ls-remote",
                 "--exit-code",
                 "--heads",
-                &self.remote,
+                remote,
                 &self.branch,
             ])
             .current_dir(&self.local_path)
@@ -299,7 +308,7 @@ impl GitSyncServer {
         if !has_remote_branch {
             return Ok(());
         }
-        git_cmd(&self.local_path, &["fetch", &self.remote, &self.branch])?;
+        git_cmd(&self.local_path, &["fetch", remote, &self.branch])?;
         git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
         // Remove any untracked files left behind by interrupted writes.
         git_cmd(
@@ -309,14 +318,17 @@ impl GitSyncServer {
         Ok(())
     }
 
-    /// Push to the remote branch. Returns `true` on success, `false` if the push is rejected
-    /// Always returns `true` in local-only mode.
+    /// Push to the remote branch. Returns `true` on success, `false` if the push is rejected.
+    /// Returns `true` immediately when there is no remote or in local-only mode.
     fn push(&self) -> Result<bool> {
+        let Some(remote) = self.remote.as_deref() else {
+            return Ok(true);
+        };
         if self.local_only {
             return Ok(true);
         }
         let output = Command::new("git")
-            .args(["push", &self.remote, &self.branch])
+            .args(["push", remote, &self.branch])
             .current_dir(&self.local_path)
             .output()?;
         if !output.status.success() {
@@ -659,7 +671,7 @@ mod test {
         GitSyncServer::new(
             dir.to_path_buf(),
             "main".into(),
-            "".into(),
+            None,
             true,
             b"test-secret".to_vec(),
         )
@@ -681,7 +693,7 @@ mod test {
         GitSyncServer::new(
             clone_dir.to_path_buf(),
             "main".into(),
-            bare_url.into(),
+            Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
         )
@@ -746,11 +758,10 @@ mod test {
 
         // Build a server for clone2 and pull
         // It should see the new file.
-        let bare_url_str: String = bare_url.into();
         let server2 = GitSyncServer::new(
             clone2.clone(),
             "main".into(),
-            bare_url_str,
+            Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
         )?;
@@ -824,7 +835,7 @@ mod test {
         let mut server2 = GitSyncServer::new(
             clone2,
             "main".into(),
-            bare_url.into(),
+            Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
         )?;
@@ -905,7 +916,7 @@ mod test {
         let mut server2 = GitSyncServer::new(
             clone2,
             "main".into(),
-            bare_url.into(),
+            Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
         )?;
@@ -968,7 +979,7 @@ mod test {
         let mut server2 = GitSyncServer::new(
             clone2.clone(),
             "main".into(),
-            bare_url.into(),
+            Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
         )?;
