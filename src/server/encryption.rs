@@ -27,7 +27,7 @@ impl Cryptor {
     }
 
     /// Generate a suitable random salt.
-    #[cfg(any(test, feature = "cloud", feature = "git-sync"))] // server-sync uses the clientId as the salt.
+    #[cfg(any(test, feature = "cloud", feature = "server-git"))] // server-sync uses the clientId as the salt.
     pub(super) fn gen_salt() -> Result<Vec<u8>> {
         let rng = rand::SystemRandom::new();
         let mut salt = [0u8; 16];

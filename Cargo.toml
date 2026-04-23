@@ -49,7 +49,7 @@ server-aws = [
 # Suppport for sync to another SQLite database on the same machine
 server-local = ["dep:rusqlite"]
 # Support for sync via Git
-server-git = ["git-sync"]
+server-git = ["dep:serde_with", "dep:glob", "encryption"]
 
 # Support for all task storage backends (except indexeddb, which only works on WASM builds)
 storage = ["storage-sqlite"]
@@ -62,8 +62,6 @@ storage-indexeddb = ["dep:idb", "dep:web-sys"]
 encryption = ["dep:ring"]
 # (private) Generic support for cloud sync
 cloud = []
-# (private) Support for Git based sync
-git-sync = ["dep:serde_with", "dep:glob", "encryption"]
 # static bundling of dependencies
 bundled = ["rusqlite/bundled"]
 # use CA roots built into the library for all HTTPS access
