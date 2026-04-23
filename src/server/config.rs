@@ -132,10 +132,9 @@ pub enum ServerConfig {
         /// The remote repo.
         ///
         /// This can either be a named remote such as `origin` or a full git
-        /// url such as `git@myserver.com:/path/to/repo.git`
-        /// If `None` will use `origin` if the local repo has one.
-        /// Otherwise will operate in local only mode.
-        remote: String,
+        /// URL such as `git@myserver.com:/path/to/repo.git`.
+        /// If `None`, operates in local-only mode (no push/pull).
+        remote: Option<String>,
         /// Don't clone/push/pull to `remote` even if it is defined.
         local_only: bool,
         /// Private encryption secret used to encrypt all data sent to the server.  This can
