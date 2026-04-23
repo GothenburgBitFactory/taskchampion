@@ -140,6 +140,8 @@ pub enum ServerConfig {
         /// Private encryption secret used to encrypt all data sent to the server.  This can
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
+        /// Path to the git binary. If `None`, `"git"` on PATH is used.
+        git_path: Option<PathBuf>,
     },
 }
 
@@ -192,12 +194,14 @@ impl ServerConfig {
                 remote,
                 local_only,
                 encryption_secret,
+                git_path,
             } => Box::new(GitSyncServer::new(
                 local_path,
                 branch,
                 remote,
                 local_only,
                 encryption_secret,
+                git_path,
             )?),
         })
     }

@@ -55,6 +55,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// A version record; used as an in-memory carrier between read/write helpers.
@@ -93,12 +94,15 @@ struct Meta {
 /// `remote` on the `branch` branch after each write. Conflict resolution is handled as: commit
 /// locally, attempt push, and on rejection pull-and-reset before returning.
 pub(crate) struct GitSyncServer {
+    git: Git,
     meta: Meta,
     local_path: PathBuf,
     branch: String,
     remote: Option<String>,
     local_only: bool,
     cryptor: Cryptor,
+    /// Minimum age a version file must reach before cleanup() will remove it.
+    version_retention: Duration,
 }
 
 /// Load and deserialise a [`Meta`] from the given path.
@@ -117,44 +121,97 @@ fn parse_version_filename(name: &str) -> Option<(Uuid, Uuid)> {
     Some((parent_id, child_id))
 }
 
-/// Run a git command, returning `Ok(true)` on success and `Ok(false)` on a non-zero exit.
-/// stdout and stderr are captured and forwarded to the log at debug level.
-/// Returns `Err` only on I/O failure (e.g. git binary not found).
-fn git_cmd_ok(dir: &Path, args: &[&str]) -> Result<bool> {
-    let output = Command::new("git").args(args).current_dir(dir).output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stdout.is_empty() {
-        log::debug!("git {}: stdout: {}", args.join(" "), stdout.trim_end());
-    }
-    if !stderr.is_empty() {
-        log::debug!("git {}: stderr: {}", args.join(" "), stderr.trim_end());
-    }
-    Ok(output.status.success())
+const VERSION_RETENTION: Duration = Duration::from_secs(180 * 24 * 60 * 60);
+
+/// Thin wrapper around a git binary path that provides the command helpers used throughout
+/// this module. Defaults to `"git"` on PATH when constructed with `Git::new(None)`.
+struct Git {
+    path: PathBuf,
 }
 
-/// Run a git command, returning an error if it exits non-zero.
-fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
-    if !git_cmd_ok(dir, args)? {
-        return Err(Error::Server(format!("git {} failed", args.join(" "))));
+impl Git {
+    fn new(path: Option<PathBuf>) -> Self {
+        Git {
+            path: path.unwrap_or_else(|| PathBuf::from("git")),
+        }
     }
-    Ok(())
-}
 
-/// Remove untracked TaskChampion files left behind by interrupted writes.
-fn clean_stray_files(dir: &Path) -> Result<()> {
-    git_cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
-}
-
-/// Stage each path and create a commit in `dir`.
-fn stage_and_commit_files(dir: &Path, paths: &[&Path], message: &str) -> Result<()> {
-    for path in paths {
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?;
-        git_cmd(dir, &["add", path_str])?;
+    /// Run a git command, returning `Ok(true)` on success and `Ok(false)` on a non-zero exit.
+    /// stdout and stderr are captured and forwarded to the log at debug level.
+    /// Returns `Err` only on I/O failure (e.g. git binary not found).
+    fn cmd_ok(&self, dir: &Path, args: &[&str]) -> Result<bool> {
+        let output = Command::new(&self.path)
+            .args(args)
+            .current_dir(dir)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.is_empty() {
+            log::debug!("git {}: stdout: {}", args.join(" "), stdout.trim_end());
+        }
+        if !stderr.is_empty() {
+            log::debug!("git {}: stderr: {}", args.join(" "), stderr.trim_end());
+        }
+        Ok(output.status.success())
     }
-    git_cmd(dir, &["commit", "-m", message])
+
+    /// Run a git command, returning an error if it exits non-zero.
+    fn cmd(&self, dir: &Path, args: &[&str]) -> Result<()> {
+        if !self.cmd_ok(dir, args)? {
+            return Err(Error::Server(format!("git {} failed", args.join(" "))));
+        }
+        Ok(())
+    }
+
+    /// Run a git command and return its trimmed stdout. Returns an error if the command exits
+    /// non-zero. Useful for commands like `git log --format=...` that produce structured output.
+    fn output(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        let output = Command::new(&self.path)
+            .args(args)
+            .current_dir(dir)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.is_empty() {
+            log::debug!("git {}: stderr: {}", args.join(" "), stderr.trim_end());
+        }
+        if !output.status.success() {
+            return Err(Error::Server(format!("git {} failed", args.join(" "))));
+        }
+        Ok(stdout.trim_end().to_string())
+    }
+
+    /// Remove untracked TaskChampion files left behind by interrupted writes.
+    fn clean_stray_files(&self, dir: &Path) -> Result<()> {
+        self.cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
+    }
+
+    /// Stage each path and create a commit in `dir`.
+    fn stage_and_commit_files(&self, dir: &Path, paths: &[&Path], message: &str) -> Result<()> {
+        for path in paths {
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| Error::Server("path is not valid UTF-8".into()))?;
+            self.cmd(dir, &["add", path_str])?;
+        }
+        self.cmd(dir, &["commit", "-m", message])
+    }
+
+    /// Return how long ago `filename` was last committed in `dir`, or `None` if git has no
+    /// record of it. A missing record is treated as "keep".
+    fn version_file_age(&self, dir: &Path, filename: &str) -> Result<Option<Duration>> {
+        let out = self.output(dir, &["log", "-1", "--format=%ct", "--", filename])?;
+        if out.is_empty() {
+            return Ok(None);
+        }
+        let commit_ts: u64 = out
+            .parse()
+            .map_err(|_| Error::Server(format!("unexpected git log output: {out:?}")))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| Error::Server(format!("system clock error: {e}")))?;
+        Ok(Some(now.saturating_sub(Duration::from_secs(commit_ts))))
+    }
 }
 
 impl GitSyncServer {
@@ -170,16 +227,20 @@ impl GitSyncServer {
         remote: Option<String>,
         local_only: bool,
         encryption_secret: Vec<u8>,
+        git_path: Option<PathBuf>,
     ) -> Result<GitSyncServer> {
-        let meta = Self::init_repo(&local_path, &branch, remote.as_deref(), local_only)?;
+        let git = Git::new(git_path);
+        let meta = Self::init_repo(&git, &local_path, &branch, remote.as_deref(), local_only)?;
         let cryptor = Cryptor::new(&meta.salt, &encryption_secret.into())?;
         let server = GitSyncServer {
+            git,
             meta,
             local_path,
             branch,
             remote,
             local_only,
             cryptor,
+            version_retention: VERSION_RETENTION,
         };
         Ok(server)
     }
@@ -189,6 +250,7 @@ impl GitSyncServer {
     /// Creates the directory, initialises or clones the repo, switches to `branch`, and
     /// creates the `meta` file on first run.
     fn init_repo(
+        git: &Git,
         local_path: &Path,
         branch: &str,
         remote: Option<&str>,
@@ -198,42 +260,44 @@ impl GitSyncServer {
         fs::create_dir_all(local_path)?;
 
         // Check if path is already a git repo.
-        let is_repo = git_cmd_ok(local_path, &["rev-parse"])?;
+        let is_repo = git.cmd_ok(local_path, &["rev-parse"])?;
 
         // Create one if not.
         if !is_repo {
-            if local_only || remote.is_none() {
-                info!("Creating new repo at {:?}", local_path);
-                git_cmd(local_path, &["init"])?;
-            } else {
-                let remote = remote.unwrap();
-                info!("Cloning repo from {:?} to {:?}", remote, local_path);
-                let parent = local_path
-                    .parent()
-                    .ok_or_else(|| Error::Server("local_path has no parent".into()))?;
-                let dir_name = local_path
-                    .file_name()
-                    .ok_or_else(|| Error::Server("local_path has no file name".into()))?
-                    .to_str()
-                    .ok_or_else(|| Error::Server("local_path is not valid UTF-8".into()))?;
-                git_cmd(parent, &["clone", remote, dir_name])?;
+            match (local_only, remote) {
+                (false, Some(remote)) => {
+                    info!("Cloning repo from {:?} to {:?}", remote, local_path);
+                    let parent = local_path
+                        .parent()
+                        .ok_or_else(|| Error::Server("local_path has no parent".into()))?;
+                    let dir_name = local_path
+                        .file_name()
+                        .ok_or_else(|| Error::Server("local_path has no file name".into()))?
+                        .to_str()
+                        .ok_or_else(|| Error::Server("local_path is not valid UTF-8".into()))?;
+                    git.cmd(parent, &["clone", remote, dir_name])?;
+                }
+                _ => {
+                    info!("Creating new repo at {:?}", local_path);
+                    git.cmd(local_path, &["init"])?;
+                }
             }
             // Set identity so commits work in environments without a global git config.
-            git_cmd(local_path, &["config", "user.email", "taskchampion@local"])?;
-            git_cmd(local_path, &["config", "user.name", "taskchampion"])?;
+            git.cmd(local_path, &["config", "user.email", "taskchampion@local"])?;
+            git.cmd(local_path, &["config", "user.name", "taskchampion"])?;
         }
 
         // Switch to the requested branch.  Try checking out an existing branch first,
         // only create a new one if that fails.
         info!("Switching branch to {:?}", branch);
-        if !git_cmd_ok(local_path, &["checkout", branch])? {
+        if !git.cmd_ok(local_path, &["checkout", branch])? {
             // For a repo with no commits yet, `git checkout -b` also fails, so use
             // `git symbolic-ref` to point HEAD at the desired branch without needing a commit.
-            let has_commits = git_cmd_ok(local_path, &["rev-parse", "HEAD"])?;
+            let has_commits = git.cmd_ok(local_path, &["rev-parse", "HEAD"])?;
             if has_commits {
-                git_cmd(local_path, &["checkout", "-b", branch])?;
+                git.cmd(local_path, &["checkout", "-b", branch])?;
             } else {
-                git_cmd(
+                git.cmd(
                     local_path,
                     &["symbolic-ref", "HEAD", &format!("refs/heads/{}", branch)],
                 )?;
@@ -251,20 +315,21 @@ impl GitSyncServer {
                 };
                 let f = File::create_new(&meta_path)?;
                 serde_json::to_writer(f, &m)?;
-                stage_and_commit_files(local_path, &[&meta_path], "init taskchampion repo")?;
+                git.stage_and_commit_files(local_path, &[&meta_path], "init taskchampion repo")?;
                 m
             }
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        clean_stray_files(local_path)?;
+        git.clean_stray_files(local_path)?;
 
         Ok(meta)
     }
 
     /// Stage the given paths and create a commit.
     fn stage_and_commit(&self, paths: &[&Path], message: &str) -> Result<()> {
-        stage_and_commit_files(&self.local_path, paths, message)
+        self.git
+            .stage_and_commit_files(&self.local_path, paths, message)
     }
 
     /// Read the meta file from disk and update self.meta.
@@ -293,16 +358,26 @@ impl GitSyncServer {
         }
         // Check whether the remote branch exists before fetching. A bare repo with no commits
         // has no refs yet, and `git fetch origin <branch>` would fail in that case.
-        if !git_cmd_ok(
+        if !self.git.cmd_ok(
             &self.local_path,
             &["ls-remote", "--exit-code", "--heads", remote, &self.branch],
         )? {
             return Ok(());
         }
-        git_cmd(&self.local_path, &["fetch", remote, &self.branch])?;
-        git_cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
+        // Warn if there are uncommitted changes that the hard reset will discard. This should
+        // only happen if a previous write was interrupted; clean_stray_files handles the fallout.
+        if !self
+            .git
+            .cmd_ok(&self.local_path, &["diff", "--quiet", "HEAD"])?
+        {
+            log::warn!("reset_to_remote: discarding uncommitted local changes");
+        }
+        self.git
+            .cmd(&self.local_path, &["fetch", remote, &self.branch])?;
+        self.git
+            .cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
         // Remove any untracked files left behind by interrupted writes.
-        clean_stray_files(&self.local_path)?;
+        self.git.clean_stray_files(&self.local_path)?;
         Ok(())
     }
 
@@ -315,17 +390,8 @@ impl GitSyncServer {
         if self.local_only {
             return Ok(true);
         }
-        let output = Command::new("git")
-            .args(["push", remote, &self.branch])
-            .current_dir(&self.local_path)
-            .output()?;
-        if !output.status.success() {
-            log::debug!(
-                "git push failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        Ok(output.status.success())
+        self.git
+            .cmd_ok(&self.local_path, &["push", remote, &self.branch])
     }
 
     /// Encrypt and write a version file named `v-{parent_version_id}-{version_id}`.
@@ -475,7 +541,9 @@ impl GitSyncServer {
             }
         }
 
-        // Remove each covered version file from the git index and working tree.
+        // Remove each covered version file from the git index and working tree, but only if it
+        // is older than VERSION_RETENTION. Recent files are kept so that a corrupt snapshot can
+        // still be recovered by replaying recent history.
         // If any `git rm` fails partway through we `git reset HEAD` to unstage, leaving
         // the working tree dirty but the index clean for subsequent operations.
         let mut any_removed = false;
@@ -485,14 +553,18 @@ impl GitSyncServer {
                     let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
                         Error::Server("version file path is not valid UTF-8".into())
                     })?;
-                    git_cmd(&self.local_path, &["rm", name])?;
+                    match self.git.version_file_age(&self.local_path, name)? {
+                        Some(age) if age >= self.version_retention => {}
+                        _ => continue, // Too recent or unknown age — keep it.
+                    }
+                    self.git.cmd(&self.local_path, &["rm", name])?;
                     any_removed = true;
                 }
             }
             Ok(())
         })();
         if let Err(e) = rm_result {
-            let _ = git_cmd(&self.local_path, &["reset", "HEAD"]);
+            let _ = self.git.cmd(&self.local_path, &["reset", "HEAD"]);
             return Err(e);
         }
 
@@ -500,7 +572,7 @@ impl GitSyncServer {
             return Ok(());
         }
 
-        git_cmd(
+        self.git.cmd(
             &self.local_path,
             &[
                 "commit",
@@ -558,7 +630,8 @@ impl Server for GitSyncServer {
         if !self.push()? {
             // Push was rejected. Undo the commit; pull will reset --hard and git clean
             // away the stray version file.
-            git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
+            self.git
+                .cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             self.reset_to_remote()?;
             self.read_meta()?;
             return Ok((
@@ -617,7 +690,8 @@ impl Server for GitSyncServer {
 
         if !self.push()? {
             // Push was rejected. Undo the commit, pull and clean to restore state.
-            git_cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
+            self.git
+                .cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             self.reset_to_remote()?;
             self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
@@ -656,20 +730,23 @@ mod test {
     use tempfile::TempDir;
 
     fn make_server(dir: &Path) -> Result<GitSyncServer> {
-        GitSyncServer::new(
+        let mut s = GitSyncServer::new(
             dir.to_path_buf(),
             "main".into(),
             None,
             true,
             b"test-secret".to_vec(),
-        )
+            None,
+        )?;
+        s.version_retention = Duration::ZERO;
+        Ok(s)
     }
 
     /// Create a bare repo to act as a remote, then clone it into `clone_dir`.
     /// Returns a GitSyncServer backed by the clone, with the bare repo as its remote.
     fn make_server_with_remote(bare_dir: &Path, clone_dir: &Path) -> Result<GitSyncServer> {
         // Initialise the bare remote.
-        git_cmd(
+        Git::new(None).cmd(
             bare_dir.parent().unwrap(),
             &[
                 "init",
@@ -678,13 +755,16 @@ mod test {
             ],
         )?;
         let bare_url = bare_dir.to_str().unwrap();
-        GitSyncServer::new(
+        let mut s = GitSyncServer::new(
             clone_dir.to_path_buf(),
             "main".into(),
             Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
-        )
+            None,
+        )?;
+        s.version_retention = Duration::ZERO;
+        Ok(s)
     }
 
     #[test]
@@ -734,9 +814,10 @@ mod test {
 
         // Clone a second copy directly via git.
         let bare_url = bare.to_str().unwrap();
-        git_cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
-        git_cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
-        git_cmd(&clone2, &["config", "user.name", "taskchampion"])?;
+        let git = Git::new(None);
+        git.cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
+        git.cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
+        git.cmd(&clone2, &["config", "user.name", "taskchampion"])?;
 
         // Write a new file in clone1 and push it.
         let new_file = clone1.join("testfile");
@@ -752,6 +833,7 @@ mod test {
             Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
+            None,
         )?;
         server2.reset_to_remote()?;
         assert!(clone2.join("testfile").exists());
@@ -817,15 +899,17 @@ mod test {
         server1.push()?;
 
         let bare_url = bare.to_str().unwrap();
-        git_cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
-        git_cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
-        git_cmd(&clone2, &["config", "user.name", "taskchampion"])?;
+        let git = Git::new(None);
+        git.cmd(tmp.path(), &["clone", bare_url, "clone2"])?;
+        git.cmd(&clone2, &["config", "user.email", "taskchampion@local"])?;
+        git.cmd(&clone2, &["config", "user.name", "taskchampion"])?;
         let mut server2 = GitSyncServer::new(
             clone2,
             "main".into(),
             Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
+            None,
         )?;
 
         // server1 adds a version from NIL parent and pushes successfully.
@@ -907,6 +991,7 @@ mod test {
             Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
+            None,
         )?;
 
         // get_child_version should pull and find the version.
@@ -970,6 +1055,7 @@ mod test {
             Some(bare_url.to_string()),
             false,
             b"test-secret".to_vec(),
+            None,
         )?;
         let result = server2.get_snapshot().await?;
         assert!(result.is_some(), "expected snapshot from remote");
