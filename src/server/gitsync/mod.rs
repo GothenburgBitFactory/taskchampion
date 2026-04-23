@@ -117,9 +117,10 @@ fn parse_version_filename(name: &str) -> Option<(Uuid, Uuid)> {
     Some((parent_id, child_id))
 }
 
-/// Run a git command in a given directory, returning an error if it exits non-zero.
+/// Run a git command, returning `Ok(true)` on success and `Ok(false)` on a non-zero exit.
 /// stdout and stderr are captured and forwarded to the log at debug level.
-fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
+/// Returns `Err` only on I/O failure (e.g. git binary not found).
+fn git_cmd_ok(dir: &Path, args: &[&str]) -> Result<bool> {
     let output = Command::new("git").args(args).current_dir(dir).output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -129,12 +130,13 @@ fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
     if !stderr.is_empty() {
         log::debug!("git {}: stderr: {}", args.join(" "), stderr.trim_end());
     }
-    if !output.status.success() {
-        return Err(Error::Server(format!(
-            "git {} failed with status {}",
-            args.join(" "),
-            output.status
-        )));
+    Ok(output.status.success())
+}
+
+/// Run a git command, returning an error if it exits non-zero.
+fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
+    if !git_cmd_ok(dir, args)? {
+        return Err(Error::Server(format!("git {} failed", args.join(" "))));
     }
     Ok(())
 }
@@ -180,12 +182,7 @@ impl GitSyncServer {
         fs::create_dir_all(local_path)?;
 
         // Check if path is already a git repo.
-        let is_repo = Command::new("git")
-            .arg("rev-parse")
-            .current_dir(local_path)
-            .output()?
-            .status
-            .success();
+        let is_repo = git_cmd_ok(local_path, &["rev-parse"])?;
 
         // Create one if not.
         if !is_repo {
@@ -213,21 +210,10 @@ impl GitSyncServer {
         // Switch to the requested branch.  Try checking out an existing branch first,
         // only create a new one if that fails.
         info!("Switching branch to {:?}", branch);
-        let checkout_ok = Command::new("git")
-            .args(["checkout", branch])
-            .current_dir(local_path)
-            .stderr(std::process::Stdio::null())
-            .status()?
-            .success();
-        if !checkout_ok {
+        if !git_cmd_ok(local_path, &["checkout", branch])? {
             // For a repo with no commits yet, `git checkout -b` also fails, so use
             // `git symbolic-ref` to point HEAD at the desired branch without needing a commit.
-            let has_commits = Command::new("git")
-                .args(["rev-parse", "HEAD"])
-                .current_dir(local_path)
-                .stderr(std::process::Stdio::null())
-                .status()?
-                .success();
+            let has_commits = git_cmd_ok(local_path, &["rev-parse", "HEAD"])?;
             if has_commits {
                 git_cmd(local_path, &["checkout", "-b", branch])?;
             } else {
@@ -302,19 +288,10 @@ impl GitSyncServer {
         }
         // Check whether the remote branch exists before fetching. A bare repo with no commits
         // has no refs yet, and `git fetch origin <branch>` would fail in that case.
-        let has_remote_branch = Command::new("git")
-            .args([
-                "ls-remote",
-                "--exit-code",
-                "--heads",
-                remote,
-                &self.branch,
-            ])
-            .current_dir(&self.local_path)
-            .stderr(std::process::Stdio::null())
-            .status()?
-            .success();
-        if !has_remote_branch {
+        if !git_cmd_ok(
+            &self.local_path,
+            &["ls-remote", "--exit-code", "--heads", remote, &self.branch],
+        )? {
             return Ok(());
         }
         git_cmd(&self.local_path, &["fetch", remote, &self.branch])?;
