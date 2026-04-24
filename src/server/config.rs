@@ -122,7 +122,22 @@ pub enum ServerConfig {
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
     },
-    /// A git repository
+    /// A git repository used as a sync server.
+    ///
+    /// TaskChampion manages the repository. Version history and snapshots are stored as committed
+    /// files. Do not merge, squash, or otherwise rewrite its history outside of TaskChampion.
+    ///
+    /// If the repository will be used for other things, it is HIGHLY recommended that you
+    /// configure a dedicated TaskChampion branch.
+    ///
+    /// This backend shells out to git, so a working `git` installation is required. For
+    /// remote sync, `git push` and `git pull` must work without prompts. Use SSH keys or a
+    /// credential helper.
+    ///
+    /// Setting `local_only` to `true` while `remote` is `Some` lets the replica operate
+    /// offline. Re-enable sync later by setting `local_only` back to `false`. However, be aware
+    /// that if the remote has diverged enough that a fast-forward fails, you will need to fix it
+    /// manually.
     #[cfg(feature = "server-git")]
     Git {
         /// The path to the local repo.
