@@ -14,30 +14,10 @@
 //! rolled back and the caller receives an [`AddVersionResult::ExpectedParentVersion`]
 //! or an [`Error`] so it can retry.
 //!
-//! After a snapshot is stored, [`GitSyncServer::cleanup`] automatically removes all
-//! version files whose history is now captured by the snapshot, keeping the repository
-//! compact.
+//! After a snapshot is stored, [`GitSyncServer::cleanup`] automatically removes version
+//! files whose history is captured by the snapshot and that are older than the retention
+//! period, keeping the repository compact.
 //!
-//! Notes and Expectations
-//!
-//! - Since this shells out to git, it assumes that you have a reasonably functional git
-//!   setup. I.e. 'git init', 'git add', 'git commit', etc shoud just work.
-//! - If you are using a remote, 'git push' and 'git pull' shoud work.
-//! - Due to the nature of the version and snapshot history, you probably shouldn't do
-//!   a lot of the things you normally would with a git repo, like merge, squash, etc.
-//!   Just let TaskChampion manage it.
-//! - If you are planning on using it for other things, it is HIGHLY recommended that you
-//!   create a 'task' branch and let TaskChampion manage that branch.
-//! - This does support both defining a remote and having `local_only` mode set at the same
-//!   time. The idea is that maybe the remote isn't ready yet, or either temporarily or
-//!   permanantly down. Either way, you can use this in local mode in the mean time.
-//! - Remember, a remote can be on the same machine as local. This is used for testing.
-//!
-//! Notes for Reviewers
-//!
-//! - I haven't done any performance testing, but it seems reasonably quick for manual use.
-//! - Currently is uses the same salt for all files. This isn't great security practice,
-//!   but does seem to be what the other servers are doing.
 use crate::errors::Result;
 use crate::server::encryption::{Cryptor, Sealed, Unsealed};
 use crate::server::{
@@ -58,7 +38,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-/// A version record; used as an in-memory carrier between read/write helpers.
+/// A version record, used as an in-memory carrier between read/write helpers.
 #[derive(Debug)]
 struct Version {
     version_id: VersionId,
@@ -84,6 +64,7 @@ struct SnapshotFile {
 struct Meta {
     #[serde(with = "uuid::serde::simple")]
     latest_version: VersionId,
+    // A single salt is used for all files in this repo, consistent with other server backends.
     #[serde_as(as = "Base64")]
     salt: Vec<u8>,
 }
@@ -93,6 +74,10 @@ struct Meta {
 /// When `remote` is `Some` and `local_only` is `false`, the server pushes to and pulls from
 /// `remote` on the `branch` branch after each write. Conflict resolution is handled as: commit
 /// locally, attempt push, and on rejection pull-and-reset before returning.
+///
+/// Setting `local_only` to `true` while `remote` is `Some` allows the repository to operate
+/// offline temporarily (e.g. when the remote is unreachable), and later re-enable sync by
+/// setting `local_only` back to `false`.
 pub(crate) struct GitSyncServer {
     git: Git,
     meta: Meta,
@@ -181,13 +166,8 @@ impl Git {
         Ok(stdout.trim_end().to_string())
     }
 
-    /// Remove untracked TaskChampion files left behind by interrupted writes.
-    fn clean_stray_files(&self, dir: &Path) -> Result<()> {
-        self.cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
-    }
-
     /// Stage each path and create a commit in `dir`.
-    fn stage_and_commit_files(&self, dir: &Path, paths: &[&Path], message: &str) -> Result<()> {
+    fn stage_and_commit(&self, dir: &Path, paths: &[&Path], message: &str) -> Result<()> {
         for path in paths {
             let path_str = path
                 .to_str()
@@ -196,22 +176,27 @@ impl Git {
         }
         self.cmd(dir, &["commit", "-m", message])
     }
+}
 
-    /// Return how long ago `filename` was last committed in `dir`, or `None` if git has no
-    /// record of it. A missing record is treated as "keep".
-    fn version_file_age(&self, dir: &Path, filename: &str) -> Result<Option<Duration>> {
-        let out = self.output(dir, &["log", "-1", "--format=%ct", "--", filename])?;
-        if out.is_empty() {
-            return Ok(None);
-        }
-        let commit_ts: u64 = out
-            .parse()
-            .map_err(|_| Error::Server(format!("unexpected git log output: {out:?}")))?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| Error::Server(format!("system clock error: {e}")))?;
-        Ok(Some(now.saturating_sub(Duration::from_secs(commit_ts))))
+/// Remove untracked TaskChampion files left behind by interrupted writes.
+fn clean_stray_files(git: &Git, dir: &Path) -> Result<()> {
+    git.cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
+}
+
+/// Return how long ago `filename` was last committed in `dir`, or `None` if git has no
+/// record of it. A missing record is treated as "keep".
+fn version_file_age(git: &Git, dir: &Path, filename: &str) -> Result<Option<Duration>> {
+    let out = git.output(dir, &["log", "-1", "--format=%ct", "--", filename])?;
+    if out.is_empty() {
+        return Ok(None);
     }
+    let commit_ts: u64 = out
+        .parse()
+        .map_err(|_| Error::Server(format!("unexpected git log output: {out:?}")))?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| Error::Server(format!("system clock error: {e}")))?;
+    Ok(Some(now.saturating_sub(Duration::from_secs(commit_ts))))
 }
 
 impl GitSyncServer {
@@ -291,12 +276,10 @@ impl GitSyncServer {
         // only create a new one if that fails.
         info!("Switching branch to {:?}", branch);
         if !git.cmd_ok(local_path, &["checkout", branch])? {
-            // For a repo with no commits yet, `git checkout -b` also fails, so use
-            // `git symbolic-ref` to point HEAD at the desired branch without needing a commit.
-            let has_commits = git.cmd_ok(local_path, &["rev-parse", "HEAD"])?;
-            if has_commits {
-                git.cmd(local_path, &["checkout", "-b", branch])?;
-            } else {
+            // Branch doesn't exist yet. Create it.
+            // checkout -b also fails if HEAD already points to this branch name (e.g. a
+            // fresh git init whose default branch matches), so fall back to symbolic-ref.
+            if !git.cmd_ok(local_path, &["checkout", "-b", branch])? {
                 git.cmd(
                     local_path,
                     &["symbolic-ref", "HEAD", &format!("refs/heads/{}", branch)],
@@ -315,21 +298,15 @@ impl GitSyncServer {
                 };
                 let f = File::create_new(&meta_path)?;
                 serde_json::to_writer(f, &m)?;
-                git.stage_and_commit_files(local_path, &[&meta_path], "init taskchampion repo")?;
+                git.stage_and_commit(local_path, &[&meta_path], "init taskchampion repo")?;
                 m
             }
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        git.clean_stray_files(local_path)?;
+        clean_stray_files(&git, local_path)?;
 
         Ok(meta)
-    }
-
-    /// Stage the given paths and create a commit.
-    fn stage_and_commit(&self, paths: &[&Path], message: &str) -> Result<()> {
-        self.git
-            .stage_and_commit_files(&self.local_path, paths, message)
     }
 
     /// Read the meta file from disk and update self.meta.
@@ -365,7 +342,7 @@ impl GitSyncServer {
             return Ok(());
         }
         // Warn if there are uncommitted changes that the hard reset will discard. This should
-        // only happen if a previous write was interrupted; clean_stray_files handles the fallout.
+        // only happen if a previous write was interrupted. clean_stray_files handles the fallout.
         if !self
             .git
             .cmd_ok(&self.local_path, &["diff", "--quiet", "HEAD"])?
@@ -377,7 +354,7 @@ impl GitSyncServer {
         self.git
             .cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
         // Remove any untracked files left behind by interrupted writes.
-        self.git.clean_stray_files(&self.local_path)?;
+        clean_stray_files(&self.git, &self.local_path)?;
         Ok(())
     }
 
@@ -464,14 +441,11 @@ impl GitSyncServer {
 
     /// Return the [`SnapshotUrgency`] based on the number of version files present.
     ///
-    /// Since cleanup runs after every successful add_snapshot and removes
-    /// all version files covered by the snapshot, the count here reflects only post-snapshot
-    /// versions.
+    /// Since cleanup runs after every successful add_snapshot, the count here reflects
+    /// post-snapshot versions plus any recent files kept by the retention policy.
     fn snapshot_urgency(&self) -> SnapshotUrgency {
         let pattern = format!("{}/v-*", self.local_path.display());
         let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
-        // TODO: Performance test get_version_by_parent_version_id to help determine
-        // what reasonable thresholds are.
         match count {
             0..=50 => SnapshotUrgency::None,
             51..=100 => SnapshotUrgency::Low,
@@ -482,9 +456,10 @@ impl GitSyncServer {
     /// Cleans up the repository by removing version files covered by the current snapshot.
     ///
     /// Reads the snapshot to determine which version it covers, then walks backward
-    /// through the version chain from that version. All version files on that chain
-    /// are deleted, committed, and pushed. If the push is rejected, we reset to the remote state
-    /// and will retry on the next snapshot.
+    /// through the version chain from that version. Version files on that chain older than
+    /// `version_retention` are deleted, committed, and pushed. Recently-written files are kept
+    /// to allow recovery if the snapshot is corrupt. If the push is rejected, we reset to the
+    /// remote state and will retry on the next snapshot.
     ///
     /// If called with no snapshot present it is a no-op.
     fn cleanup(&self) -> Result<()> {
@@ -553,9 +528,9 @@ impl GitSyncServer {
                     let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
                         Error::Server("version file path is not valid UTF-8".into())
                     })?;
-                    match self.git.version_file_age(&self.local_path, name)? {
+                    match version_file_age(&self.git, &self.local_path, name)? {
                         Some(age) if age >= self.version_retention => {}
-                        _ => continue, // Too recent or unknown age — keep it.
+                        _ => continue, // Too recent or unknown age, keep it.
                     }
                     self.git.cmd(&self.local_path, &["rm", name])?;
                     any_removed = true;
@@ -600,7 +575,7 @@ impl Server for GitSyncServer {
         history_segment: HistorySegment,
     ) -> Result<(AddVersionResult, SnapshotUrgency)> {
         // Accept any parent when the repo is empty (latest == NIL).
-        // Otherwise check if parent is in latest. If it isn't, pull recheck.
+        // Otherwise check if parent matches latest. If it doesn't, reset_to_remote and recheck.
         if self.meta.latest_version != Uuid::nil() && parent_version_id != self.meta.latest_version
         {
             self.reset_to_remote()?;
@@ -625,11 +600,12 @@ impl Server for GitSyncServer {
         let meta_path = self.write_meta()?;
 
         // Commit and push, reverting if push fails.
-        self.stage_and_commit(&[&version_path, &meta_path], "add version")?;
+        self.git
+            .stage_and_commit(&self.local_path, &[&version_path, &meta_path], "add version")?;
 
         if !self.push()? {
-            // Push was rejected. Undo the commit; pull will reset --hard and git clean
-            // away the stray version file.
+            // Push was rejected. Undo the commit. reset_to_remote will fetch, reset --hard,
+            // and clean away the stray version file.
             self.git
                 .cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             self.reset_to_remote()?;
@@ -668,10 +644,9 @@ impl Server for GitSyncServer {
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()> {
         self.reset_to_remote()?;
         // Write the snapshot to a file.
-        // Note: If another replica has pushed a snapshot for a
-        // later version in the chain between our pull and our push, we will overwrite it.
-        // This should be harmless: a replica with newer state will overwrite again,
-        // and push rejection handles concurrent writes.
+        // If another replica has pushed a snapshot for a later version in the chain between
+        // our reset_to_remote and our push, we will overwrite it. This is harmless. A replica
+        // with newer state will overwrite again, and push rejection handles concurrent writes.
         let unsealed = Unsealed {
             version_id,
             payload: snapshot,
@@ -686,10 +661,11 @@ impl Server for GitSyncServer {
         serde_json::to_writer(f, &snapshot_file)?;
 
         // Commit and push, reverting if push fails.
-        self.stage_and_commit(&[&snapshot_path], "add snapshot")?;
+        self.git
+            .stage_and_commit(&self.local_path, &[&snapshot_path], "add snapshot")?;
 
         if !self.push()? {
-            // Push was rejected. Undo the commit, pull and clean to restore state.
+            // Push was rejected. Undo the commit and reset_to_remote to restore state.
             self.git
                 .cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             self.reset_to_remote()?;
@@ -822,7 +798,9 @@ mod test {
         // Write a new file in clone1 and push it.
         let new_file = clone1.join("testfile");
         std::fs::write(&new_file, b"hello")?;
-        server1.stage_and_commit(&[&new_file], "add testfile")?;
+        server1
+            .git
+            .stage_and_commit(&server1.local_path, &[&new_file], "add testfile")?;
         assert!(server1.push()?);
 
         // Build a server for clone2 and pull
@@ -1175,7 +1153,7 @@ mod test {
             .join(format!("v-{}-{}", v2.simple(), v3.simple()))
             .exists());
 
-        // Snapshot at v3; cleanup should remove all three version files.
+        // Snapshot at v3, cleanup should remove all three version files.
         server.add_snapshot(v3, b"full state".to_vec()).await?;
 
         assert!(
