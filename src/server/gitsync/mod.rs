@@ -495,6 +495,33 @@ impl GitSyncServer {
         }
     }
 
+    /// Remove covered version files that are old enough to delete.
+    ///
+    /// Stages `git rm` for each entry in `versions` whose child ID is in `covered` and
+    /// whose commit age exceeds `self.version_retention`. Returns `true` if anything was
+    /// staged. On error, the caller is responsible for running `git reset HEAD` to unstage.
+    fn remove_covered_versions(
+        &self,
+        versions: &HashMap<Uuid, (Uuid, PathBuf)>,
+        covered: &HashSet<Uuid>,
+    ) -> Result<bool> {
+        let mut any_removed = false;
+        for (child_id, (_, path)) in versions {
+            if covered.contains(child_id) {
+                let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                    Error::Server("version file path is not valid UTF-8".into())
+                })?;
+                match version_file_age(&self.git, &self.local_path, name)? {
+                    Some(age) if age >= self.version_retention => {}
+                    _ => continue, // Too recent or unknown age, keep it.
+                }
+                self.git.cmd(&self.local_path, &["rm", name])?;
+                any_removed = true;
+            }
+        }
+        Ok(any_removed)
+    }
+
     /// Cleans up the repository by removing version files covered by the current snapshot.
     ///
     /// Reads the snapshot to determine which version it covers, then walks backward
@@ -558,32 +585,14 @@ impl GitSyncServer {
             }
         }
 
-        // Remove each covered version file from the git index and working tree, but only if it
-        // is older than VERSION_RETENTION. Recent files are kept so that a corrupt snapshot can
-        // still be recovered by replaying recent history.
-        // If any `git rm` fails partway through we `git reset HEAD` to unstage, leaving
-        // the working tree dirty but the index clean for subsequent operations.
-        let mut any_removed = false;
-        let rm_result: Result<()> = (|| {
-            for (child_id, (_, path)) in &versions {
-                if covered.contains(child_id) {
-                    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-                        Error::Server("version file path is not valid UTF-8".into())
-                    })?;
-                    match version_file_age(&self.git, &self.local_path, name)? {
-                        Some(age) if age >= self.version_retention => {}
-                        _ => continue, // Too recent or unknown age, keep it.
-                    }
-                    self.git.cmd(&self.local_path, &["rm", name])?;
-                    any_removed = true;
-                }
+        // Remove covered files that are old enough. On error, unstage and propagate.
+        let any_removed = match self.remove_covered_versions(&versions, &covered) {
+            Ok(removed) => removed,
+            Err(e) => {
+                let _ = self.git.cmd(&self.local_path, &["reset", "HEAD"]);
+                return Err(e);
             }
-            Ok(())
-        })();
-        if let Err(e) = rm_result {
-            let _ = self.git.cmd(&self.local_path, &["reset", "HEAD"]);
-            return Err(e);
-        }
+        };
 
         if !any_removed {
             return Ok(());
@@ -676,6 +685,7 @@ impl Server for GitSyncServer {
             });
         }
         self.reset_to_remote()?;
+        self.read_meta()?;
         match self.get_version_by_parent_version_id(&parent_version_id)? {
             Some(v) => Ok(GetVersionResult::Version {
                 version_id: v.version_id,
@@ -714,7 +724,6 @@ impl Server for GitSyncServer {
             self.git
                 .cmd(&self.local_path, &["reset", "HEAD~1", "--soft"])?;
             self.reset_to_remote()?;
-            self.read_meta()?;
             return Err(Error::Server("Couldn't push to remote.".into()));
         }
 
@@ -1252,6 +1261,80 @@ mod test {
             result
         );
 
+        Ok(())
+    }
+
+    /// Version files younger than `version_retention` must survive cleanup even when
+    /// they are covered by a snapshot.
+    #[tokio::test]
+    async fn test_cleanup_retains_recent_version_files() -> Result<()> {
+        let tmp = TempDir::new()?;
+        // Use default version_retention. Freshly committed files are seconds old,
+        // far below the threshold, so cleanup should leave them in place.
+        let mut server = GitSyncServer::new(
+            tmp.path().to_path_buf(),
+            "main".into(),
+            None,
+            true,
+            b"test-secret".to_vec(),
+            None,
+        )?;
+
+        let (r1, _) = server.add_version(NIL_VERSION_ID, b"v1".to_vec()).await?;
+        let AddVersionResult::Ok(v1) = r1 else {
+            panic!("add_version 1 failed");
+        };
+        let (r2, _) = server.add_version(v1, b"v2".to_vec()).await?;
+        let AddVersionResult::Ok(v2) = r2 else {
+            panic!("add_version 2 failed");
+        };
+
+        // Snapshot at v2; files are too young to remove.
+        server.add_snapshot(v2, b"full state".to_vec()).await?;
+
+        assert!(
+            tmp.path()
+                .join(format!("v-{}-{}", NIL_VERSION_ID.simple(), v1.simple()))
+                .exists(),
+            "v1 file should be retained (too young to remove)"
+        );
+        assert!(
+            tmp.path()
+                .join(format!("v-{}-{}", v1.simple(), v2.simple()))
+                .exists(),
+            "v2 file should be retained (too young to remove)"
+        );
+        assert!(tmp.path().join("snapshot").exists());
+        Ok(())
+    }
+
+    /// When `local_only` is `true`, a configured remote is never contacted: no clone on
+    /// init, no push after writes, no pull on a cache miss.
+    #[tokio::test]
+    async fn test_local_only_with_remote_ignores_remote() -> Result<()> {
+        let tmp = TempDir::new()?;
+        // Point at a non-existent remote. Any clone/push/pull attempt would fail.
+        let mut server = GitSyncServer::new(
+            tmp.path().to_path_buf(),
+            "main".into(),
+            Some("https://nonexistent.invalid/repo.git".to_string()),
+            true,
+            b"test-secret".to_vec(),
+            None,
+        )?;
+        server.version_retention = Duration::ZERO;
+
+        let (r1, _) = server.add_version(NIL_VERSION_ID, b"v1".to_vec()).await?;
+        let AddVersionResult::Ok(v1) = r1 else {
+            panic!("add_version failed");
+        };
+        let result = server.get_child_version(NIL_VERSION_ID).await?;
+        assert!(
+            matches!(result, GetVersionResult::Version { .. }),
+            "expected Version result, got: {:?}",
+            result
+        );
+        server.add_snapshot(v1, b"full state".to_vec()).await?;
         Ok(())
     }
 }
