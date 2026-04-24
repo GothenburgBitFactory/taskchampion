@@ -439,13 +439,55 @@ impl GitSyncServer {
         Ok(None)
     }
 
-    /// Return the [`SnapshotUrgency`] based on the number of version files present.
+    /// Return the [`SnapshotUrgency`] based on the number of post-snapshot versions.
     ///
-    /// Since cleanup runs after every successful add_snapshot, the count here reflects
-    /// post-snapshot versions plus any recent files kept by the retention policy.
+    /// Counts only versions added since the current snapshot.
     fn snapshot_urgency(&self) -> SnapshotUrgency {
-        let pattern = format!("{}/v-*", self.local_path.display());
-        let count = glob(&pattern).map(|g| g.count()).unwrap_or(0);
+        let path_str = match self.local_path.to_str() {
+            Some(s) => s,
+            None => {
+                log::warn!("snapshot_urgency: local_path is not valid UTF-8");
+                return SnapshotUrgency::None;
+            }
+        };
+
+        // Read the snapshot version to know where post-snapshot history begins.
+        let snapshot_version: Option<Uuid> = File::open(self.local_path.join("snapshot"))
+            .ok()
+            .and_then(|f| serde_json::from_reader::<_, SnapshotFile>(BufReader::new(f)).ok())
+            .map(|s| s.version_id);
+
+        // Build a child -> parent map from v-* filenames.
+        let pattern = format!("{}/v-*", path_str);
+        let mut child_to_parent: HashMap<Uuid, Uuid> = HashMap::new();
+        if let Ok(entries) = glob(&pattern) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().and_then(|n| n.to_str()) {
+                    if let Some((parent_id, child_id)) = parse_version_filename(name) {
+                        child_to_parent.insert(child_id, parent_id);
+                    }
+                }
+            }
+        }
+
+        // Walk backward from latest_version, stopping at the snapshot version or NIL.
+        // Only post-snapshot steps are counted.
+        let stop_at = snapshot_version.unwrap_or(Uuid::nil());
+        let mut count = 0usize;
+        let mut current = self.meta.latest_version;
+        for _ in 0..=child_to_parent.len() {
+            if current == stop_at || current == Uuid::nil() {
+                break;
+            }
+            match child_to_parent.get(&current) {
+                Some(&parent) => {
+                    count += 1;
+                    current = parent;
+                }
+                None => break,
+            }
+        }
+
         match count {
             0..=50 => SnapshotUrgency::None,
             51..=100 => SnapshotUrgency::Low,
@@ -600,8 +642,11 @@ impl Server for GitSyncServer {
         let meta_path = self.write_meta()?;
 
         // Commit and push, reverting if push fails.
-        self.git
-            .stage_and_commit(&self.local_path, &[&version_path, &meta_path], "add version")?;
+        self.git.stage_and_commit(
+            &self.local_path,
+            &[&version_path, &meta_path],
+            "add version",
+        )?;
 
         if !self.push()? {
             // Push was rejected. Undo the commit. reset_to_remote will fetch, reset --hard,
