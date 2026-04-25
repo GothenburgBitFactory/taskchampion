@@ -305,18 +305,16 @@ impl Task {
     /// This also updates the task's "end" property appropriately.
     pub fn set_status(&mut self, status: Status, ops: &mut Operations) -> Result<()> {
         match status {
-            Status::Pending | Status::Recurring => {
+            Status::Pending | Status::Recurring
                 // clear "end" when a task becomes "pending" or "recurring"
-                if self.data.has(Prop::End.as_ref()) {
+                if self.data.has(Prop::End.as_ref()) => {
                     self.set_timestamp(Prop::End.as_ref(), None, ops)?;
                 }
-            }
-            Status::Completed | Status::Deleted => {
+            Status::Completed | Status::Deleted
                 // set "end" when a task is deleted or completed
-                if !self.data.has(Prop::End.as_ref()) {
+                if !self.data.has(Prop::End.as_ref()) => {
                     self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
                 }
-            }
             _ => {}
         }
         self.set_value(
