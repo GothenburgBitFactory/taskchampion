@@ -304,7 +304,7 @@ impl GitSyncServer {
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        clean_stray_files(&git, local_path)?;
+        clean_stray_files(git, local_path)?;
 
         Ok(meta)
     }
