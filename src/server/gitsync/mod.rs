@@ -176,27 +176,26 @@ impl Git {
         }
         self.cmd(dir, &["commit", "-m", message])
     }
-}
-
-/// Remove untracked TaskChampion files left behind by interrupted writes.
-fn clean_stray_files(git: &Git, dir: &Path) -> Result<()> {
-    git.cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
-}
-
-/// Return how long ago `filename` was last committed in `dir`, or `None` if git has no
-/// record of it. A missing record is treated as "keep".
-fn version_file_age(git: &Git, dir: &Path, filename: &str) -> Result<Option<Duration>> {
-    let out = git.output(dir, &["log", "-1", "--format=%ct", "--", filename])?;
-    if out.is_empty() {
-        return Ok(None);
+    /// Remove untracked TaskChampion files left behind by interrupted writes.
+    fn clean_stray_files(&self, dir: &Path) -> Result<()> {
+        self.cmd(dir, &["clean", "-f", "--", "v-*", "snapshot", "meta"])
     }
-    let commit_ts: u64 = out
-        .parse()
-        .map_err(|_| Error::Server(format!("unexpected git log output: {out:?}")))?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| Error::Server(format!("system clock error: {e}")))?;
-    Ok(Some(now.saturating_sub(Duration::from_secs(commit_ts))))
+
+    /// Return how long ago `filename` was last committed in `dir`, or `None` if git has no
+    /// record of it. A missing record is treated as "keep".
+    fn version_file_age(&self, dir: &Path, filename: &str) -> Result<Option<Duration>> {
+        let out = self.output(dir, &["log", "-1", "--format=%ct", "--", filename])?;
+        if out.is_empty() {
+            return Ok(None);
+        }
+        let commit_ts: u64 = out
+            .parse()
+            .map_err(|_| Error::Server(format!("unexpected git log output: {out:?}")))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| Error::Server(format!("system clock error: {e}")))?;
+        Ok(Some(now.saturating_sub(Duration::from_secs(commit_ts))))
+    }
 }
 
 impl GitSyncServer {
@@ -304,7 +303,7 @@ impl GitSyncServer {
         };
 
         // Remove any untracked files left behind by interrupted writes.
-        clean_stray_files(git, local_path)?;
+        git.clean_stray_files(local_path)?;
 
         Ok(meta)
     }
@@ -354,7 +353,7 @@ impl GitSyncServer {
         self.git
             .cmd(&self.local_path, &["reset", "--hard", "FETCH_HEAD"])?;
         // Remove any untracked files left behind by interrupted writes.
-        clean_stray_files(&self.git, &self.local_path)?;
+        self.git.clean_stray_files(&self.local_path)?;
         Ok(())
     }
 
@@ -512,7 +511,7 @@ impl GitSyncServer {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .ok_or_else(|| Error::Server("version file path is not valid UTF-8".into()))?;
-                match version_file_age(&self.git, &self.local_path, name)? {
+                match self.git.version_file_age(&self.local_path, name)? {
                     Some(age) if age >= self.version_retention => {}
                     _ => continue, // Too recent or unknown age, keep it.
                 }
