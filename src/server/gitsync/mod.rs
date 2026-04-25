@@ -508,9 +508,10 @@ impl GitSyncServer {
         let mut any_removed = false;
         for (child_id, (_, path)) in versions {
             if covered.contains(child_id) {
-                let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-                    Error::Server("version file path is not valid UTF-8".into())
-                })?;
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| Error::Server("version file path is not valid UTF-8".into()))?;
                 match version_file_age(&self.git, &self.local_path, name)? {
                     Some(age) if age >= self.version_retention => {}
                     _ => continue, // Too recent or unknown age, keep it.
