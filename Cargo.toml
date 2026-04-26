@@ -94,7 +94,7 @@ strum = "0.28"
 strum_macros = "0.28"
 tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
-uuid = { version = "^1.23.0", features = ["serde", "v4"] }
+uuid = { version = "^1.23.1", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
 glob = { version = "0.3.3", optional = true }
 
@@ -126,14 +126,9 @@ web-sys = { version = "0.3.83", optional = true, features = [
 
 ## non-wasm dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aws-sdk-s3 = { version = "1.128", default-features = false, optional = true }
-aws-config = { version = "1.8", default-features = false, features = [
-  "rt-tokio",
-  "behavior-version-latest",
-], optional = true }
-aws-credential-types = { version = "1", default-features = false, features = [
-  "hardcoded-credentials",
-], optional = true }
+aws-sdk-s3 = { version = "1.129", default-features = false, optional = true }
+aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
+aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
 aws-smithy-runtime-api = { version = "1.11", default-features = false, optional = true }
 aws-smithy-types = { version = "1.4", default-features = false, optional = true }
 google-cloud-storage = { version = "0.24.0", default-features = false, features = [
