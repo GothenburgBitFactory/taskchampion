@@ -6,6 +6,7 @@ use crate::storage::TaskMap;
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
+use rrule::Tz;
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
@@ -317,7 +318,33 @@ impl Task {
                     self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
                 }
             }
-            _ => {}
+            Status::Iterative => {
+                // Check that there is a an 'iter' value.
+                if let Some(iter) = self.data.get("iter") {
+                    // calculate dates, etc
+                    // For the proof of concept, we'll assume that the rrule dt_start
+                    // time is now. In the future this could be parsed from 'iter'.
+                    let dt_start = chrono::Utc::now().with_timezone(&Tz::Local(chrono::Local));
+                    // Create the rrule. For the proof of concept, we'll assume
+                    // that 'iter' is an rrule. In the future, we'd parse 'iter'
+                    // into one.
+                    let rule: rrule::RRule<rrule::Unvalidated> = iter.parse().map_err(|e| {
+                        Error::Usage(format!("Couldn't parse iter into rrule: {e}"))
+                    })?;
+                    let rule = rule
+                        .validate(dt_start)
+                        .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?
+                        .to_string();
+                    // Set the rrule value.
+                    self.set_value("rrule", Some(rule), ops)?;
+                    // Set the next due date.
+                } else {
+                    return Err(Error::Usage(
+                        "Iterative tasks require an 'iter' value.".into(),
+                    ));
+                }
+            }
+            Status::Unknown(_) => {}
         }
         self.set_value(
             Prop::Status.as_ref(),

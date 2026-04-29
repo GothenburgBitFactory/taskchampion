@@ -6,6 +6,7 @@ pub enum Status {
     Completed,
     Deleted,
     Recurring,
+    Iterative,
     /// Unknown signifies a status in the task DB that was not
     /// recognized.  This supports forward-compatibility if a
     /// new status is added.  Tasks with unknown status should
@@ -21,6 +22,7 @@ impl Status {
             "completed" => Status::Completed,
             "deleted" => Status::Deleted,
             "recurring" => Status::Recurring,
+            "iterative" => Status::Iterative,
             v => Status::Unknown(v.to_string()),
         }
     }
@@ -32,6 +34,7 @@ impl Status {
             Status::Completed => "completed",
             Status::Deleted => "deleted",
             Status::Recurring => "recurring",
+            Status::Iterative => "iterative",
             Status::Unknown(v) => v.as_ref(),
         }
     }
