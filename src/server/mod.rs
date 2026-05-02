@@ -31,6 +31,9 @@ mod sync;
 #[cfg(feature = "cloud")]
 mod cloud;
 
+#[cfg(feature = "server-git")]
+mod gitsync;
+
 pub use config::*;
 pub use types::*;
 

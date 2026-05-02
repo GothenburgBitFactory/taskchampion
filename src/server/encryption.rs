@@ -27,7 +27,7 @@ impl Cryptor {
     }
 
     /// Generate a suitable random salt.
-    #[cfg(any(test, feature = "cloud"))] // server-sync uses the clientId as the salt.
+    #[cfg(any(test, feature = "cloud", feature = "server-git"))] // server-sync uses the clientId as the salt.
     pub(super) fn gen_salt() -> Result<Vec<u8>> {
         let rng = rand::SystemRandom::new();
         let mut salt = [0u8; 16];
@@ -172,6 +172,7 @@ impl<'a> Envelope<'a> {
 
 /// A unsealed payload with an attached version_id.  The version_id is used to
 /// validate the context of the payload on unsealing.
+#[derive(Debug)]
 pub(super) struct Unsealed {
     pub(super) version_id: Uuid,
     pub(super) payload: Vec<u8>,
@@ -184,6 +185,7 @@ impl From<Unsealed> for Vec<u8> {
 }
 
 /// An encrypted payload
+#[derive(Debug)]
 pub(super) struct Sealed {
     pub(super) version_id: Uuid,
     pub(super) payload: Vec<u8>,
