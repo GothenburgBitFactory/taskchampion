@@ -8,11 +8,15 @@ use crate::server::cloud::aws::AwsService;
 use crate::server::cloud::gcp::GcpService;
 #[cfg(feature = "cloud")]
 use crate::server::cloud::CloudServer;
+#[cfg(feature = "server-git")]
+use crate::server::gitsync::GitSyncServer;
 #[cfg(feature = "server-local")]
 use crate::server::local::LocalServer;
 #[cfg(feature = "server-sync")]
 use crate::server::sync::SyncServer;
 #[cfg(feature = "server-local")]
+use std::path::PathBuf;
+#[cfg(all(feature = "server-git", not(feature = "server-local")))]
 use std::path::PathBuf;
 #[cfg(feature = "server-sync")]
 use uuid::Uuid;
@@ -118,6 +122,42 @@ pub enum ServerConfig {
         /// be any suitably un-guessable string of bytes.
         encryption_secret: Vec<u8>,
     },
+    /// A git repository used as a sync server.
+    ///
+    /// TaskChampion manages the repository. Version history and snapshots are stored as committed
+    /// files. Do not merge, squash, or otherwise rewrite its history outside of TaskChampion.
+    ///
+    /// If the repository will be used for other things, it is HIGHLY recommended that you
+    /// configure a dedicated TaskChampion branch.
+    ///
+    /// This backend shells out to git, so a working `git` installation is required. For
+    /// remote sync, `git push` and `git pull` must work without prompts. Use SSH keys or a
+    /// credential helper.
+    ///
+    /// Setting `local_only` to `true` while `remote` is `Some` lets the replica operate
+    /// offline. Re-enable sync later by setting `local_only` back to `false`. However, be aware
+    /// that if the remote has diverged enough that a fast-forward fails, you will need to fix it
+    /// manually.
+    #[cfg(feature = "server-git")]
+    Git {
+        /// The path to the local repo.
+        local_path: PathBuf,
+        /// The branch to use.
+        branch: String,
+        /// The remote repo.
+        ///
+        /// This can either be a named remote such as `origin` or a full git
+        /// URL such as `git@myserver.com:/path/to/repo.git`.
+        /// If `None`, operates in local-only mode (no push/pull).
+        remote: Option<String>,
+        /// Don't clone/push/pull to `remote` even if it is defined.
+        local_only: bool,
+        /// Private encryption secret used to encrypt all data sent to the server.  This can
+        /// be any suitably un-guessable string of bytes.
+        encryption_secret: Vec<u8>,
+        /// Path to the git binary. If `None`, `"git"` on PATH is used.
+        git_path: Option<PathBuf>,
+    },
 }
 
 impl ServerConfig {
@@ -162,6 +202,22 @@ impl ServerConfig {
                 )
                 .await?,
             ),
+            #[cfg(feature = "server-git")]
+            ServerConfig::Git {
+                local_path,
+                branch,
+                remote,
+                local_only,
+                encryption_secret,
+                git_path,
+            } => Box::new(GitSyncServer::new(
+                local_path,
+                branch,
+                remote,
+                local_only,
+                encryption_secret,
+                git_path,
+            )?),
         })
     }
 }
