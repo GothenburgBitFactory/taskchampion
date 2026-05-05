@@ -1130,6 +1130,59 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_set_status_iterative_basic() {
+        with_mut_task(
+            |task, ops| {
+                task.data.update("iter", Some("daily".into()), ops);
+                task.set_status(Status::Iterative, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Iterative);
+                assert!(task.data.has("rrule"));
+                assert!(task.get_due().is_some());
+                assert_eq!(task.data.get("iter_type"), Some("chained"));
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_status_iterative_preserves_iter_type() {
+        with_mut_task(
+            |task, ops| {
+                task.data.update("iter", Some("weekly".into()), ops);
+                task.data.update("iter_type", Some("fixed".into()), ops);
+                task.set_status(Status::Iterative, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.data.get("iter_type"), Some("fixed"));
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_status_iterative_no_iter() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_status_iterative_invalid_iter() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data.update("iter", Some("3blarg".into()), &mut ops);
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[tokio::test]
     async fn test_set_get_value() {
         let property = "property-name";
         with_mut_task(

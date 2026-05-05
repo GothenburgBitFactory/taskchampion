@@ -1,6 +1,7 @@
 use crate::errors::{Error, Result};
 use rrule::{Frequency, NWeekday, RRule, Unvalidated, Weekday};
 use strum_macros::{Display, EnumString};
+
 /// The iteration type of a task.
 #[derive(Debug, PartialEq, Eq, Clone, Display, EnumString)]
 #[repr(C)]
@@ -91,9 +92,164 @@ pub fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
             NWeekday::Every(Weekday::Fri),
         ]),
         Some(SpecialDays::Weekend) => rule.by_weekday(vec![
-            NWeekday::Every(Weekday::Thu),
-            NWeekday::Every(Weekday::Fri),
+            NWeekday::Every(Weekday::Sat),
+            NWeekday::Every(Weekday::Sun),
         ]),
     };
     Ok(rule)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rrule::{Tz, Validated};
+    use std::str::FromStr;
+
+    /// Validate an rrule string input and return its validated form.
+    fn validate_rrule(input: &str) -> RRule<Validated> {
+        let dt_start = chrono::Utc::now().with_timezone(&Tz::Local(chrono::Local));
+        let rule = str2rrule(input).unwrap();
+        let validated = rule.validate(dt_start).unwrap();
+        validated
+    }
+
+    #[test]
+    fn basic_daily() {
+        let rule = validate_rrule("daily");
+        assert_eq!(rule.get_freq(), Frequency::Daily);
+        assert_eq!(rule.get_interval(), 1);
+    }
+
+    #[test]
+    fn basic_weekly() {
+        let rule = validate_rrule("weekly");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 1);
+    }
+
+    #[test]
+    fn basic_monthly() {
+        let rule = validate_rrule("month");
+        assert_eq!(rule.get_freq(), Frequency::Monthly);
+        assert_eq!(rule.get_interval(), 1);
+    }
+
+    #[test]
+    fn basic_yearly() {
+        let rule = validate_rrule("year");
+        assert_eq!(rule.get_freq(), Frequency::Yearly);
+        assert_eq!(rule.get_interval(), 1);
+    }
+
+    #[test]
+    fn interval_prefix() {
+        let rule = validate_rrule("3wk");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 3);
+    }
+
+    #[test]
+    fn special_fortnight() {
+        let rule = validate_rrule("fortnight");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 2);
+    }
+
+    #[test]
+    fn special_biweekly() {
+        let rule = validate_rrule("biweekly");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 2);
+    }
+
+    #[test]
+    fn special_semiannual() {
+        let rule = validate_rrule("semiannual");
+        assert_eq!(rule.get_freq(), Frequency::Monthly);
+        assert_eq!(rule.get_interval(), 6);
+    }
+
+    #[test]
+    fn special_biannual() {
+        let rule = validate_rrule("biannual");
+        assert_eq!(rule.get_freq(), Frequency::Yearly);
+        assert_eq!(rule.get_interval(), 2);
+    }
+
+    #[test]
+    fn quarter_single() {
+        let rule = validate_rrule("qtr");
+        assert_eq!(rule.get_freq(), Frequency::Monthly);
+        assert_eq!(rule.get_interval(), 3);
+    }
+
+    #[test]
+    fn quarter_interval() {
+        let rule = validate_rrule("2qtrs");
+        assert_eq!(rule.get_freq(), Frequency::Monthly);
+        assert_eq!(rule.get_interval(), 6);
+    }
+
+    #[test]
+    fn weekday() {
+        let rule = validate_rrule("weekdays");
+        assert_eq!(rule.get_freq(), Frequency::Daily);
+        assert_eq!(rule.get_interval(), 1);
+        let days = rule.get_by_weekday();
+        assert!(days.contains(&NWeekday::Every(Weekday::Mon)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Tue)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Wed)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Thu)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Fri)));
+    }
+
+    #[test]
+    fn weekend() {
+        let rule = validate_rrule("weekdays");
+        assert_eq!(rule.get_freq(), Frequency::Daily);
+        assert_eq!(rule.get_interval(), 1);
+        let days = rule.get_by_weekday();
+        assert!(days.contains(&NWeekday::Every(Weekday::Sun)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Mon)));
+    }
+
+    #[test]
+    fn case_insensitive() {
+        let rule = validate_rrule("DAily");
+        assert_eq!(rule.get_freq(), Frequency::Daily);
+        assert_eq!(rule.get_interval(), 1);
+        let rule = validate_rrule("3wK");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 3);
+    }
+
+    #[test]
+    fn trim_whitespace() {
+        let rule = validate_rrule("  daily  ");
+        assert_eq!(rule.get_freq(), Frequency::Daily);
+        assert_eq!(rule.get_interval(), 1);
+    }
+
+    #[test]
+    fn invalid_period() {
+        let result = str2rrule("3blarg");
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn empty_period() {
+        let result = str2rrule("");
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn iter_type_from_str() {
+        assert_eq!(IterType::from_str("fixed").unwrap(), IterType::Fixed);
+        assert_eq!(IterType::from_str("fx").unwrap(), IterType::Fixed);
+        assert_eq!(IterType::from_str("fixed+").unwrap(), IterType::FixedPlus);
+        assert_eq!(IterType::from_str("f+").unwrap(), IterType::FixedPlus);
+        assert_eq!(IterType::from_str("fp").unwrap(), IterType::FixedPlus);
+        assert_eq!(IterType::from_str("chained").unwrap(), IterType::Chained);
+        assert_eq!(IterType::from_str("ch").unwrap(), IterType::Chained);
+    }
 }
