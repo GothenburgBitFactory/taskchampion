@@ -3,10 +3,11 @@ use super::{utc_timestamp, Annotation, Status, Tag, Timestamp};
 use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::storage::TaskMap;
+use crate::task::{iter, IterType};
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
-use rrule::Tz;
+use rrule::{RRuleSet, Tz};
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
@@ -312,7 +313,17 @@ impl Task {
                     self.set_timestamp(Prop::End.as_ref(), None, ops)?;
                 }
             }
-            Status::Completed | Status::Deleted => {
+            Status::Completed => {
+                if self.get_status() == Status::Iterative {
+                    // Create clone with Completed status.
+                    // Generate new due date.
+                }
+                // set "end" when a task is deleted or completed
+                if !self.data.has(Prop::End.as_ref()) {
+                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
+                }
+            }
+            Status::Deleted => {
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
@@ -325,19 +336,21 @@ impl Task {
                     // For the proof of concept, we'll assume that the rrule dt_start
                     // time is now. In the future this could be parsed from 'iter'.
                     let dt_start = chrono::Utc::now().with_timezone(&Tz::Local(chrono::Local));
-                    // Create the rrule. For the proof of concept, we'll assume
-                    // that 'iter' is an rrule. In the future, we'd parse 'iter'
-                    // into one.
-                    let rule: rrule::RRule<rrule::Unvalidated> = iter.parse().map_err(|e| {
-                        Error::Usage(format!("Couldn't parse iter into rrule: {e}"))
-                    })?;
+                    // Create the rrule.
+                    let rule = iter::str2rrule(iter)?;
                     let rule = rule
                         .validate(dt_start)
-                        .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?
-                        .to_string();
+                        .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
+                    let rrule_set = RRuleSet::new(dt_start).rrule(rule);
                     // Set the rrule value.
-                    self.set_value("rrule", Some(rule), ops)?;
+                    self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
+                    // Check that iter_type exists, otherwise assume chained.
+                    if self.data.get("iter_type").is_none() {
+                        self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
+                    }
                     // Set the next due date.
+                    let due = rrule_set.after(dt_start).all(1).dates[0].to_utc();
+                    self.set_due(Some(due), ops)?;
                 } else {
                     return Err(Error::Usage(
                         "Iterative tasks require an 'iter' value.".into(),
