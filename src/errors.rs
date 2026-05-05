@@ -19,6 +19,9 @@ pub enum Error {
     /// A usage error
     #[error("Usage Error: {0}")]
     Usage(String),
+    /// An iterative task related error
+    #[error("Iteration Error: {0}")]
+    Iterative(String),
     /// A general error.
     #[error(transparent)]
     Other(#[from] anyhow::Error),

@@ -3,20 +3,16 @@ use rrule::{Frequency, NWeekday, RRule, Unvalidated, Weekday};
 use strum_macros::{Display, EnumString};
 
 /// The iteration type of a task.
-#[derive(Debug, PartialEq, Eq, Clone, Display, EnumString)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Display, EnumString)]
 #[repr(C)]
 pub enum IterType {
     #[strum(serialize = "fixed", serialize = "fx")]
     Fixed,
     #[strum(serialize = "fixed+", serialize = "f+", serialize = "fp")]
     FixedPlus,
+    #[default]
     #[strum(serialize = "chained", serialize = "ch")]
     Chained,
-    /// Unknown signifies an iter type in the task DB that was not
-    /// recognized.  This supports forward-compatibility if a
-    /// new type is added.  Tasks with unknown iter types should
-    /// be ignored (but not deleted).
-    Unknown(String),
 }
 
 enum SpecialDays {
@@ -59,7 +55,7 @@ pub fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
     let mut special_days: Option<SpecialDays> = None;
     let freq = match period {
         "se" | "sec" | "second" | "seconds" | "secondly" => Frequency::Secondly,
-        "mi" | "min" | "minute" | "minutes" | "minutley" => Frequency::Minutely,
+        "mi" | "min" | "minute" | "minutes" | "minutely" => Frequency::Minutely,
         "hr" | "hour" | "hours" | "hourly" => Frequency::Hourly,
         "day" | "days" | "daily" => Frequency::Daily,
         "wk" | "week" | "weekly" | "wkly" => Frequency::Weekly,
@@ -72,7 +68,7 @@ pub fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
             Frequency::Daily
         }
         "mo" | "month" | "months" | "monthly" => Frequency::Monthly,
-        "qtr" | "qtrs" | "quarter" | "quarterly" => {
+        "qtr" | "qtrs" | "quarter" | "quarters" | "quarterly" => {
             interval *= 3;
             Frequency::Monthly
         }
@@ -185,9 +181,9 @@ mod test {
 
     #[test]
     fn quarter_interval() {
-        let rule = validate_rrule("2qtrs");
+        let rule = validate_rrule("3qtrs");
         assert_eq!(rule.get_freq(), Frequency::Monthly);
-        assert_eq!(rule.get_interval(), 6);
+        assert_eq!(rule.get_interval(), 9);
     }
 
     #[test]
@@ -201,16 +197,23 @@ mod test {
         assert!(days.contains(&NWeekday::Every(Weekday::Wed)));
         assert!(days.contains(&NWeekday::Every(Weekday::Thu)));
         assert!(days.contains(&NWeekday::Every(Weekday::Fri)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Sat)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Sun)));
     }
 
     #[test]
     fn weekend() {
-        let rule = validate_rrule("weekdays");
+        let rule = validate_rrule("weekend");
         assert_eq!(rule.get_freq(), Frequency::Daily);
         assert_eq!(rule.get_interval(), 1);
         let days = rule.get_by_weekday();
+        assert!(!days.contains(&NWeekday::Every(Weekday::Mon)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Tue)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Wed)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Thu)));
+        assert!(!days.contains(&NWeekday::Every(Weekday::Fri)));
+        assert!(days.contains(&NWeekday::Every(Weekday::Sat)));
         assert!(days.contains(&NWeekday::Every(Weekday::Sun)));
-        assert!(days.contains(&NWeekday::Every(Weekday::Mon)));
     }
 
     #[test]

@@ -14,6 +14,34 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(not(test))]
+fn now() -> DateTime<Utc> {
+    Utc::now()
+}
+
+#[cfg(test)]
+mod mock_time {
+    use chrono::{DateTime, Utc};
+    use std::cell::Cell;
+    thread_local! {
+        static T: Cell<Option<i64>> = Cell::new(None);
+    }
+    pub(super) fn now() -> DateTime<Utc> {
+        T.with(|t| match t.get() {
+            Some(secs) => DateTime::from_timestamp(secs, 0).unwrap(),
+            None => Utc::now(),
+        })
+    }
+    pub(super) fn set(t: DateTime<Utc>) {
+        T.with(|c| c.set(Some(t.timestamp())));
+    }
+    pub(super) fn reset() {
+        T.with(|c| c.set(None));
+    }
+}
+#[cfg(test)]
+use mock_time::now;
+
 /// A task, with a high-level interface.
 ///
 /// Building on [`crate::TaskData`], this type implements the task model, with ergonomic APIs to
@@ -316,26 +344,88 @@ impl Task {
             Status::Completed => {
                 if self.get_status() == Status::Iterative {
                     // Create clone with Completed status.
+                    let uuid = Uuid::new_v4();
+                    let mut dup = Task::new(TaskData::create(uuid, ops), self.depmap.clone());
+                    for (prop, value) in self.data.iter() {
+                        dup.data.update(prop, Some(value.to_owned()), ops);
+                    }
+                    dup.set_value(
+                        Prop::Status.as_ref(),
+                        Some(String::from(Status::Completed.to_taskmap())),
+                        ops,
+                    )?;
+                    dup.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
                     // Generate new due date.
+                    let iter_type = match self.data.get("iter_type") {
+                        Some(t) => IterType::from_str(t).unwrap_or_default(),
+                        None => IterType::Chained,
+                    };
+                    let rule_str = self.data.get("rrule").ok_or_else(|| {
+                        Error::Iterative("Couldn't get rrule from iter task.".into())
+                    })?;
+                    let orig_due = self
+                        .get_due()
+                        .unwrap_or_else(now)
+                        .with_timezone(&Tz::Local(chrono::Local));
+
+                    let due = match iter_type {
+                        IterType::Fixed => {
+                            // create rule set from rule and orig date
+                            let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
+                                Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
+                            })?;
+                            // get first date strictly after orig due date
+                            let after = orig_due + chrono::Duration::seconds(1);
+                            rrule_set.after(after).all(1).dates[0].to_utc()
+                        }
+                        IterType::FixedPlus => {
+                            // create rule set from rule and orig date
+                            let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
+                                Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
+                            })?;
+                            // get first date strictly after now
+                            let now = now().with_timezone(&Tz::Local(chrono::Local));
+                            let after = now + chrono::Duration::seconds(1);
+                            rrule_set.after(after).all(1).dates[0].to_utc()
+                        }
+                        IterType::Chained => {
+                            // get now
+                            let now = now().with_timezone(&Tz::Local(chrono::Local));
+                            // rebuild the rule anchored to now using the stored iter string
+                            let iter_str = self.data.get("iter").ok_or_else(|| {
+                                Error::Iterative("Couldn't get iter from iter task.".into())
+                            })?;
+                            let rule = iter::str2rrule(iter_str)?.validate(now).map_err(|e| {
+                                Error::Usage(format!("Couldn't validate rrule: {e}"))
+                            })?;
+                            // get first date after now
+                            let rrule_set = RRuleSet::new(now).rrule(rule);
+                            rrule_set
+                                .after(now + chrono::Duration::seconds(1))
+                                .all(1)
+                                .dates[0]
+                                .to_utc()
+                        }
+                    };
+                    self.set_due(Some(due), ops)?;
                 }
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
+                    self.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
                 }
             }
             Status::Deleted => {
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
+                    self.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
                 }
             }
             Status::Iterative => {
                 // Check that there is a an 'iter' value.
                 if let Some(iter) = self.data.get("iter") {
-                    // calculate dates, etc
                     // For the proof of concept, we'll assume that the rrule dt_start
-                    // time is now. In the future this could be parsed from 'iter'.
-                    let dt_start = chrono::Utc::now().with_timezone(&Tz::Local(chrono::Local));
+                    // time is now. In the future this could be parsed from 'iter', .
+                    let dt_start = now().with_timezone(&Tz::Local(chrono::Local));
                     // Create the rrule.
                     let rule = iter::str2rrule(iter)?;
                     let rule = rule
@@ -1180,6 +1270,138 @@ mod test {
         task.data.update("iter", Some("3blarg".into()), &mut ops);
         let result = task.set_status(Status::Iterative, &mut ops);
         assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    async fn setup_iterative_task(
+        iter: &str,
+        iter_type: Option<&str>,
+    ) -> (Replica<InMemoryStorage>, Task, Operations, Uuid) {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data.update("iter", Some(iter.into()), &mut ops);
+        if let Some(t) = iter_type {
+            task.data.update("iter_type", Some(t.into()), &mut ops);
+        }
+        task.set_status(Status::Iterative, &mut ops).unwrap();
+        (replica, task, ops, uuid)
+    }
+
+    #[tokio::test]
+    async fn test_complete_iterative_chained() {
+        let (_, mut task, mut ops, _) = setup_iterative_task("daily", None).await;
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        let due_after = task.get_due().unwrap();
+        // Chained anchors to now, so the next occurrence is now + 1 day (in the future).
+        assert!(
+            due_after > Utc::now(),
+            "due should be in the future: {due_after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_iterative_fixed() {
+        let (_, mut task, mut ops, _) = setup_iterative_task("daily", Some("fixed")).await;
+        let due_before = task.get_due().unwrap();
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        let due_after = task.get_due().unwrap();
+        // Fixed advances from the original schedule, so the new due is strictly after the old.
+        assert!(
+            due_after > due_before,
+            "due should advance: before={due_before}, after={due_after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_iterative_fixed_plus() {
+        let (_, mut task, mut ops, _) = setup_iterative_task("daily", Some("fixed+")).await;
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        let due_after = task.get_due().unwrap();
+        // FixedPlus anchors to now, so the next occurrence is now + 1 day (in the future).
+        assert!(
+            due_after > Utc::now(),
+            "due should be in the future: {due_after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_iterative_creates_clone() {
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", None).await;
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        let all = replica.all_tasks().await.unwrap();
+        assert_eq!(all.len(), 2, "should have original + completed clone");
+
+        let clone = all.values().find(|t| t.get_uuid() != uuid).unwrap();
+        assert_eq!(clone.get_status(), Status::Completed);
+        assert!(clone.data.has("end"));
+    }
+
+    #[tokio::test]
+    async fn test_complete_iterative_no_rrule_error() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        // Manually set status=iterative without going through set_status(Iterative),
+        // so no "rrule" property is stored.
+        task.data
+            .update("status", Some("iterative".into()), &mut ops);
+        let result = task.set_status(Status::Completed, &mut ops);
+        assert!(matches!(result, Err(Error::Iterative(_))));
+    }
+
+    // time_start = 2026-01-01 00:00:00 UTC.  Weekly occurrences: Jan 8, Jan 15, Jan 22, Jan 29 …
+    // time_twenty_four_days_later = 2026-01-25 00:00:00 UTC (task is ~2.5 weeks overdue when completed).
+    fn time_start() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+    }
+    fn time_twenty_four_days_later() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 25, 0, 0, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_fixed_advances_from_schedule() {
+        super::mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", Some("fixed")).await;
+        super::mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        super::mock_time::reset();
+        // Fixed: first weekly occurrence strictly after orig_due (Jan 8) = Jan 15
+        assert_eq!(
+            task.get_due(),
+            Some(time_start() + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fixed_plus_advances_from_now() {
+        super::mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", Some("fixed+")).await;
+        super::mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        super::mock_time::reset();
+        // FixedPlus: first weekly occurrence strictly after now (Jan 25) = Jan 29
+        assert_eq!(
+            task.get_due(),
+            Some(time_start() + chrono::Duration::weeks(4))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chained_advances_period_from_now() {
+        super::mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", None).await;
+        super::mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        super::mock_time::reset();
+        // Chained: new rrule anchored to now (Jan 25), first occurrence after now = Feb 1
+        assert_eq!(
+            task.get_due(),
+            Some(time_twenty_four_days_later() + chrono::Duration::weeks(1))
+        );
     }
 
     #[tokio::test]
