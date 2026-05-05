@@ -105,8 +105,7 @@ mod test {
     fn validate_rrule(input: &str) -> RRule<Validated> {
         let dt_start = chrono::Utc::now().with_timezone(&Tz::Local(chrono::Local));
         let rule = str2rrule(input).unwrap();
-        let validated = rule.validate(dt_start).unwrap();
-        validated
+        rule.validate(dt_start).unwrap()
     }
 
     #[test]

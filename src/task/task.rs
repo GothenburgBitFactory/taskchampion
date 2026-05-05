@@ -24,7 +24,7 @@ mod mock_time {
     use chrono::{DateTime, Utc};
     use std::cell::Cell;
     thread_local! {
-        static T: Cell<Option<i64>> = Cell::new(None);
+        static T: Cell<Option<i64>> = const {Cell::new(None)};
     }
     pub(super) fn now() -> DateTime<Utc> {
         T.with(|t| match t.get() {
