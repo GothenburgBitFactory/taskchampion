@@ -3,7 +3,7 @@ use super::{utc_timestamp, Annotation, Status, Tag, Timestamp};
 use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::storage::TaskMap;
-use crate::task::{iter, IterType};
+use crate::task::{iter, utc_now, IterType};
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
@@ -13,34 +13,6 @@ use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
-
-#[cfg(not(test))]
-fn now() -> DateTime<Utc> {
-    Utc::now()
-}
-
-#[cfg(test)]
-mod mock_time {
-    use chrono::{DateTime, Utc};
-    use std::cell::Cell;
-    thread_local! {
-        static T: Cell<Option<i64>> = const {Cell::new(None)};
-    }
-    pub(super) fn now() -> DateTime<Utc> {
-        T.with(|t| match t.get() {
-            Some(secs) => DateTime::from_timestamp(secs, 0).unwrap(),
-            None => Utc::now(),
-        })
-    }
-    pub(super) fn set(t: DateTime<Utc>) {
-        T.with(|c| c.set(Some(t.timestamp())));
-    }
-    pub(super) fn reset() {
-        T.with(|c| c.set(None));
-    }
-}
-#[cfg(test)]
-use mock_time::now;
 
 /// A task, with a high-level interface.
 ///
@@ -354,18 +326,21 @@ impl Task {
                         Some(String::from(Status::Completed.to_taskmap())),
                         ops,
                     )?;
-                    dup.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
+                    dup.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
                     // Generate new due date.
                     let iter_type = match self.data.get("iter_type") {
-                        Some(t) => IterType::from_str(t).unwrap_or_default(),
+                        Some(t) => IterType::from_str(t).map_err(|e| {
+                            Error::Iterative(format!("Couldn't parse iter type {}", e))
+                        })?,
                         None => IterType::Chained,
                     };
+                    dup.set_value("parent", Some(self.get_uuid().into()), ops)?;
                     let rule_str = self.data.get("rrule").ok_or_else(|| {
                         Error::Iterative("Couldn't get rrule from iter task.".into())
                     })?;
                     let orig_due = self
                         .get_due()
-                        .unwrap_or_else(now)
+                        .unwrap_or_else(utc_now)
                         .with_timezone(&Tz::Local(chrono::Local));
 
                     let due = match iter_type {
@@ -376,7 +351,13 @@ impl Task {
                             })?;
                             // get first date strictly after orig due date
                             let after = orig_due + chrono::Duration::seconds(1);
-                            rrule_set.after(after).all(1).dates[0].to_utc()
+                            rrule_set
+                                .after(after)
+                                .all(1)
+                                .dates
+                                .get(0)
+                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                                .to_utc()
                         }
                         IterType::FixedPlus => {
                             // create rule set from rule and orig date
@@ -384,13 +365,19 @@ impl Task {
                                 Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
                             })?;
                             // get first date strictly after now
-                            let now = now().with_timezone(&Tz::Local(chrono::Local));
+                            let now = utc_now().with_timezone(&Tz::Local(chrono::Local));
                             let after = now + chrono::Duration::seconds(1);
-                            rrule_set.after(after).all(1).dates[0].to_utc()
+                            rrule_set
+                                .after(after)
+                                .all(1)
+                                .dates
+                                .get(0)
+                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                                .to_utc()
                         }
                         IterType::Chained => {
                             // get now
-                            let now = now().with_timezone(&Tz::Local(chrono::Local));
+                            let now = utc_now().with_timezone(&Tz::Local(chrono::Local));
                             // rebuild the rule anchored to now using the stored iter string
                             let iter_str = self.data.get("iter").ok_or_else(|| {
                                 Error::Iterative("Couldn't get iter from iter task.".into())
@@ -403,21 +390,24 @@ impl Task {
                             rrule_set
                                 .after(now + chrono::Duration::seconds(1))
                                 .all(1)
-                                .dates[0]
+                                .dates
+                                .get(0)
+                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                                 .to_utc()
                         }
                     };
                     self.set_due(Some(due), ops)?;
+                    return Ok(());
                 }
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
+                    self.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
                 }
             }
             Status::Deleted => {
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(now()), ops)?;
+                    self.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
                 }
             }
             Status::Iterative => {
@@ -425,7 +415,7 @@ impl Task {
                 if let Some(iter) = self.data.get("iter") {
                     // For the proof of concept, we'll assume that the rrule dt_start
                     // time is now. In the future this could be parsed from 'iter', .
-                    let dt_start = now().with_timezone(&Tz::Local(chrono::Local));
+                    let dt_start = utc_now().with_timezone(&Tz::Local(chrono::Local));
                     // Create the rrule.
                     let rule = iter::str2rrule(iter)?;
                     let rule = rule
@@ -439,7 +429,13 @@ impl Task {
                         self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
                     }
                     // Set the next due date.
-                    let due = rrule_set.after(dt_start).all(1).dates[0].to_utc();
+                    let due = rrule_set
+                        .after(dt_start)
+                        .all(1)
+                        .dates
+                        .get(0)
+                        .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                        .to_utc();
                     self.set_due(Some(due), ops)?;
                 } else {
                     return Err(Error::Usage(
@@ -714,7 +710,7 @@ impl Task {
 #[allow(deprecated)]
 mod test {
     use super::*;
-    use crate::{storage::inmemory::InMemoryStorage, Replica};
+    use crate::{storage::inmemory::InMemoryStorage, task::time::mock_time, Replica};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -1364,11 +1360,11 @@ mod test {
 
     #[tokio::test]
     async fn test_fixed_advances_from_schedule() {
-        super::mock_time::set(time_start());
+        mock_time::set(time_start());
         let (_, mut task, mut ops, _) = setup_iterative_task("weekly", Some("fixed")).await;
-        super::mock_time::set(time_twenty_four_days_later());
+        mock_time::set(time_twenty_four_days_later());
         task.set_status(Status::Completed, &mut ops).unwrap();
-        super::mock_time::reset();
+        mock_time::reset();
         // Fixed: first weekly occurrence strictly after orig_due (Jan 8) = Jan 15
         assert_eq!(
             task.get_due(),
@@ -1378,11 +1374,11 @@ mod test {
 
     #[tokio::test]
     async fn test_fixed_plus_advances_from_now() {
-        super::mock_time::set(time_start());
+        mock_time::set(time_start());
         let (_, mut task, mut ops, _) = setup_iterative_task("weekly", Some("fixed+")).await;
-        super::mock_time::set(time_twenty_four_days_later());
+        mock_time::set(time_twenty_four_days_later());
         task.set_status(Status::Completed, &mut ops).unwrap();
-        super::mock_time::reset();
+        mock_time::reset();
         // FixedPlus: first weekly occurrence strictly after now (Jan 25) = Jan 29
         assert_eq!(
             task.get_due(),
@@ -1392,11 +1388,11 @@ mod test {
 
     #[tokio::test]
     async fn test_chained_advances_period_from_now() {
-        super::mock_time::set(time_start());
+        mock_time::set(time_start());
         let (_, mut task, mut ops, _) = setup_iterative_task("weekly", None).await;
-        super::mock_time::set(time_twenty_four_days_later());
+        mock_time::set(time_twenty_four_days_later());
         task.set_status(Status::Completed, &mut ops).unwrap();
-        super::mock_time::reset();
+        mock_time::reset();
         // Chained: new rrule anchored to now (Jan 25), first occurrence after now = Feb 1
         assert_eq!(
             task.get_due(),

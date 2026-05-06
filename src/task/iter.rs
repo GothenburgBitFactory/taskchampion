@@ -1,5 +1,6 @@
 use crate::errors::{Error, Result};
-use rrule::{Frequency, NWeekday, RRule, Unvalidated, Weekday};
+pub(crate) use rrule::RRule;
+use rrule::{Frequency, NWeekday, Unvalidated, Weekday};
 use strum_macros::{Display, EnumString};
 
 /// The iteration type of a task.
@@ -22,7 +23,7 @@ enum SpecialDays {
 /// Converts an iteration description string to a RRule.
 ///
 /// For now, only handles the standard TaskWarrior style descriptions.
-pub fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
+pub(crate) fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
     // Most TW iteration strings are of the form:
     // nPP where n is the interval number and PP is the period.
     // e.g. 3wks -> every three weeks.
@@ -69,7 +70,7 @@ pub fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
         }
         "mo" | "month" | "months" | "monthly" => Frequency::Monthly,
         "qtr" | "qtrs" | "quarter" | "quarters" | "quarterly" => {
-            interval *= 3;
+            interval = interval.saturating_mul(3);
             Frequency::Monthly
         }
         "yr" | "year" | "yearly" | "annual" => Frequency::Yearly,
