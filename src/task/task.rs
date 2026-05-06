@@ -3,16 +3,20 @@ use super::{utc_timestamp, Annotation, Status, Tag, Timestamp};
 use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::storage::TaskMap;
-use crate::task::{iter, utc_now, IterType};
+use crate::task::utc_now;
+#[cfg(feature = "iterative-tasks")]
+use crate::task::{iter, local_tz, IterType};
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
+#[cfg(feature = "iterative-tasks")]
 use rrule::{RRuleSet, Tz};
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
+
 
 /// A task, with a high-level interface.
 ///
@@ -314,6 +318,7 @@ impl Task {
                 }
             }
             Status::Completed => {
+                #[cfg(feature = "iterative-tasks")]
                 if self.get_status() == Status::Iterative {
                     // Create clone with Completed status.
                     let uuid = Uuid::new_v4();
@@ -341,7 +346,7 @@ impl Task {
                     let orig_due = self
                         .get_due()
                         .unwrap_or_else(utc_now)
-                        .with_timezone(&Tz::Local(chrono::Local));
+                        .with_timezone(&local_tz());
 
                     let due = match iter_type {
                         IterType::Fixed => {
@@ -365,7 +370,7 @@ impl Task {
                                 Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
                             })?;
                             // get first date strictly after now
-                            let now = utc_now().with_timezone(&Tz::Local(chrono::Local));
+                            let now = utc_now().with_timezone(&local_tz());
                             let after = now + chrono::Duration::seconds(1);
                             rrule_set
                                 .after(after)
@@ -377,7 +382,7 @@ impl Task {
                         }
                         IterType::Chained => {
                             // get now
-                            let now = utc_now().with_timezone(&Tz::Local(chrono::Local));
+                            let now = utc_now().with_timezone(&local_tz());
                             // rebuild the rule anchored to now using the stored iter string
                             let iter_str = self.data.get("iter").ok_or_else(|| {
                                 Error::Iterative("Couldn't get iter from iter task.".into())
@@ -411,37 +416,48 @@ impl Task {
                 }
             }
             Status::Iterative => {
-                // Check that there is a an 'iter' value.
-                if let Some(iter) = self.data.get("iter") {
-                    // For the proof of concept, we'll assume that the rrule dt_start
-                    // time is now. In the future this could be parsed from 'iter', .
-                    let dt_start = utc_now().with_timezone(&Tz::Local(chrono::Local));
-                    // Create the rrule.
-                    let rule = iter::str2rrule(iter)?;
-                    let rule = rule
-                        .validate(dt_start)
-                        .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
-                    let rrule_set = RRuleSet::new(dt_start).rrule(rule);
-                    // Set the rrule value.
-                    self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
-                    // Check that iter_type exists, otherwise assume chained.
-                    if self.data.get("iter_type").is_none() {
-                        self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
+                #[cfg(feature = "iterative-tasks")]
+                {
+                    // Check that there is a an 'iter' value.
+                    if let Some(iter) = self.data.get("iter") {
+                        // For the proof of concept, we'll assume that the rrule dt_start
+                        // time is now. In the future this could be parsed from 'iter', .
+                        let dt_start = utc_now().with_timezone(&local_tz());
+                        // Create the rrule.
+                        let rule = iter::str2rrule(iter)?;
+                        let rule = rule
+                            .validate(dt_start)
+                            .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
+                        let rrule_set = RRuleSet::new(dt_start).rrule(rule);
+                        // Set the rrule value.
+                        self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
+                        // Check that iter_type exists, otherwise assume chained.
+                        if self.data.get("iter_type").is_none() {
+                            self.set_value(
+                                "iter_type",
+                                Some(IterType::Chained.to_string()),
+                                ops,
+                            )?;
+                        }
+                        // Set the next due date.
+                        let due = rrule_set
+                            .after(dt_start)
+                            .all(1)
+                            .dates
+                            .get(0)
+                            .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                            .to_utc();
+                        self.set_due(Some(due), ops)?;
+                    } else {
+                        return Err(Error::Usage(
+                            "Iterative tasks require an 'iter' value.".into(),
+                        ));
                     }
-                    // Set the next due date.
-                    let due = rrule_set
-                        .after(dt_start)
-                        .all(1)
-                        .dates
-                        .get(0)
-                        .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                        .to_utc();
-                    self.set_due(Some(due), ops)?;
-                } else {
-                    return Err(Error::Usage(
-                        "Iterative tasks require an 'iter' value.".into(),
-                    ));
                 }
+                #[cfg(not(feature = "iterative-tasks"))]
+                return Err(Error::Usage(
+                    "iterative-tasks feature is not enabled".into(),
+                ));
             }
             Status::Unknown(_) => {}
         }

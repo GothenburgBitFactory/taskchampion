@@ -1,4 +1,6 @@
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+#[cfg(feature = "iterative-tasks")]
+use rrule::Tz;
 
 pub(crate) type Timestamp = DateTime<Utc>;
 
@@ -9,6 +11,16 @@ pub fn utc_timestamp(secs: i64) -> Timestamp {
         _ => unreachable!("We're requesting UTC so daylight saving time isn't a factor."),
     }
 }
+/// Returns the local timezone for rrule scheduling.
+/// On WASM, `chrono::Local` is unavailable, so UTC is used as a fallback.
+#[cfg(feature = "iterative-tasks")]
+pub(crate) fn local_tz() -> Tz {
+    #[cfg(not(target_arch = "wasm32"))]
+    return Tz::Local(chrono::Local);
+    #[cfg(target_arch = "wasm32")]
+    return Tz::UTC;
+}
+
 #[cfg(not(test))]
 pub(crate) fn utc_now() -> DateTime<Utc> {
     Utc::now()

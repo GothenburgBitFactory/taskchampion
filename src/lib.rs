@@ -24,7 +24,9 @@ pub use server::{Server, ServerConfig};
 pub use storage::indexeddb::IndexedDbStorage;
 #[cfg(feature = "storage-sqlite")]
 pub use storage::sqlite::SqliteStorage;
-pub use task::{utc_timestamp, Annotation, IterType, Status, Tag, Task, TaskData};
+pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
+#[cfg(feature = "iterative-tasks")]
+pub use task::IterType;
 pub use workingset::WorkingSet;
 
 /// Re-exported type from the `uuid` crate, for ease of compatibility for consumers of this crate.
