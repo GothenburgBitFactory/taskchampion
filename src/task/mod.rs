@@ -15,7 +15,7 @@ pub use iter::IterType;
 pub use status::Status;
 pub use tag::Tag;
 pub use task::Task;
-pub use time::utc_timestamp;
-pub(crate) use time::{utc_now, Timestamp};
 #[cfg(feature = "iterative-tasks")]
 pub(crate) use time::local_tz;
+pub use time::utc_timestamp;
+pub(crate) use time::{utc_now, Timestamp};

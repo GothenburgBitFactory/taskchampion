@@ -10,13 +10,12 @@ use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
 #[cfg(feature = "iterative-tasks")]
-use rrule::{RRuleSet, Tz};
+use rrule::RRuleSet;
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
-
 
 /// A task, with a high-level interface.
 ///
@@ -360,7 +359,7 @@ impl Task {
                                 .after(after)
                                 .all(1)
                                 .dates
-                                .get(0)
+                                .first()
                                 .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                                 .to_utc()
                         }
@@ -376,7 +375,7 @@ impl Task {
                                 .after(after)
                                 .all(1)
                                 .dates
-                                .get(0)
+                                .first()
                                 .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                                 .to_utc()
                         }
@@ -396,7 +395,7 @@ impl Task {
                                 .after(now + chrono::Duration::seconds(1))
                                 .all(1)
                                 .dates
-                                .get(0)
+                                .first()
                                 .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                                 .to_utc()
                         }
@@ -433,18 +432,14 @@ impl Task {
                         self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
                         // Check that iter_type exists, otherwise assume chained.
                         if self.data.get("iter_type").is_none() {
-                            self.set_value(
-                                "iter_type",
-                                Some(IterType::Chained.to_string()),
-                                ops,
-                            )?;
+                            self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
                         }
                         // Set the next due date.
                         let due = rrule_set
                             .after(dt_start)
                             .all(1)
                             .dates
-                            .get(0)
+                            .first()
                             .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                             .to_utc();
                         self.set_due(Some(due), ops)?;
@@ -1231,6 +1226,7 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_set_status_iterative_basic() {
         with_mut_task(
@@ -1248,6 +1244,7 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_set_status_iterative_preserves_iter_type() {
         with_mut_task(
@@ -1263,6 +1260,7 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_set_status_iterative_no_iter() {
         let mut replica = Replica::new(InMemoryStorage::new());
@@ -1273,6 +1271,7 @@ mod test {
         assert!(matches!(result, Err(Error::Usage(_))));
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_set_status_iterative_invalid_iter() {
         let mut replica = Replica::new(InMemoryStorage::new());
@@ -1284,6 +1283,7 @@ mod test {
         assert!(matches!(result, Err(Error::Usage(_))));
     }
 
+    #[cfg(feature = "iterative-tasks")]
     async fn setup_iterative_task(
         iter: &str,
         iter_type: Option<&str>,
@@ -1300,6 +1300,7 @@ mod test {
         (replica, task, ops, uuid)
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_chained() {
         let (_, mut task, mut ops, _) = setup_iterative_task("daily", None).await;
@@ -1312,6 +1313,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_fixed() {
         let (_, mut task, mut ops, _) = setup_iterative_task("daily", Some("fixed")).await;
@@ -1325,6 +1327,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_fixed_plus() {
         let (_, mut task, mut ops, _) = setup_iterative_task("daily", Some("fixed+")).await;
@@ -1337,6 +1340,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_creates_clone() {
         let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", None).await;
@@ -1351,6 +1355,7 @@ mod test {
         assert!(clone.data.has("end"));
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_no_rrule_error() {
         let mut replica = Replica::new(InMemoryStorage::new());
@@ -1367,13 +1372,16 @@ mod test {
 
     // time_start = 2026-01-01 00:00:00 UTC.  Weekly occurrences: Jan 8, Jan 15, Jan 22, Jan 29 …
     // time_twenty_four_days_later = 2026-01-25 00:00:00 UTC (task is ~2.5 weeks overdue when completed).
+    #[cfg(feature = "iterative-tasks")]
     fn time_start() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
     }
+    #[cfg(feature = "iterative-tasks")]
     fn time_twenty_four_days_later() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 1, 25, 0, 0, 0).unwrap()
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_fixed_advances_from_schedule() {
         mock_time::set(time_start());
@@ -1388,6 +1396,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_fixed_plus_advances_from_now() {
         mock_time::set(time_start());
@@ -1402,6 +1411,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_chained_advances_period_from_now() {
         mock_time::set(time_start());
