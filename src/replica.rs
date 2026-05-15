@@ -175,7 +175,7 @@ impl<S: Storage> Replica<S> {
     /// Get the dependency map for all pending tasks.
     ///
     /// A task dependency is recognized when a task in the working set depends on a task with
-    /// status equal to Pending.
+    /// status equal to Pending or Iterative.
     ///
     /// The data in this map is cached when it is first requested and may not contain modifications
     /// made locally in this Replica instance.  The result is reference-counted and may
@@ -216,12 +216,12 @@ impl<S: Storage> Replica<S> {
                                             // or if we get the task
                                             self.taskdb.get_task(dep).await?
                                         {
-                                            // and its status is "pending"
+                                            // and its status is "pending" or "iterative"
                                             let dep_pending = matches!(
                                                 dep_taskmap
                                                     .get("status")
                                                     .map(|tm| Status::from_taskmap(tm)),
-                                                Some(Status::Pending)
+                                                Some(Status::Pending) | Some(Status::Iterative)
                                             );
                                             is_pending_cache.insert(dep, dep_pending);
                                             dep_pending

@@ -54,7 +54,7 @@ There are a lot of ways to define iteration periods, which can be extremely comp
 
 Implementing those kinds of rules is difficult, but luckily RFC 5545 Section 3.8.5.3 exists for just this kind of thing. RRules are capable of representing many, though of course not all, iteration periods and there is a well tested RRule library for Rust.
 
-Combining RRules with the iteration types will take a bit of though. Fixed and fixed+ is easy enough, but in order to do chained it will be necessary to modify the DTSTART rule upon task completion.
+Combining RRules with the iteration types will take a bit of thought. Fixed and fixed+ is easy enough, but in order to do chained it will be necessary to modify the DTSTART rule upon task completion.
 
 #### RRule Generation
 
@@ -81,11 +81,24 @@ If a task is changed from some other status to iterative using the Task::change_
 
 The second time that an Iterative task has special handling is when it has its status set to “Completed” using Task::set_status or Task::done.
 
-First, a copy of the task will be created, with a new UUID and a “Completed” status. It will also have a link back to the original iterative task via the 'parent' UUID attribute. This is similar to the TaskWarrior ’log’ command.
+First, a copy of the task will be created, with a new UUID and a “Completed” status. It will also have a link back to the original iterative task via the 'parent' UUID attribute. This is similar to the TaskWarrior ’log’ command. The original task will have a "soft reset" performed on it, with the changes to the following attributes:
+
+| Attribute   | New Original Task Value | Logged Task Value |
+| ----------- | ----------------------- | ----------------- |
+| parent      | unchanged               | parent task UUID  |
+| status      | Iterative (unchanged)   | Completed         |
+| modified    | now                     | now               |
+| start       | none                    | copied            |
+| end         | none                    | now               |
+| entry       | unchanged               | now               |
+| dep\_<UUID> | none                    | copied            |
+| all others  | unchanged               | copied            |
+
+Additionally, all dependent tasks on the Iterative task will have their dep\_\* changed to the newly logged task.
 
 Second, the next due date and wait are calculated from the RRule. For fixed or fixed+ styles, this is a single RRule library call. For chained, it requires updating the RRULEs DTSTART before calling.
 
-Yes, this is basically an inversion of the current recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that since the spawned tasks are completed, it’s not possible to end up with multiple pending tasks that are all copies of each other. In case of a sync issue, there may be multiple copies of completed tasks, but that is far less important. Iterative tasks also require less special handling, as there is no need to hide a parent task most of the time and then still have a way to find it when the user wants to edit or delete it.
+Yes, this is basically an inversion of the current recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that since the spawned tasks are completed, it’s not possible to end up with multiple pending tasks that are all copies of each other. In case of an Iterative task being marked Completed in two replicas before they sync, there may be multiple copies of completed tasks, but that is far less distracting to a user than multiple open tasks. Iterative tasks also require less special handling, as there is no need to hide a parent task most of the time and then still have a way to find it when the user wants to edit or delete it.
 
 ### Integration With TaskWarrior
 

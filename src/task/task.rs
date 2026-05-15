@@ -319,89 +319,7 @@ impl Task {
             Status::Completed => {
                 #[cfg(feature = "iterative-tasks")]
                 if self.get_status() == Status::Iterative {
-                    // Create clone with Completed status.
-                    let uuid = Uuid::new_v4();
-                    let mut dup = Task::new(TaskData::create(uuid, ops), self.depmap.clone());
-                    for (prop, value) in self.data.iter() {
-                        dup.data.update(prop, Some(value.to_owned()), ops);
-                    }
-                    dup.set_value(
-                        Prop::Status.as_ref(),
-                        Some(String::from(Status::Completed.to_taskmap())),
-                        ops,
-                    )?;
-                    dup.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
-                    // Generate new due date.
-                    let iter_type = match self.data.get("iter_type") {
-                        Some(t) => IterType::from_str(t).map_err(|e| {
-                            Error::Iterative(format!("Couldn't parse iter type {}", e))
-                        })?,
-                        None => IterType::Chained,
-                    };
-                    dup.set_value("parent", Some(self.get_uuid().into()), ops)?;
-                    let rule_str = self.data.get("rrule").ok_or_else(|| {
-                        Error::Iterative("Couldn't get rrule from iter task.".into())
-                    })?;
-                    let orig_due = self
-                        .get_due()
-                        .unwrap_or_else(utc_now)
-                        .with_timezone(&local_tz());
-
-                    let due = match iter_type {
-                        IterType::Fixed => {
-                            // create rule set from rule and orig date
-                            let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
-                                Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
-                            })?;
-                            // get first date strictly after orig due date
-                            let after = orig_due + chrono::Duration::seconds(1);
-                            rrule_set
-                                .after(after)
-                                .all(1)
-                                .dates
-                                .first()
-                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                                .to_utc()
-                        }
-                        IterType::FixedPlus => {
-                            // create rule set from rule and orig date
-                            let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
-                                Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
-                            })?;
-                            // get first date strictly after now
-                            let now = utc_now().with_timezone(&local_tz());
-                            let after = now + chrono::Duration::seconds(1);
-                            rrule_set
-                                .after(after)
-                                .all(1)
-                                .dates
-                                .first()
-                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                                .to_utc()
-                        }
-                        IterType::Chained => {
-                            // get now
-                            let now = utc_now().with_timezone(&local_tz());
-                            // rebuild the rule anchored to now using the stored iter string
-                            let iter_str = self.data.get("iter").ok_or_else(|| {
-                                Error::Iterative("Couldn't get iter from iter task.".into())
-                            })?;
-                            let rule = iter::str2rrule(iter_str)?.validate(now).map_err(|e| {
-                                Error::Usage(format!("Couldn't validate rrule: {e}"))
-                            })?;
-                            // get first date after now
-                            let rrule_set = RRuleSet::new(now).rrule(rule);
-                            rrule_set
-                                .after(now + chrono::Duration::seconds(1))
-                                .all(1)
-                                .dates
-                                .first()
-                                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                                .to_utc()
-                        }
-                    };
-                    self.set_due(Some(due), ops)?;
-                    return Ok(());
+                    return self.set_iterative_completed(ops);
                 }
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
@@ -416,39 +334,7 @@ impl Task {
             }
             Status::Iterative => {
                 #[cfg(feature = "iterative-tasks")]
-                {
-                    // Check that there is a an 'iter' value.
-                    if let Some(iter) = self.data.get("iter") {
-                        // For the proof of concept, we'll assume that the rrule dt_start
-                        // time is now. In the future this could be parsed from 'iter', .
-                        let dt_start = utc_now().with_timezone(&local_tz());
-                        // Create the rrule.
-                        let rule = iter::str2rrule(iter)?;
-                        let rule = rule
-                            .validate(dt_start)
-                            .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
-                        let rrule_set = RRuleSet::new(dt_start).rrule(rule);
-                        // Set the rrule value.
-                        self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
-                        // Check that iter_type exists, otherwise assume chained.
-                        if self.data.get("iter_type").is_none() {
-                            self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
-                        }
-                        // Set the next due date.
-                        let due = rrule_set
-                            .after(dt_start)
-                            .all(1)
-                            .dates
-                            .first()
-                            .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                            .to_utc();
-                        self.set_due(Some(due), ops)?;
-                    } else {
-                        return Err(Error::Usage(
-                            "Iterative tasks require an 'iter' value.".into(),
-                        ));
-                    }
-                }
+                self.set_iterative_status(ops)?;
                 #[cfg(not(feature = "iterative-tasks"))]
                 return Err(Error::Usage(
                     "iterative-tasks feature is not enabled".into(),
@@ -461,6 +347,181 @@ impl Task {
             Some(String::from(status.to_taskmap())),
             ops,
         )
+    }
+    #[cfg(feature = "iterative-tasks")]
+    fn set_iterative_status(&mut self, ops: &mut Operations) -> Result<()> {
+        // Check that there is a an 'iter' value.
+        if let Some(iter) = self.data.get("iter") {
+            // For the proof of concept, we'll assume that the rrule dt_start
+            // time is now. In the future this could be parsed from 'iter'.
+            let dt_start = utc_now().with_timezone(&local_tz());
+            // Create the rrule.
+            let rule = iter::str2rrule(iter)?;
+            let rule = rule
+                .validate(dt_start)
+                .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
+            let rrule_set = RRuleSet::new(dt_start).rrule(rule);
+            // Set the rrule value.
+            self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
+            // Check that iter_type exists, otherwise assume chained.
+            if self.data.get("iter_type").is_none() {
+                self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
+            }
+            // Set the next due date.
+            let due = rrule_set
+                .after(dt_start)
+                .all(1)
+                .dates
+                .first()
+                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                .to_utc();
+            self.set_due(Some(due), ops)?;
+            return Ok(());
+        } else {
+            return Err(Error::Usage(
+                "Iterative tasks require an 'iter' value.".into(),
+            ));
+        }
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    fn set_iterative_completed(&mut self, ops: &mut Operations) -> Result<()> {
+        // Create clone with Completed status.
+        let uuid = Uuid::new_v4();
+        let mut dup = Task::new(TaskData::create(uuid, ops), self.depmap.clone());
+        let now = utc_now();
+        for (prop, value) in self.data.iter() {
+            dup.data.update(prop, Some(value.to_owned()), ops);
+        }
+        dup.set_value(
+            Prop::Status.as_ref(),
+            Some(String::from(Status::Completed.to_taskmap())),
+            ops,
+        )?;
+        // Update the simple values that should be changed for each.
+        dup.set_timestamp(Prop::End.as_ref(), Some(now), ops)?;
+        dup.set_value("parent", Some(self.get_uuid().into()), ops)?;
+        self.stop(ops)?;
+        self.set_timestamp(Prop::End.as_ref(), None, ops)?;
+
+        // Update the dependencies.
+        // The Iterative task shouldn't have any dependencies, as it was just completed.
+        let deps: Vec<Uuid> = self.get_dependencies().collect();
+        for dep in deps {
+            self.remove_dependency(dep, ops)?;
+        }
+        // Any tasks currently depending on this task should have their dep moved to the
+        // newly Completed iteration.
+        //
+        // Since a Task doesn't have direct access to the other Tasks in the replaica,
+        // only their UUIDs, this pushes the Operations directly that will modify them.
+        // This should be OK since apply.rs:flush_cache() ignores operations on non-existant tasks.
+        //
+        // self.depmap must reflect the current state of the replica for this to be
+        // complete. Callers should re-fetch this task via Replica::get_task before completing
+        // it if dependents may have been added since this Task instance was created.
+        // This should always be true for normal use.
+        let self_uuid = self.get_uuid();
+        let dependents: Vec<Uuid> = self.depmap.dependents(self_uuid).collect();
+        for dep_task_uuid in dependents {
+            // Remove dep on current Iterative task.
+            ops.push(crate::Operation::Update {
+                uuid: dep_task_uuid,
+                property: format!("dep_{self_uuid}"),
+                old_value: Some("".to_string()),
+                value: None,
+                timestamp: now,
+            });
+            // Add dep on new Completed task.
+            ops.push(crate::Operation::Update {
+                uuid: dep_task_uuid,
+                property: format!("dep_{uuid}"),
+                old_value: None,
+                value: Some("".to_string()),
+                timestamp: now,
+            });
+            // Update modified on the dependent task. old_value is not available here, so
+            // undo will clear modified rather than restore its previous value.
+            ops.push(crate::Operation::Update {
+                uuid: dep_task_uuid,
+                property: "modified".to_string(),
+                old_value: None,
+                value: Some(now.timestamp().to_string()),
+                timestamp: now,
+            });
+        }
+
+        // Generate new due date.
+        let iter_type = match self.data.get("iter_type") {
+            Some(t) => IterType::from_str(t)
+                .map_err(|e| Error::Iterative(format!("Couldn't parse iter type {}", e)))?,
+            None => IterType::Chained,
+        };
+        let rule_str = self
+            .data
+            .get("rrule")
+            .ok_or_else(|| Error::Iterative("Couldn't get rrule from iter task.".into()))?;
+        let orig_due = self
+            .get_due()
+            .unwrap_or_else(utc_now)
+            .with_timezone(&local_tz());
+
+        let due = match iter_type {
+            IterType::Fixed => {
+                // create rule set from rule and orig date
+                let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
+                    Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
+                })?;
+                // get first date strictly after orig due date
+                let after = orig_due + chrono::Duration::seconds(1);
+                rrule_set
+                    .after(after)
+                    .all(1)
+                    .dates
+                    .first()
+                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                    .to_utc()
+            }
+            IterType::FixedPlus => {
+                // create rule set from rule and orig date
+                let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
+                    Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
+                })?;
+                // get first date strictly after now
+                let now = utc_now().with_timezone(&local_tz());
+                let after = now + chrono::Duration::seconds(1);
+                rrule_set
+                    .after(after)
+                    .all(1)
+                    .dates
+                    .first()
+                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                    .to_utc()
+            }
+            IterType::Chained => {
+                // get now
+                let now = utc_now().with_timezone(&local_tz());
+                // rebuild the rule anchored to now using the stored iter string
+                let iter_str = self
+                    .data
+                    .get("iter")
+                    .ok_or_else(|| Error::Iterative("Couldn't get iter from iter task.".into()))?;
+                let rule = iter::str2rrule(iter_str)?
+                    .validate(now)
+                    .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
+                // get first date after now
+                let rrule_set = RRuleSet::new(now).rrule(rule);
+                rrule_set
+                    .after(now + chrono::Duration::seconds(1))
+                    .all(1)
+                    .dates
+                    .first()
+                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                    .to_utc()
+            }
+        };
+        self.set_due(Some(due), ops)?;
+        return Ok(());
     }
 
     pub fn set_description(&mut self, description: String, ops: &mut Operations) -> Result<()> {
@@ -1353,6 +1414,48 @@ mod test {
         let clone = all.values().find(|t| t.get_uuid() != uuid).unwrap();
         assert_eq!(clone.get_status(), Status::Completed);
         assert!(clone.data.has("end"));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_moves_dependents() {
+        // Set up an iterative task and commit it.
+        let (mut replica, _, ops, iter_uuid) = setup_iterative_task("daily", None).await;
+        replica.commit_operations(ops).await.unwrap();
+
+        // Create a pending task that depends on the iterative task, and commit it.
+        let mut ops = Operations::new();
+        let dep_uuid = Uuid::new_v4();
+        let mut dep_task = replica.create_task(dep_uuid, &mut ops).await.unwrap();
+        dep_task.set_status(Status::Pending, &mut ops).unwrap();
+        dep_task.add_dependency(iter_uuid, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        // Re-fetch the iterative task so its depmap reflects the dependent added above.
+        let mut ops = Operations::new();
+        let mut iter_task = replica.get_task(iter_uuid).await.unwrap().unwrap();
+        iter_task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        // Find the logged completed clone (not the original iterative task).
+        let all = replica.all_tasks().await.unwrap();
+        let logged_uuid = all
+            .values()
+            .find(|t| t.get_uuid() != iter_uuid && t.get_status() == Status::Completed)
+            .expect("logged completed clone should exist")
+            .get_uuid();
+
+        // The dependent task should now point to the logged clone, not the iterative task.
+        let dep_task = replica.get_task(dep_uuid).await.unwrap().unwrap();
+        let deps: Vec<Uuid> = dep_task.get_dependencies().collect();
+        assert!(
+            deps.contains(&logged_uuid),
+            "dependent should now depend on the logged clone"
+        );
+        assert!(
+            !deps.contains(&iter_uuid),
+            "dependent should no longer depend on the iterative task"
+        );
     }
 
     #[cfg(feature = "iterative-tasks")]
