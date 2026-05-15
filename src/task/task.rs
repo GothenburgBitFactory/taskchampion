@@ -376,11 +376,11 @@ impl Task {
                 .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
                 .to_utc();
             self.set_due(Some(due), ops)?;
-            return Ok(());
+            Ok(())
         } else {
-            return Err(Error::Usage(
+            Err(Error::Usage(
                 "Iterative tasks require an 'iter' value.".into(),
-            ));
+            ))
         }
     }
 
@@ -521,7 +521,7 @@ impl Task {
             }
         };
         self.set_due(Some(due), ops)?;
-        return Ok(());
+        Ok(())
     }
 
     pub fn set_description(&mut self, description: String, ops: &mut Operations) -> Result<()> {
