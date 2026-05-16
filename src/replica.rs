@@ -358,12 +358,13 @@ impl<S: Storage> Replica<S> {
         }
 
         // Add tasks to the working set when the status property is updated from anything other
-        // than pending or recurring to one of those two statuses.
+        // than pending, recurring, or iterative to one of those three statuses.
         let pending = Status::Pending.to_taskmap();
         let recurring = Status::Recurring.to_taskmap();
+        let iterative = Status::Iterative.to_taskmap();
         let is_p_or_r = |val: &Option<String>| {
             if let Some(val) = val {
-                val == pending || val == recurring
+                val == pending || val == recurring || val == iterative
             } else {
                 false
             }
