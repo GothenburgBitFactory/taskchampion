@@ -1016,6 +1016,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "iterative-tasks")]
     async fn rebuild_working_set_includes_iterative() {
         let mut rep = Replica::new(InMemoryStorage::new());
 
