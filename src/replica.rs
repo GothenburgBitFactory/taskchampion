@@ -449,11 +449,12 @@ impl<S: Storage> Replica<S> {
     pub async fn rebuild_working_set(&mut self, renumber: bool) -> Result<()> {
         let pending = String::from(Status::Pending.to_taskmap());
         let recurring = String::from(Status::Recurring.to_taskmap());
+        let iterative = String::from(Status::Iterative.to_taskmap());
         self.taskdb
             .rebuild_working_set(
                 |t| {
                     if let Some(st) = t.get("status") {
-                        st == &pending || st == &recurring
+                        st == &pending || st == &recurring || st == &iterative
                     } else {
                         false
                     }
@@ -1006,6 +1007,29 @@ mod tests {
         let mut t = rep.get_task(uuid).await.unwrap().unwrap();
         let mut ops = Operations::new();
         t.set_status(Status::Recurring, &mut ops).unwrap();
+        rep.commit_operations(ops).await.unwrap();
+
+        rep.rebuild_working_set(true).await.unwrap();
+
+        let ws = rep.working_set().await.unwrap();
+        assert!(ws.by_uuid(uuid).is_some());
+    }
+
+    #[tokio::test]
+    async fn rebuild_working_set_includes_iterative() {
+        let mut rep = Replica::new(InMemoryStorage::new());
+
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).await.unwrap();
+        t.set_value("iter", Some("weekly".into()), &mut ops)
+            .unwrap();
+        t.set_status(Status::Completed, &mut ops).unwrap();
+        rep.commit_operations(ops).await.unwrap();
+
+        let mut t = rep.get_task(uuid).await.unwrap().unwrap();
+        let mut ops = Operations::new();
+        t.set_status(Status::Iterative, &mut ops).unwrap();
         rep.commit_operations(ops).await.unwrap();
 
         rep.rebuild_working_set(true).await.unwrap();
