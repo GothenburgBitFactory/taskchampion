@@ -1,6 +1,7 @@
 use crate::errors::{Error, Result};
 pub(crate) use rrule::RRule;
 use rrule::{Frequency, NWeekday, Unvalidated, Weekday};
+use std::str::FromStr;
 use strum_macros::{Display, EnumString};
 
 /// The iteration type of a task.
@@ -22,8 +23,26 @@ enum SpecialDays {
 }
 /// Converts an iteration description string to a RRule.
 ///
-/// For now, only handles the standard TaskWarrior style descriptions.
+/// First tries the TaskWarrior-style shorthand parser. If that fails, tries the
+/// `text2rrule` crate for free-form natural language.
 pub(crate) fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
+    match tw_shorthand_to_rrule(value) {
+        Ok(rule) => Ok(rule),
+        Err(shorthand_err) => match text2rrule::text2rrule(value) {
+            Ok(rrule_str) => RRule::<Unvalidated>::from_str(&rrule_str).map_err(|e| {
+                Error::Usage(format!(
+                    "text2rrule produced an unparseable RRULE {rrule_str:?}: {e}"
+                ))
+            }),
+            Err(t2r_err) => Err(Error::Usage(format!(
+                "Could not parse iteration {value:?} as TW shorthand ({shorthand_err}) or as natural language ({t2r_err})"
+            ))),
+        },
+    }
+}
+
+/// Parse a TaskWarrior-style shorthand iteration string into a RRule.
+fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
     // Most TW iteration strings are of the form:
     // nPP where n is the interval number and PP is the period.
     // e.g. 3wks -> every three weeks.
@@ -243,6 +262,33 @@ mod test {
     fn empty_period() {
         let result = str2rrule("");
         assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn text2rrule_every_other_friday() {
+        // "every two weeks on friday" is handled by the text2rrule fallback,
+        // not the TW shorthand parser.
+        let rule = validate_rrule("every two weeks on friday");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 2);
+        assert!(rule
+            .get_by_weekday()
+            .contains(&NWeekday::Every(Weekday::Fri)));
+    }
+
+    #[test]
+    fn text2rrule_every_mon_wed_thur() {
+        let rule = validate_rrule("every mon, wed, and thur");
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert!(rule
+            .get_by_weekday()
+            .contains(&NWeekday::Every(Weekday::Mon)));
+        assert!(rule
+            .get_by_weekday()
+            .contains(&NWeekday::Every(Weekday::Wed)));
+        assert!(rule
+            .get_by_weekday()
+            .contains(&NWeekday::Every(Weekday::Thu)));
     }
 
     #[test]
