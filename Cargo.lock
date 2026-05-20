@@ -2745,6 +2745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "taskchampion"
 version = "3.0.2-pre"
 dependencies = [
@@ -2780,6 +2789,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tempfile",
+ "text2rrule",
  "thiserror 2.0.18",
  "tokio",
  "url",
@@ -2801,6 +2811,17 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "text2rrule"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c0be26c045eff212595b797d49fa789f8b6cc8d06579148b86d6c9837cee7c3"
+dependencies = [
+ "chrono",
+ "sys-locale",
+ "tracing",
 ]
 
 [[package]]
@@ -3712,6 +3733,9 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "regex",
+ "taskchampion",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

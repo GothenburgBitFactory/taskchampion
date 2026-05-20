@@ -58,14 +58,12 @@ Combining RRules with the iteration types will take a bit of thought. Fixed and 
 
 #### RRule Generation
 
-For all advantages of RRules, they are a unique syntax that no one wants to write regularly. There are plain English (or other languages?) to RRule parsers for several programming languages, though not Rust. Looking at the current supported recurrence frequencies, they all map to RRules in a simple mechanical way. We could start with a simple parser that covers the current set, then expand it in the future.
+For all advantages of RRules, they are a unique syntax that no one wants to write regularly. The `iter` value is therefore accepted in two flavors:
 
-This would happen in the following phases:
+1. TaskWarrior-style shorthand: The same style as the recurring tasks: `daily`, `3wk`, `weekdays`, `fortnight`, `2year`, etc. These are mapped mechanically to RRules by a built-in parser.
+2. Free-form natural language: handled by the [`text2rrule`](https://crates.io/crates/text2rrule) crate. Phrases such as `every Monday`, `every other Tuesday`, or `every two weeks on friday` are parsed into an RRULE string and then into an `RRule` value. `text2rrule` supports multiple locales.
 
-1. Map current recur values to Rrules. This is a straightforward mechanical mapping.
-2. Simple descriptions: every Monday, Every six weeks, alternate Thursdays, etc
-3. Compound descriptions: Every Monday, Wednesday, and Sunday. The last Friday of every month, etc
-4. (maybe) Fuzzy descriptions and calculated holidays
+Parsing tries the shorthand parser first and falls back to `text2rrule` on failure, so existing `recur` values keep working unchanged.
 
 ### Iterative Task Flow
 
@@ -73,9 +71,14 @@ An iterative task consists of a single task object, like any other task. In gene
 
 #### Creation / Status Change
 
-When an Iterative take is created, it must have Iterative as its status and an ‘iter’ entry, similar to a recurring task. When Task::new is invoked, the 'iter', 'start', 'end', and 'until' will be parsed into an RRule and set as a 'rrule' UDA. The first due date will be calculated, if not already set, along with any other properties needed. At this point, an iterative task acts the same as any other task
+When an Iterative task is created, it must have Iterative as its status and an `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed into an RRule and stored as an `rrule` UDA.
 
-If a task is changed from some other status to iterative using the Task::change_status function, the same logic as creation is followed.
+The first due date and the RRule's `DTSTART` anchor are chosen as follows:
+
+- If the caller has already set `due` on the task before the transition, that value is used as both the first due date and `DTSTART`. The caller's `due` is preserved exactly.
+- If `due` is not set, `DTSTART` is set to the time of the transition ("now"), and the first due date is the first RRule occurrence on or after now (inclusive). For example, with `iter = weekdays` on a Saturday, the first due date will be the following Monday; with `iter = weekly` on any day, the first due date will be that same day.
+
+If `iter_type` is not set, it defaults to `chained`. At this point, an iterative task acts the same as any other task.
 
 #### Done
 
@@ -132,7 +135,13 @@ One possible alternative to maintaining two separate systems for periodic tasks 
 
 The first approach would be to have TaskChampion just start treating recurring tasks as iterative tasks. This would need to be a major breaking version, as using task recurrence with legacy tools would cause many problems.
 
-The second would be to have TaskChampion migrate existing recurring tasks to iterative tasks. This could be done, but should only be an option if specificity requested.
+The second would be to have TaskChampion migrate existing recurring tasks to iterative tasks. This is available as an opt-in tool:
+
+```
+cargo xtask migrate-recurring --store <PATH> [--dry-run] [--iter-type <fixed|fixed+|chained>]
+```
+
+Existing pending child tasks are left untouched so in-flight work is not disturbed. `--dry-run` reports counts without committing.
 
 ### Just Moving Recurrence Handling
 

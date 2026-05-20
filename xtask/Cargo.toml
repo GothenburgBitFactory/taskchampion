@@ -7,3 +7,12 @@ publish = false
 [dependencies]
 anyhow = "1.0"
 regex = "^1.12.3"
+taskchampion = { path = "..", default-features = false, features = [
+  "storage-sqlite",
+  "bundled",
+  "iterative-tasks",
+] }
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[dev-dependencies]
+tempfile = "3"
