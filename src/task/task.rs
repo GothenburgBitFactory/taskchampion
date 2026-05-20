@@ -352,9 +352,11 @@ impl Task {
     fn set_iterative_status(&mut self, ops: &mut Operations) -> Result<()> {
         // Check that there is a an 'iter' value.
         if let Some(iter) = self.data.get("iter") {
-            // For the proof of concept, we'll assume that the rrule dt_start
-            // time is now. In the future this could be parsed from 'iter'.
-            let dt_start = utc_now().with_timezone(&local_tz());
+            // If `due` is already set, use it as the first due and dt_start.
+            // Else dt_start is now, and the first due is the first rrule
+            // occurrence on or after now.
+            let due_given = self.get_due();
+            let dt_start = due_given.unwrap_or_else(utc_now).with_timezone(&local_tz());
             // Create the rrule.
             let rule = iter::str2rrule(iter)?;
             let rule = rule
@@ -367,15 +369,20 @@ impl Task {
             if self.data.get("iter_type").is_none() {
                 self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
             }
-            // Set the next due date.
-            let due = rrule_set
-                .after(dt_start)
-                .all(1)
-                .dates
-                .first()
-                .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                .to_utc();
-            self.set_due(Some(due), ops)?;
+            // Compute the first due date. If the caller supplied `due`, use
+            // it directly. Otherwise take the first rrule occurrence on or
+            // after dt_start.
+            let first_due = if let Some(due) = due_given {
+                due
+            } else {
+                rrule_set
+                    .all(1)
+                    .dates
+                    .first()
+                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
+                    .to_utc()
+            };
+            self.set_due(Some(first_due), ops)?;
             Ok(())
         } else {
             Err(Error::Usage(
@@ -1319,6 +1326,67 @@ mod test {
             },
         )
         .await;
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_uses_due_when_set() {
+        // When `due` is set before transitioning to Iterative, it is preserved
+        // as both the first due and the rrule anchor.
+        let preset_due = Utc.with_ymd_and_hms(2026, 1, 10, 12, 0, 0).unwrap();
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.set_due(Some(preset_due), &mut ops).unwrap();
+        task.data.update("iter", Some("weekly".into()), &mut ops);
+        task.set_status(Status::Iterative, &mut ops).unwrap();
+        assert_eq!(task.get_due(), Some(preset_due));
+        let rrule = task.data.get("rrule").expect("rrule should be set");
+        assert!(
+            rrule.contains("20260110"),
+            "rrule DTSTART should reflect preset due date, got: {rrule}"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_no_due_inclusive_today() {
+        // weekdays anchored to a weekday should yield that weekday itself as
+        // the first occurrence
+        // 2026-01-07 is a Wednesday.
+        let wednesday = Utc.with_ymd_and_hms(2026, 1, 7, 9, 0, 0).unwrap();
+        mock_time::set(wednesday);
+        let (_, task, _, _) = setup_iterative_task("weekdays", None).await;
+        mock_time::reset();
+        let due = task.get_due().expect("due should be set");
+        // First valid occurrence on or after Wednesday is Wednesday itself.
+        assert_eq!(
+            due.date_naive(),
+            wednesday.date_naive(),
+            "first due should be the same Wednesday, got {due}"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_no_due_skips_to_next_match() {
+        // weekdays anchored to a Saturday should skip to Monday.
+        // 2026-01-03 is a Saturday. 2026-01-05 is the following Monday.
+        let saturday = Utc.with_ymd_and_hms(2026, 1, 3, 9, 0, 0).unwrap();
+        let expected_monday = Utc
+            .with_ymd_and_hms(2026, 1, 5, 0, 0, 0)
+            .unwrap()
+            .date_naive();
+        mock_time::set(saturday);
+        let (_, task, _, _) = setup_iterative_task("weekdays", None).await;
+        mock_time::reset();
+        let due = task.get_due().expect("due should be set");
+        assert_eq!(
+            due.date_naive(),
+            expected_monday,
+            "first due should be the following Monday, got {due}"
+        );
     }
 
     #[cfg(feature = "iterative-tasks")]
