@@ -99,7 +99,7 @@ thiserror = "2.0"
 uuid = { version = "^1.23.1", features = ["serde", "v4"] }
 url = { version = "2", optional = true }
 rrule = { version = "0.14.0", optional = true }
-text2rrule = { version = "0.1.0", optional = true }
+text2rrule = { version = "0.1.1", optional = true }
 glob = { version = "0.3.3", optional = true }
 
 ## wasm-only dependencies.
@@ -131,8 +131,13 @@ web-sys = { version = "0.3.83", optional = true, features = [
 ## non-wasm dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aws-sdk-s3 = { version = "1.131", default-features = false, optional = true }
-aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
-aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
+aws-config = { version = "1.8", default-features = false, features = [
+  "rt-tokio",
+  "behavior-version-latest",
+], optional = true }
+aws-credential-types = { version = "1", default-features = false, features = [
+  "hardcoded-credentials",
+], optional = true }
 aws-smithy-runtime-api = { version = "1.11", default-features = false, optional = true }
 aws-smithy-types = { version = "1.4", default-features = false, optional = true }
 google-cloud-storage = { version = "0.24.0", default-features = false, features = [

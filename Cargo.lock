@@ -2815,9 +2815,9 @@ dependencies = [
 
 [[package]]
 name = "text2rrule"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c0be26c045eff212595b797d49fa789f8b6cc8d06579148b86d6c9837cee7c3"
+checksum = "d020d253c12fe1fa171516bf65cead04bed11f5890b97653f2dd18cff72da0f6"
 dependencies = [
  "chrono",
  "sys-locale",
