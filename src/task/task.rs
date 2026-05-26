@@ -494,9 +494,11 @@ impl Task {
                 let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
                     Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
                 })?;
-                // get first date strictly after now
+                // Anchor strictly after both now and the completed occurrence.
+                // This way it both skips missed occurrences and advances when
+                // completed early.
                 let now = utc_now().with_timezone(&local_tz());
-                let after = now + chrono::Duration::seconds(1);
+                let after = std::cmp::max(now, orig_due) + chrono::Duration::seconds(1);
                 rrule_set
                     .after(after)
                     .all(1)
@@ -1579,6 +1581,24 @@ mod test {
         assert_eq!(
             task.get_due(),
             Some(time_start() + chrono::Duration::weeks(4))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_fixed_plus_advances_when_completed_early() {
+        // The first due date is at Jan 1. Complete it early. FixedPlus must still
+        // advance past the occurrence just completed rather than returning it
+        // again.
+        mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", Some("fixed+")).await;
+        mock_time::set(time_start() - chrono::Duration::days(1));
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        mock_time::reset();
+        // Next weekly occurrence strictly after the completed one (Jan 1) = Jan 8.
+        assert_eq!(
+            task.get_due(),
+            Some(time_start() + chrono::Duration::weeks(1))
         );
     }
 
