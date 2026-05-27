@@ -23,22 +23,25 @@ enum SpecialDays {
 }
 /// Converts an iteration description string to a RRule.
 ///
-/// First tries the TaskWarrior-style shorthand parser. If that fails, tries the
-/// `text2rrule` crate for free-form natural language.
+/// String format check order:
+/// 1. Direct RRULE
+/// 2. TaskWarrior-style shorthand
+/// 3. Natural language via `text2rrule`.
 pub(crate) fn str2rrule(value: &str) -> Result<RRule<Unvalidated>> {
-    match tw_shorthand_to_rrule(value) {
-        Ok(rule) => Ok(rule),
-        Err(shorthand_err) => match text2rrule::text2rrule(value) {
-            Ok(rrule_str) => RRule::<Unvalidated>::from_str(&rrule_str).map_err(|e| {
-                Error::Usage(format!(
-                    "text2rrule produced an unparseable RRULE {rrule_str:?}: {e}"
-                ))
-            }),
-            Err(t2r_err) => Err(Error::Usage(format!(
-                "Could not parse iteration {value:?} as TW shorthand ({shorthand_err}) or as natural language ({t2r_err})"
-            ))),
-        },
+    if let Ok(rule) = RRule::<Unvalidated>::from_str(value) {
+        return Ok(rule);
     }
+    if let Ok(rule) = tw_shorthand_to_rrule(value) {
+        return Ok(rule);
+    }
+    if let Ok(rule) = text2rrule::text2rrule(value) {
+        if let Ok(rule) = RRule::<Unvalidated>::from_str(&rule) {
+            return Ok(rule);
+        }
+    }
+    Err(Error::Usage(format!(
+        "Could not parse iteration value {value:?}"
+    )))
 }
 
 /// Parse a TaskWarrior-style shorthand iteration string into a RRule.
@@ -262,6 +265,16 @@ mod test {
     fn empty_period() {
         let result = str2rrule("");
         assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn raw_rrule() {
+        let rule = str2rrule("FREQ=WEEKLY;INTERVAL=2;BYDAY=FR").unwrap();
+        assert_eq!(rule.get_freq(), Frequency::Weekly);
+        assert_eq!(rule.get_interval(), 2);
+        assert!(rule
+            .get_by_weekday()
+            .contains(&NWeekday::Every(Weekday::Fri)));
     }
 
     #[test]
