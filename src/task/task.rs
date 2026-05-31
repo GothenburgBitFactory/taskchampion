@@ -10,7 +10,7 @@ use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
 #[cfg(feature = "iterative-tasks")]
-use rrule::RRuleSet;
+use rrule::{RRule, RRuleSet, Unvalidated};
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
@@ -357,14 +357,18 @@ impl Task {
             // occurrence on or after now.
             let due_given = self.get_due();
             let dt_start = due_given.unwrap_or_else(utc_now).with_timezone(&local_tz());
-            // Create the rrule.
-            let rule = iter::str2rrule(iter)?;
-            let rule = rule
+            let unvalidated = iter::str2rrule(iter)?;
+            // Validate against dt_start to get the first occurrence.
+            let rule = unvalidated
+                .clone()
                 .validate(dt_start)
                 .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
             let rrule_set = RRuleSet::new(dt_start).rrule(rule);
-            // Set the rrule value.
-            self.set_value("rrule", Some(rrule_set.to_string()), ops)?;
+            // Store the rule in unvalidated form (no DTSTART or DTSTART-derived
+            // defaults like weekday/time). This lets completion re-anchor it to a
+            // new date without inheriting the original anchor's weekday, and means
+            // there is no stored DTSTART to go stale.
+            self.set_value("rrule", Some(unvalidated.to_string()), ops)?;
             // Check that iter_type exists, otherwise assume chained.
             if self.data.get("iter_type").is_none() {
                 self.set_value("iter_type", Some(IterType::Chained.to_string()), ops)?;
@@ -408,8 +412,16 @@ impl Task {
         // Update the simple values that should be changed for each.
         dup.set_timestamp(Prop::End.as_ref(), Some(now), ops)?;
         dup.set_value("parent", Some(self.get_uuid().into()), ops)?;
+        dup.set_entry(Some(now), ops)?;
+        // Remove the iter values so this task won't show up as an iter.
+        dup.set_value("iter", None, ops)?;
+        dup.set_value("rrule", None, ops)?;
+        dup.set_value("iter_type", None, ops)?;
         self.stop(ops)?;
-        self.set_timestamp(Prop::End.as_ref(), None, ops)?;
+        // Clear "end" on the original only if it has one.
+        if self.data.has(Prop::End.as_ref()) {
+            self.set_timestamp(Prop::End.as_ref(), None, ops)?;
+        }
 
         // Update the dependencies.
         // The Iterative task shouldn't have any dependencies, as it was just completed.
@@ -468,23 +480,31 @@ impl Task {
             .data
             .get("rrule")
             .ok_or_else(|| Error::Iterative("Couldn't get rrule from iter task.".into()))?;
+        // The stored rrule is unvalidated. Parse it once, then
+        // re-anchor it to the appropriate date per iteration type.
+        let unvalidated = RRule::<Unvalidated>::from_str(rule_str)
+            .map_err(|e| Error::Iterative(format!("Couldn't parse stored rrule: {e}")))?;
+        // Build an RRuleSet for the stored rule anchored at the given date.
+        let anchored_set = |anchor: DateTime<rrule::Tz>| -> Result<RRuleSet> {
+            let rule = unvalidated
+                .clone()
+                .validate(anchor)
+                .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
+            Ok(RRuleSet::new(anchor).rrule(rule))
+        };
         let due = match iter_type {
             IterType::Fixed => {
                 // Fixed anchors off the original due date, so a missing `due`
-                // is an error rather
+                // is an error rather than silently anchoring to now.
                 let orig_due = self
                     .get_due()
                     .ok_or_else(|| {
                         Error::Iterative("Fixed iterative task requires a 'due' value.".into())
                     })?
                     .with_timezone(&local_tz());
-                // create rule set from rule and orig date
-                let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
-                    Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
-                })?;
                 // get first date strictly after orig due date
                 let after = orig_due + chrono::Duration::seconds(1);
-                rrule_set
+                anchored_set(orig_due)?
                     .after(after)
                     .all(1)
                     .dates
@@ -499,16 +519,12 @@ impl Task {
                     .get_due()
                     .unwrap_or_else(utc_now)
                     .with_timezone(&local_tz());
-                // create rule set from rule and orig date
-                let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
-                    Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
-                })?;
                 // Anchor strictly after both now and the completed occurrence.
                 // This way it both skips missed occurrences and advances when
                 // completed early.
                 let now = utc_now().with_timezone(&local_tz());
                 let after = std::cmp::max(now, orig_due) + chrono::Duration::seconds(1);
-                rrule_set
+                anchored_set(orig_due)?
                     .after(after)
                     .all(1)
                     .dates
@@ -517,19 +533,10 @@ impl Task {
                     .to_utc()
             }
             IterType::Chained => {
-                // get now
+                // Chained re-anchors the rule to now, so the next occurrence is
+                // one period from the completion time.
                 let now = utc_now().with_timezone(&local_tz());
-                // rebuild the rule anchored to now using the stored iter string
-                let iter_str = self
-                    .data
-                    .get("iter")
-                    .ok_or_else(|| Error::Iterative("Couldn't get iter from iter task.".into()))?;
-                let rule = iter::str2rrule(iter_str)?
-                    .validate(now)
-                    .map_err(|e| Error::Usage(format!("Couldn't validate rrule: {e}")))?;
-                // get first date after now
-                let rrule_set = RRuleSet::new(now).rrule(rule);
-                rrule_set
+                anchored_set(now)?
                     .after(now + chrono::Duration::seconds(1))
                     .all(1)
                     .dates
@@ -1343,7 +1350,8 @@ mod test {
     #[tokio::test]
     async fn test_set_status_iterative_uses_due_when_set() {
         // When `due` is set before transitioning to Iterative, it is preserved
-        // as both the first due and the rrule anchor.
+        // as the first due. The rrule itself is stored unbaked (anchor-independent):
+        // the anchor lives in `due`, not in the stored rrule.
         let preset_due = Utc.with_ymd_and_hms(2026, 1, 10, 12, 0, 0).unwrap();
         let mut replica = Replica::new(InMemoryStorage::new());
         let mut ops = Operations::new();
@@ -1354,9 +1362,10 @@ mod test {
         task.set_status(Status::Iterative, &mut ops).unwrap();
         assert_eq!(task.get_due(), Some(preset_due));
         let rrule = task.data.get("rrule").expect("rrule should be set");
-        assert!(
-            rrule.contains("20260110"),
-            "rrule DTSTART should reflect preset due date, got: {rrule}"
+        // No DTSTART/anchor date baked in, and no weekday baked from the anchor.
+        assert_eq!(
+            rrule, "FREQ=WEEKLY",
+            "rrule should be stored unbaked, got: {rrule}"
         );
     }
 
@@ -1495,16 +1504,38 @@ mod test {
     #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
     async fn test_complete_iterative_creates_clone() {
+        mock_time::set(time_start());
         let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", None).await;
+        let now = time_start();
         task.set_status(Status::Completed, &mut ops).unwrap();
         replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
 
         let all = replica.all_tasks().await.unwrap();
         assert_eq!(all.len(), 2, "should have original + completed clone");
 
+        // The logged clone is Completed, has an end, points back to the original
+        // via parent, takes the completion time as its entry, and drops the
+        // iteration fields so it is no longer schedulable.
         let clone = all.values().find(|t| t.get_uuid() != uuid).unwrap();
         assert_eq!(clone.get_status(), Status::Completed);
         assert!(clone.data.has("end"));
+        let parent = clone.get_value("parent").expect("clone should have parent");
+        assert_eq!(Uuid::parse_str(parent).unwrap(), uuid);
+        assert_eq!(
+            clone.get_value("entry"),
+            Some(now.timestamp().to_string().as_str())
+        );
+        assert_eq!(clone.get_value("iter"), None);
+        assert_eq!(clone.get_value("rrule"), None);
+        assert_eq!(clone.get_value("iter_type"), None);
+
+        // The original stays Iterative and keeps its schedule fields.
+        let original = all.get(&uuid).unwrap();
+        assert_eq!(original.get_status(), Status::Iterative);
+        assert!(original.get_value("iter").is_some());
+        assert!(original.get_value("rrule").is_some());
+        assert!(original.get_value("iter_type").is_some());
     }
 
     #[cfg(feature = "iterative-tasks")]
@@ -1635,6 +1666,48 @@ mod test {
         assert_eq!(
             task.get_due(),
             Some(time_twenty_four_days_later() + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_completion_keeps_rrule_unbaked() {
+        // After a Chained completion the stored rule stays anchor-independent.
+        mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", None).await;
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        mock_time::reset();
+        let rrule = task.data.get("rrule").expect("rrule should be set");
+        assert_eq!(rrule, "FREQ=WEEKLY");
+        assert!(!rrule.contains("DTSTART"));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_then_fixed_anchors_to_current_due() {
+        // A task completed as Chained advances its due to a new weekday.
+        // Switching it to Fixed must then anchor off that current due.
+        mock_time::set(time_start());
+        let (_, mut task, mut ops, _) = setup_iterative_task("weekly", None).await;
+        // Complete once as Chained: due advances to Jan 25 + 1 week = Feb 1.
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        let chained_due = task.get_due().unwrap();
+        assert_eq!(
+            chained_due,
+            time_twenty_four_days_later() + chrono::Duration::weeks(1)
+        );
+        // Switch to Fixed and complete again. Fixed anchors off the current due
+        // (Feb 1), so the next occurrence is one week on (Feb 8), staying on the
+        // weekday the chained completion established rather than the original.
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        mock_time::reset();
+        assert_eq!(
+            task.get_due(),
+            Some(chained_due + chrono::Duration::weeks(1))
         );
     }
 

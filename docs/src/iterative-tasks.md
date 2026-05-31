@@ -95,6 +95,7 @@ First, a copy of the task will be created, with a new UUID and a “Completed”
 | end         | none                    | now               |
 | entry       | unchanged               | now               |
 | dep\_<UUID> | none                    | copied            |
+| iter, rrule, iter\_type | unchanged   | none              |
 | all others  | unchanged               | copied            |
 
 Additionally, all dependent tasks on the Iterative task will have their dep\_\* changed to the newly logged task.
