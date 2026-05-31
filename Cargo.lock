@@ -3733,9 +3733,6 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "regex",
- "taskchampion",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

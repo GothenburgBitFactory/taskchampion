@@ -28,20 +28,14 @@ pub fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = env::args().collect();
 
     if arguments.len() < 2 {
-        anyhow::bail!(
-            "xtask: Valid arguments are: `msrv <version x.y>`, `migrate-recurring --store <PATH> [--dry-run] [--iter-type <type>]`"
-        );
+        anyhow::bail!("xtask: Valid arguments are: `msrv <version x.y>`");
     }
 
     match arguments[1].as_str() {
         "msrv" => msrv(arguments, workspace_dir),
-        "migrate-recurring" => migrate_recurring_cli(&arguments[2..]),
         _ => anyhow::bail!("xtask: unknown xtask"),
     }
 }
-
-mod migrate;
-use migrate::migrate_recurring_cli;
 
 /// `cargo xtask msrv (X.Y)`
 ///

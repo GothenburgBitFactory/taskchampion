@@ -136,13 +136,7 @@ One possible alternative to maintaining two separate systems for periodic tasks 
 
 The first approach would be to have TaskChampion just start treating recurring tasks as iterative tasks. This would need to be a major breaking version, as using task recurrence with legacy tools would cause many problems.
 
-The second would be to have TaskChampion migrate existing recurring tasks to iterative tasks. This is available as an opt-in tool:
-
-```
-cargo xtask migrate-recurring --store <PATH> [--dry-run] [--iter-type <fixed|fixed+|chained>]
-```
-
-Existing pending child tasks are left untouched so in-flight work is not disturbed. `--dry-run` reports counts without committing.
+The second would be to have TaskChampion migrate existing recurring tasks to iterative tasks. Migration of existing recurring tasks is deferred to TaskWarrior rather than handled in TaskChampion.
 
 ### Just Moving Recurrence Handling
 
