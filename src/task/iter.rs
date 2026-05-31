@@ -71,7 +71,15 @@ fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
 
     // Split into interval and period.
     let num_str: String = value.chars().take_while(|c| c.is_ascii_digit()).collect();
-    let mut interval = num_str.parse::<u16>().unwrap_or(1);
+    // An empty number means "1" (e.g. "week" -> every 1 week). A non-empty number
+    // that doesn't fit in a u16 is an error.
+    let mut interval = if num_str.is_empty() {
+        1
+    } else {
+        num_str
+            .parse::<u16>()
+            .map_err(|e| Error::Usage(format!("Could not parse interval {num_str:?}: {e}")))?
+    };
     let period = &value[num_str.len()..];
 
     // Parse period into enum.
@@ -264,6 +272,14 @@ mod test {
     #[test]
     fn empty_period() {
         let result = str2rrule("");
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn interval_overflow() {
+        // An interval that doesn't fit in a u16 must be an error, not a silent
+        // fall back to interval 1.
+        let result = str2rrule("100000week");
         assert!(matches!(result, Err(Error::Usage(_))));
     }
 
