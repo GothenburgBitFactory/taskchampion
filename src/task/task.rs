@@ -468,13 +468,16 @@ impl Task {
             .data
             .get("rrule")
             .ok_or_else(|| Error::Iterative("Couldn't get rrule from iter task.".into()))?;
-        let orig_due = self
-            .get_due()
-            .unwrap_or_else(utc_now)
-            .with_timezone(&local_tz());
-
         let due = match iter_type {
             IterType::Fixed => {
+                // Fixed anchors off the original due date, so a missing `due`
+                // is an error rather
+                let orig_due = self
+                    .get_due()
+                    .ok_or_else(|| {
+                        Error::Iterative("Fixed iterative task requires a 'due' value.".into())
+                    })?
+                    .with_timezone(&local_tz());
                 // create rule set from rule and orig date
                 let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
                     Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
@@ -490,6 +493,12 @@ impl Task {
                     .to_utc()
             }
             IterType::FixedPlus => {
+                // FixedPlus anchors off max(now, orig_due), so a missing `due`
+                // can fall back to now.
+                let orig_due = self
+                    .get_due()
+                    .unwrap_or_else(utc_now)
+                    .with_timezone(&local_tz());
                 // create rule set from rule and orig date
                 let rrule_set = RRuleSet::from_str(rule_str).map_err(|e| {
                     Error::Iterative(format!("Couldn't get rule set from rule: {}", e))
@@ -1456,6 +1465,18 @@ mod test {
             due_after > due_before,
             "due should advance: before={due_before}, after={due_after}"
         );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_fixed_requires_due() {
+        let (_, mut task, mut ops, _) = setup_iterative_task("daily", Some("fixed")).await;
+        // Remove the due that set_status(Iterative) computed, simulating a
+        // sync-received or partially-migrated Fixed task with no due. Completing
+        // it must error rather than silently anchoring to now.
+        task.set_due(None, &mut ops).unwrap();
+        let result = task.set_status(Status::Completed, &mut ops);
+        assert!(matches!(result, Err(Error::Iterative(_))));
     }
 
     #[cfg(feature = "iterative-tasks")]
