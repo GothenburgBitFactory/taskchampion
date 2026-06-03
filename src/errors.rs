@@ -20,6 +20,7 @@ pub enum Error {
     #[error("Usage Error: {0}")]
     Usage(String),
     /// An iterative task related error
+    #[cfg(feature = "iterative-tasks")]
     #[error("Iteration Error: {0}")]
     Iterative(String),
     /// A general error.

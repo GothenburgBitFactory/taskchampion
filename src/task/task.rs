@@ -175,7 +175,9 @@ impl Task {
         match synth {
             SyntheticTag::Waiting => self.is_waiting(),
             SyntheticTag::Active => self.is_active(),
-            SyntheticTag::Pending => self.get_status() == Status::Pending,
+            SyntheticTag::Pending => {
+                matches!(self.get_status(), Status::Pending | Status::Iterative)
+            }
             SyntheticTag::Completed => self.get_status() == Status::Completed,
             SyntheticTag::Deleted => self.get_status() == Status::Deleted,
             SyntheticTag::Blocked => self.is_blocked(),
@@ -388,6 +390,10 @@ impl Task {
             if self.data.get("series").is_none() {
                 self.set_value("series", Some(self.get_uuid().into()), ops)?;
             }
+            // Stamp `entry` if absent.
+            if self.get_entry().is_none() {
+                self.set_entry(Some(utc_timestamp(utc_now().timestamp())), ops)?;
+            }
             // Compute the first due date. If the caller supplied `due`, use
             // it directly. Otherwise take the first rrule occurrence on or
             // after dt_start.
@@ -568,7 +574,7 @@ impl Task {
 
         // update the modified timestamp unless we are setting it explicitly
         if &property != "modified" && !self.updated_modified {
-            let now = format!("{}", Utc::now().timestamp());
+            let now = format!("{}", utc_now().timestamp());
             trace!("task {}: set property modified={:?}", self.get_uuid(), now);
             self.data.update(Prop::Modified.as_ref(), Some(now), ops);
             self.updated_modified = true;
@@ -784,6 +790,17 @@ impl Task {
             || key.starts_with("tag_")
             || key.starts_with("annotation_")
             || key.starts_with("dep_")
+            || Task::is_iterative_key(key)
+    }
+
+    /// Keys the iterative-tasks system uses.
+    #[cfg(feature = "iterative-tasks")]
+    fn is_iterative_key(key: &str) -> bool {
+        matches!(key, "rrule" | "series" | "parent")
+    }
+    #[cfg(not(feature = "iterative-tasks"))]
+    fn is_iterative_key(_key: &str) -> bool {
+        false
     }
 }
 
@@ -1776,6 +1793,15 @@ mod test {
 
     #[cfg(feature = "iterative-tasks")]
     #[tokio::test]
+    async fn test_iterative_is_pending_synthetic_tag() {
+        let (_replica, task, _ops, _uuid) = setup_iterative_task("weekly", None).await;
+        assert_eq!(task.get_status(), Status::Iterative);
+        assert!(task.has_tag(&stag(SyntheticTag::Pending)));
+        assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
     async fn test_exhausted_rrule_completes_without_successor() {
         // A finite RRULE (COUNT/UNTIL) must complete the task as its final
         // occurrence.
@@ -2140,6 +2166,34 @@ mod test {
                     .is_err());
             },
             |_task| {},
+        )
+        .await
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_iterative_keys_not_udas() {
+        with_mut_task(
+            |task, ops| {
+                assert!(task
+                    .set_user_defined_attribute("rrule", "FREQ=DAILY", ops)
+                    .is_err());
+                assert!(task.set_user_defined_attribute("series", "x", ops).is_err());
+                assert!(task.set_user_defined_attribute("parent", "x", ops).is_err());
+                task.set_user_defined_attribute("iter", "weekly", ops)
+                    .unwrap();
+                task.set_user_defined_attribute("iter_type", "fixed", ops)
+                    .unwrap();
+                task.set_value("series", Some("s".into()), ops).unwrap();
+            },
+            |task| {
+                let keys: Vec<&str> = task.get_user_defined_attributes().map(|(k, _)| k).collect();
+                assert!(keys.contains(&"iter"));
+                assert!(keys.contains(&"iter_type"));
+                assert!(!keys.contains(&"series"));
+                assert!(!keys.contains(&"rrule"));
+                assert!(!keys.contains(&"parent"));
+            },
         )
         .await
     }
