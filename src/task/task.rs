@@ -20,9 +20,9 @@ use uuid::Uuid;
 /// Fixed namespace for deriving an iterative task's successor UUID via UUIDv5.
 ///
 /// This is derived (per RFC 4122) as
-/// `v5(NAMESPACE_URL, "https://taskwarrior.org")`.
+/// `v5(NAMESPACE_URL, "https://taskwarrior.org/")`.
 /// `Uuid::new_v5` is not `const`, so the precomputed value is inlined here. The
-/// verifies it still matches.
+/// test verifies it still matches.
 #[cfg(feature = "iterative-tasks")]
 const ITERATIVE_NAMESPACE: Uuid = Uuid::from_u128(0xa01f1227_a6e2_5a88_95c7_a37b6b2e0991);
 
@@ -1443,7 +1443,7 @@ mod test {
         // The inlined constant must match its documented RFC 4122 derivation.
         assert_eq!(
             ITERATIVE_NAMESPACE,
-            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"http://taskwarrior.org")
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"https://taskwarrior.org/")
         );
     }
 
