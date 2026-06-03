@@ -54,7 +54,7 @@ There are a lot of ways to define iteration periods, which can be extremely comp
 
 Implementing those kinds of rules is difficult, but luckily RFC 5545 Section 3.8.5.3 exists for just this kind of thing. RRules are capable of representing many, though of course not all, iteration periods and there is a well tested RRule library for Rust.
 
-Combining RRules with the iteration types will take a bit of thought. Fixed and fixed+ is easy enough, but in order to do chained it will be necessary to modify the DTSTART rule upon task completion.
+Combining RRules with the iteration types takes a bit of thought. The rule is stored in an unbaked, anchor-independent form (no `DTSTART`); the anchor lives in the task's `due`. On completion the rule is re-anchored to compute the next due: fixed and fixed+ anchor off the current due, chained anchors off the completion time ("now").
 
 #### RRule Generation
 
@@ -67,16 +67,16 @@ Parsing tries the shorthand parser first and falls back to `text2rrule` on failu
 
 ### Iterative Task Flow
 
-An iterative task consists of a single task object, like any other task. In general, an Iterative task will be handled the same as any other task, except at two points during its lifetime. To put too fine a point on it, Iterative tasks do not need any special handling like recurring tasks do, outside of two places that TaskChampion deals with.
+At any moment a series has one live Iterative task object, handled like any other task. Each time it is completed it is replaced by a successor with a new UUID, so the live UUID advances over the life of the series. The completed instances remain as records. A `series` attribute (see below) ties all instances together. Iterative tasks need special handling in only two places.
 
 #### Creation / Status Change
 
-When an Iterative task is created, it must have Iterative as its status and an `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed into an RRule and stored as an `rrule` UDA.
+When an Iterative task is created, it must have Iterative as its status and an `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed into an RRule and stored, in unbaked (anchor-independent) form, as an `rrule` UDA. A `series` attribute is also stamped, set to the task's own UUID if not already present; every later instance in the series carries this same value.
 
-The first due date and the RRule's `DTSTART` anchor are chosen as follows:
+The first due date is chosen as follows:
 
-- If the caller has already set `due` on the task before the transition, that value is used as both the first due date and `DTSTART`. The caller's `due` is preserved exactly.
-- If `due` is not set, `DTSTART` is set to the time of the transition ("now"), and the first due date is the first RRule occurrence on or after now (inclusive). For example, with `iter = weekdays` on a Saturday, the first due date will be the following Monday; with `iter = weekly` on any day, the first due date will be that same day.
+- If the caller has already set `due` on the task before the transition, that value is used as the first due date and is preserved exactly.
+- If `due` is not set, the first due date is the first RRule occurrence on or after now. For example, with `iter = weekdays` on a Saturday, the first due date will be the following Monday; with `iter = weekly` on any day, the first due date will be that same day.
 
 If `iter_type` is not set, it defaults to `chained`. At this point, an iterative task acts the same as any other task.
 
@@ -84,25 +84,30 @@ If `iter_type` is not set, it defaults to `chained`. At this point, an iterative
 
 The second time that an Iterative task has special handling is when it has its status set to “Completed” using Task::set_status or Task::done.
 
-First, a copy of the task will be created, with a new UUID and a “Completed” status. It will also have a link back to the original iterative task via the 'parent' UUID attribute. This is similar to the TaskWarrior ’log’ command. The original task will have a "soft reset" performed on it, with the changes to the following attributes:
+The iterative task closes itself spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (`v5(ITERATIVE_NAMESPACE, completed_uuid)`), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates. The successor's `parent` points at the task it succeeded, forming a chain, and it carries the same `series` value as every other instance.
 
-| Attribute   | New Original Task Value | Logged Task Value |
-| ----------- | ----------------------- | ----------------- |
-| parent      | unchanged               | parent task UUID  |
-| status      | Iterative (unchanged)   | Completed         |
-| modified    | now                     | now               |
-| start       | none                    | copied            |
-| end         | none                    | now               |
-| entry       | unchanged               | now               |
-| dep\_<UUID> | none                    | copied            |
-| iter, rrule, iter\_type | unchanged   | none              |
-| all others  | unchanged               | copied            |
+The attribute changes, where `self` is the task being completed and `successor` is the new instance:
 
-Additionally, all dependent tasks on the Iterative task will have their dep\_\* changed to the newly logged task.
+| Attribute              | `self`         | `successor`        |
+| ---------------------- | -------------- | ------------------ |
+| status                 | Completed      | Iterative          |
+| end                    | now            | none               |
+| start                  | unchanged      | none               |
+| entry                  | unchanged      | now                |
+| parent                 | unchanged      | `self`'s UUID      |
+| series                 | unchanged      | copied from `self` |
+| iter, rrule, iter_type | none (cleared) | copied from `self` |
+| dep\_<UUID>            | unchanged      | none               |
+| modified               | now            | now                |
+| all others             | unchanged      | copied from `self` |
 
-Second, the next due date and wait are calculated from the RRule. For fixed or fixed+ styles, this is a single RRule library call. For chained, it requires updating the RRULEs DTSTART before calling.
+Because the task the dependents point at is the one that becomes Completed, dependent tasks are unblocked automatically with no dep rewriting. This means completion only ever changes the task itself and the successor it creates.
 
-Yes, this is basically an inversion of the current recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that since the spawned tasks are completed, it’s not possible to end up with multiple pending tasks that are all copies of each other. In case of an Iterative task being marked Completed in two replicas before they sync, there may be multiple copies of completed tasks, but that is far less distracting to a user than multiple open tasks. Iterative tasks also require less special handling, as there is no need to hide a parent task most of the time and then still have a way to find it when the user wants to edit or delete it.
+The next due date is computed from the stored (unbaked) rule, re-anchored per iteration type: fixed and fixed+ anchor off the current due, chained off the completion time. The successor is created with this due.
+
+Note: because completing a task makes its own status `Completed`, the handle used to complete it now refers to the competed occurrence.
+
+Yes, this is basically an inversion of the current recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that there is only ever one live task in a series, so it is not possible to end up with multiple pending tasks that are all copies of each other. With the deterministic successor UUID, two replicas completing the same task before syncing converge to a single completed log and a single successor rather than diverging. Iterative tasks also require less special handling, as there is no hidden parent template to maintain.
 
 ### Integration With TaskWarrior
 
@@ -120,9 +125,9 @@ First, pre-3.0 based applications are completely left out as all iterative funct
 
 Second, all applications that haven’t been updated to recognize the Iterative status may hide or mishandle Iterative tasks. The biggest issue is likely to be marking an Iterative task done and then losing it as an iterative task. If that happens, it will disappear from that client's perspective and the iteration never advances. There are a few possible mitigations, such as a secondary UDA flag that legacy clients wouldn't set, but this might just need to be documented as a possible issue during a transition phase. This is the largest risk in the proposal.
 
-### RRule Modification
+### Reconstructing History
 
-Modifying the RRule on task completion for chained tasks does make the RRule history inconsistent. Searching for things like “give me the last five dates this was done” will need to be done by searching the spawned completed tasks rather than just back calculating the RRule. This is almost certainly a minor issue for almost all use cases.
+The rule is stored unbaked and re-anchored on each completion rather than back-calculable as a single fixed schedule, especially for chained tasks. Searching for things like “give me the last five dates this was done” is done by walking the completed instances of the series.
 
 ### Multiple Upcoming Tasks
 
