@@ -175,7 +175,7 @@ impl<S: Storage> Replica<S> {
     /// Get the dependency map for all pending tasks.
     ///
     /// A task dependency is recognized when a task in the working set depends on a task with
-    /// status equal to Pending.
+    /// status equal to Pending or Iterative.
     ///
     /// The data in this map is cached when it is first requested and may not contain modifications
     /// made locally in this Replica instance.  The result is reference-counted and may
@@ -216,12 +216,12 @@ impl<S: Storage> Replica<S> {
                                             // or if we get the task
                                             self.taskdb.get_task(dep).await?
                                         {
-                                            // and its status is "pending"
+                                            // and its status is "pending" or "iterative"
                                             let dep_pending = matches!(
                                                 dep_taskmap
                                                     .get("status")
                                                     .map(|tm| Status::from_taskmap(tm)),
-                                                Some(Status::Pending)
+                                                Some(Status::Pending) | Some(Status::Iterative)
                                             );
                                             is_pending_cache.insert(dep, dep_pending);
                                             dep_pending
@@ -358,12 +358,13 @@ impl<S: Storage> Replica<S> {
         }
 
         // Add tasks to the working set when the status property is updated from anything other
-        // than pending or recurring to one of those two statuses.
+        // than pending, recurring, or iterative to one of those three statuses.
         let pending = Status::Pending.to_taskmap();
         let recurring = Status::Recurring.to_taskmap();
+        let iterative = Status::Iterative.to_taskmap();
         let is_p_or_r = |val: &Option<String>| {
             if let Some(val) = val {
-                val == pending || val == recurring
+                val == pending || val == recurring || val == iterative
             } else {
                 false
             }
@@ -448,11 +449,12 @@ impl<S: Storage> Replica<S> {
     pub async fn rebuild_working_set(&mut self, renumber: bool) -> Result<()> {
         let pending = String::from(Status::Pending.to_taskmap());
         let recurring = String::from(Status::Recurring.to_taskmap());
+        let iterative = String::from(Status::Iterative.to_taskmap());
         self.taskdb
             .rebuild_working_set(
                 |t| {
                     if let Some(st) = t.get("status") {
-                        st == &pending || st == &recurring
+                        st == &pending || st == &recurring || st == &iterative
                     } else {
                         false
                     }
@@ -1005,6 +1007,30 @@ mod tests {
         let mut t = rep.get_task(uuid).await.unwrap().unwrap();
         let mut ops = Operations::new();
         t.set_status(Status::Recurring, &mut ops).unwrap();
+        rep.commit_operations(ops).await.unwrap();
+
+        rep.rebuild_working_set(true).await.unwrap();
+
+        let ws = rep.working_set().await.unwrap();
+        assert!(ws.by_uuid(uuid).is_some());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "iterative-tasks")]
+    async fn rebuild_working_set_includes_iterative() {
+        let mut rep = Replica::new(InMemoryStorage::new());
+
+        let uuid = Uuid::new_v4();
+        let mut ops = Operations::new();
+        let mut t = rep.create_task(uuid, &mut ops).await.unwrap();
+        t.set_value("iter", Some("weekly".into()), &mut ops)
+            .unwrap();
+        t.set_status(Status::Completed, &mut ops).unwrap();
+        rep.commit_operations(ops).await.unwrap();
+
+        let mut t = rep.get_task(uuid).await.unwrap().unwrap();
+        let mut ops = Operations::new();
+        t.set_status(Status::Iterative, &mut ops).unwrap();
         rep.commit_operations(ops).await.unwrap();
 
         rep.rebuild_working_set(true).await.unwrap();
