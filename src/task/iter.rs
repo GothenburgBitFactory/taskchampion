@@ -100,7 +100,9 @@ fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
         }
         "mo" | "month" | "months" | "monthly" => Frequency::Monthly,
         "qtr" | "qtrs" | "quarter" | "quarters" | "quarterly" => {
-            interval = interval.saturating_mul(3);
+            interval = interval
+                .checked_mul(3)
+                .ok_or_else(|| Error::Usage(format!("Quarter interval {interval} is too large")))?;
             Frequency::Monthly
         }
         "yr" | "year" | "yearly" | "annual" => Frequency::Yearly,
@@ -280,6 +282,12 @@ mod test {
         // An interval that doesn't fit in a u16 must be an error, not a silent
         // fall back to interval 1.
         let result = str2rrule("100000week");
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[test]
+    fn quarter_interval_overflow() {
+        let result = str2rrule("60000qtr");
         assert!(matches!(result, Err(Error::Usage(_))));
     }
 

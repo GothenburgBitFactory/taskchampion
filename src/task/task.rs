@@ -365,7 +365,9 @@ impl Task {
             // Else dt_start is now, and the first due is the first rrule
             // occurrence on or after now.
             let due_given = self.get_due();
-            let dt_start = due_given.unwrap_or_else(utc_now).with_timezone(&local_tz());
+            let dt_start = due_given
+                .unwrap_or_else(|| utc_timestamp(utc_now().timestamp()))
+                .with_timezone(&local_tz());
             let unvalidated = iter::str2rrule(iter)?;
             // Validate against dt_start to get the first occurrence.
             let rule = unvalidated
@@ -410,7 +412,7 @@ impl Task {
 
     #[cfg(feature = "iterative-tasks")]
     fn set_iterative_completed(&mut self, ops: &mut Operations) -> Result<()> {
-        let now = utc_now();
+        let now = utc_timestamp(utc_now().timestamp());
 
         // Compute the next occurrence's due date from the current
         // schedule before changin anything.
@@ -451,8 +453,7 @@ impl Task {
                     .all(1)
                     .dates
                     .first()
-                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                    .to_utc()
+                    .map(|d| d.to_utc())
             }
             IterType::FixedPlus => {
                 // FixedPlus anchors off max(now, orig_due), so a missing `due`
@@ -471,8 +472,7 @@ impl Task {
                     .all(1)
                     .dates
                     .first()
-                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                    .to_utc()
+                    .map(|d| d.to_utc())
             }
             IterType::Chained => {
                 // Chained re-anchors the rule to now, so the next occurrence is
@@ -483,39 +483,41 @@ impl Task {
                     .all(1)
                     .dates
                     .first()
-                    .ok_or_else(|| Error::Iterative("no future occurrence".into()))?
-                    .to_utc()
+                    .map(|d| d.to_utc())
             }
         };
 
-        // Spawn the successor. Its UUID is derived from this task's UUID so
-        // that two replicas create the same task.
-        let self_uuid = self.get_uuid();
-        let successor_uuid = Uuid::new_v5(&ITERATIVE_NAMESPACE, self_uuid.as_bytes());
-        let mut successor = Task::new(TaskData::create(successor_uuid, ops), self.depmap.clone());
-        for (prop, value) in self.data.iter() {
-            // Skip properties that shouldn't be copied.
-            let skip = matches!(
-                prop.as_str(),
-                "status" | "modified" | "end" | "start" | "due" | "entry" | "parent"
-            ) || prop.starts_with("dep_");
-            if skip {
-                continue;
+        // Spawn the successor only when the schedule yields a future occurrence.
+        // Otherwise just complete the task.
+        if let Some(due) = due {
+            let self_uuid = self.get_uuid();
+            let successor_uuid = Uuid::new_v5(&ITERATIVE_NAMESPACE, self_uuid.as_bytes());
+            let mut successor =
+                Task::new(TaskData::create(successor_uuid, ops), self.depmap.clone());
+            for (prop, value) in self.data.iter() {
+                // Skip properties that shouldn't be copied.
+                let skip = matches!(
+                    prop.as_str(),
+                    "status" | "modified" | "end" | "start" | "due" | "entry" | "parent"
+                ) || prop.starts_with("dep_");
+                if skip {
+                    continue;
+                }
+                successor.data.update(prop, Some(value.to_owned()), ops);
             }
-            successor.data.update(prop, Some(value.to_owned()), ops);
-        }
-        successor.set_value(
-            Prop::Status.as_ref(),
-            Some(String::from(Status::Iterative.to_taskmap())),
-            ops,
-        )?;
-        successor.set_due(Some(due), ops)?;
-        successor.set_entry(Some(now), ops)?;
-        successor.set_value("parent", Some(self_uuid.into()), ops)?;
-        // If this task had no series id treat it as the series root. Shouldn't
-        // happen, but prevents possible cross-version corruption.
-        if successor.data.get("series").is_none() {
-            successor.set_value("series", Some(self_uuid.into()), ops)?;
+            successor.set_value(
+                Prop::Status.as_ref(),
+                Some(String::from(Status::Iterative.to_taskmap())),
+                ops,
+            )?;
+            successor.set_due(Some(due), ops)?;
+            successor.set_entry(Some(now), ops)?;
+            successor.set_value("parent", Some(self_uuid.into()), ops)?;
+            // If this task had no series id treat it as the series root.
+            // Shouldn't happen, but prevents possible cross-version corruption.
+            if successor.data.get("series").is_none() {
+                successor.set_value("series", Some(self_uuid.into()), ops)?;
+            }
         }
 
         // Finally, complete the task.
@@ -789,6 +791,8 @@ impl Task {
 #[allow(deprecated)]
 mod test {
     use super::*;
+    #[cfg(feature = "iterative-tasks")]
+    use crate::task::time::mock_tz;
     use crate::{storage::inmemory::InMemoryStorage, task::time::mock_time, Replica};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
@@ -1357,10 +1361,14 @@ mod test {
         // weekdays anchored to a weekday should yield that weekday itself as
         // the first occurrence
         // 2026-01-07 is a Wednesday.
+        // Pin scheduling to UTC so the anchor's weekday does not depend on the
+        // host's system timezone (C1-004).
+        mock_tz::set(rrule::Tz::UTC);
         let wednesday = Utc.with_ymd_and_hms(2026, 1, 7, 9, 0, 0).unwrap();
         mock_time::set(wednesday);
         let (_, task, _, _) = setup_iterative_task("weekdays", None).await;
         mock_time::reset();
+        mock_tz::reset();
         let due = task.get_due().expect("due should be set");
         // First valid occurrence on or after Wednesday is Wednesday itself.
         assert_eq!(
@@ -1375,6 +1383,9 @@ mod test {
     async fn test_set_status_iterative_no_due_skips_to_next_match() {
         // weekdays anchored to a Saturday should skip to Monday.
         // 2026-01-03 is a Saturday. 2026-01-05 is the following Monday.
+        // Pin scheduling to UTC so the anchor's weekday does not depend on the
+        // host's system timezone (C1-004).
+        mock_tz::set(rrule::Tz::UTC);
         let saturday = Utc.with_ymd_and_hms(2026, 1, 3, 9, 0, 0).unwrap();
         let expected_monday = Utc
             .with_ymd_and_hms(2026, 1, 5, 0, 0, 0)
@@ -1383,6 +1394,7 @@ mod test {
         mock_time::set(saturday);
         let (_, task, _, _) = setup_iterative_task("weekdays", None).await;
         mock_time::reset();
+        mock_tz::reset();
         let due = task.get_due().expect("due should be set");
         assert_eq!(
             due.date_naive(),
@@ -1760,6 +1772,80 @@ mod test {
             succ2.get_due(),
             Some(chained_due + chrono::Duration::weeks(1))
         );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_exhausted_rrule_completes_without_successor() {
+        // A finite RRULE (COUNT/UNTIL) must complete the task as its final
+        // occurrence.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("FREQ=DAILY;COUNT=1", None).await;
+        // Re-assert the mocked time after the setup await (the thread-local may
+        // not survive it), so completion anchors at the mocked time.
+        mock_time::set(time_start());
+        // Previously this returned Err and left the task stuck as Iterative.
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // The original task is Completed, not stuck as Iterative.
+        let done = replica.get_task(uuid).await.unwrap().unwrap();
+        assert_eq!(done.get_status(), Status::Completed);
+        // No successor was spawned for the exhausted schedule.
+        assert!(replica
+            .get_task(successor_of(uuid))
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_corrupt_rrule_errors_on_completion() {
+        // A stored rrule that cannot be parsed must surface an error on
+        // completion.
+        mock_time::set(time_start());
+        let (_replica, mut task, mut ops, _uuid) = setup_iterative_task("weekly", None).await;
+        // Corrupt the stored rrule directly, then attempt completion.
+        task.set_value("rrule", Some("NOT-A-RULE".into()), &mut ops)
+            .unwrap();
+        let err = task.set_status(Status::Completed, &mut ops);
+        mock_time::reset();
+        assert!(err.is_err(), "corrupt rrule should error on completion");
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_daily_keeps_local_wall_clock_across_dst() {
+        use chrono::Timelike;
+        // 2026-03-07 13:00 UTC = 08:00 EST, the day before US spring-forward
+        let completed_at = Utc.with_ymd_and_hms(2026, 3, 7, 13, 0, 0).unwrap();
+        mock_tz::set(rrule::Tz::America__New_York);
+        mock_time::set(completed_at);
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", None).await;
+        // Re-assert the mocked zone and time after the setup.
+        mock_tz::set(rrule::Tz::America__New_York);
+        mock_time::set(completed_at);
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let due = succ.get_due().unwrap();
+        mock_tz::reset();
+        // Next daily occurrence is 08:00 local the following day, after
+        // after spring-forward.
+        let due_local = due.with_timezone(&rrule::Tz::America__New_York);
+        assert_eq!(
+            due_local.hour(),
+            8,
+            "daily task keeps 08:00 local, got {due_local}"
+        );
+        assert_eq!(
+            due_local.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap()
+        );
+        assert_eq!(due, Utc.with_ymd_and_hms(2026, 3, 8, 12, 0, 0).unwrap());
     }
 
     #[tokio::test]

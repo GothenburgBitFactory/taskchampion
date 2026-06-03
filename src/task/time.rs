@@ -15,10 +15,33 @@ pub fn utc_timestamp(secs: i64) -> Timestamp {
 /// On WASM, `chrono::Local` is unavailable, so UTC is used as a fallback.
 #[cfg(feature = "iterative-tasks")]
 pub(crate) fn local_tz() -> Tz {
+    #[cfg(test)]
+    if let Some(tz) = mock_tz::get() {
+        return tz;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     return Tz::Local(chrono::Local);
     #[cfg(target_arch = "wasm32")]
     return Tz::UTC;
+}
+
+/// Test-only override of the timezone used by `local_tz`.
+#[cfg(all(feature = "iterative-tasks", test))]
+pub(crate) mod mock_tz {
+    use rrule::Tz;
+    use std::cell::Cell;
+    thread_local! {
+        static TZ: Cell<Option<Tz>> = const { Cell::new(None) };
+    }
+    pub(crate) fn get() -> Option<Tz> {
+        TZ.with(|t| t.get())
+    }
+    pub(crate) fn set(tz: Tz) {
+        TZ.with(|c| c.set(Some(tz)));
+    }
+    pub(crate) fn reset() {
+        TZ.with(|c| c.set(None));
+    }
 }
 
 #[cfg(not(test))]

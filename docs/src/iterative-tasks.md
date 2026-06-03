@@ -133,6 +133,12 @@ The rule is stored unbaked and re-anchored on each completion rather than back-c
 
 The recurring task system supports having multiple open upcoming tasks based on the recurring template task. Iterative tasks don’t support that, but calculating the next arbitrary number of due dates is trivial, which should cover most use cases.
 
+### Scheduling Timezone and Cross-Replica Convergence
+
+Schedules are computed in the completing replica's local timezone, the same as Taskwarrior's recurrence.
+
+If two replicas in different timezones complete the same occurrence before syncing, each computes the next occurrence in its own timezone. When syncing the time/date based field values are resolved last-writer-wins by sync order. This will cause a one-off discrepancy that self-corrects on the next completion, not duplicate tasks or corruption.
+
 ## Alternatives
 
 ### Upgrading
