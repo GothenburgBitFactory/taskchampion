@@ -167,6 +167,10 @@ impl Server for LocalServer {
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         Ok(None)
     }
+
+    async fn latest_version_id(&mut self) -> Result<VersionId> {
+        self.get_latest_version_id()
+    }
 }
 
 #[cfg(test)]

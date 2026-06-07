@@ -560,6 +560,11 @@ mod test {
             timer(DELAY).await;
             self.0.get_snapshot().await
         }
+
+        async fn latest_version_id(&mut self) -> Result<VersionId> {
+            timer(DELAY).await;
+            self.0.latest_version_id().await
+        }
     }
 
     #[wasm_bindgen_test]

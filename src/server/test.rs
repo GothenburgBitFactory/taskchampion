@@ -60,6 +60,12 @@ impl TestServer {
         inner.versions.remove(&parent_version_id);
     }
 
+    /// Delete any snapshot from storage, if it exists.
+    pub(crate) fn delete_snapshot(&mut self) {
+        let mut inner = self.0.lock().unwrap();
+        inner.snapshot = None;
+    }
+
     pub(crate) fn versions_len(&self) -> usize {
         let inner = self.0.lock().unwrap();
         inner.versions.len()
@@ -137,5 +143,10 @@ impl Server for TestServer {
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
         let inner = self.0.lock().unwrap();
         Ok(inner.snapshot.clone())
+    }
+
+    async fn latest_version_id(&mut self) -> Result<VersionId> {
+        let inner = self.0.lock().unwrap();
+        Ok(inner.latest_version_id)
     }
 }

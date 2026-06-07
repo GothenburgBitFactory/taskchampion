@@ -525,6 +525,11 @@ impl<SVC: Service + Send> Server for CloudServer<SVC> {
         })?;
         Ok(Some((version_id, unsealed.payload)))
     }
+
+    async fn latest_version_id(&mut self) -> Result<VersionId> {
+        let latest = self.get_latest().await?.unwrap_or_else(Uuid::nil);
+        Ok(latest)
+    }
 }
 
 #[cfg(test)]
@@ -1278,5 +1283,20 @@ mod tests {
             server.get_snapshot().await.unwrap(),
             Some((v, b"SNAP".to_vec()))
         );
+    }
+
+    #[tokio::test]
+    async fn latest_version_id_empty() {
+        let mut server = make_server().await;
+        assert_eq!(server.latest_version_id().await.unwrap(), Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn latest_version_id_child() {
+        let mut server = make_server().await;
+        let (v1, v2) = (Uuid::new_v4(), Uuid::new_v4());
+        server.mock_add_version(v2, v1, 1000, b"first");
+        server.mock_set_latest(v1);
+        assert_eq!(server.latest_version_id().await.unwrap(), v1);
     }
 }

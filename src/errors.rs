@@ -8,6 +8,9 @@ pub enum Error {
     /// A server-related error
     #[error("Server Error: {0}")]
     Server(String),
+    /// The server does not implement this method.
+    #[error("Method not implemented on server")]
+    ServerUnimplemented,
     /// A task-database-related error
     #[error("Task Database Error: {0}")]
     Database(String),

@@ -72,5 +72,11 @@ pub trait Server {
     /// Add a snapshot on the server
     async fn add_snapshot(&mut self, version_id: VersionId, snapshot: Snapshot) -> Result<()>;
 
+    /// Get a snapshot from the server
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>>;
+
+    /// Get the current latest version on the server.
+    ///
+    /// This may not be implemented by the server, in which case it returns Err(Error::ServerUnimplemented).
+    async fn latest_version_id(&mut self) -> Result<VersionId>;
 }

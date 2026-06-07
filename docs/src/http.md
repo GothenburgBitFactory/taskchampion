@@ -43,6 +43,14 @@ Clients should treat a 410 GONE as a synchronization error.
 If the client has pending changes to send to the server, based on a now-removed version, then those changes cannot be reconciled and will be lost.
 The client should, optionally after consulting the user, download and apply the latest snapshot.
 
+## GetLatestVersionId
+
+The request is a `GET` to `<base_url>/v1/client/latest-version-id`.
+On success, the response is a 200 OK, with an empty body.
+The latest version ID appears in the `X-Version-Id` header.
+
+Server versions exist which did not support this transaction, so callers should handle a 404 NOT FOUND as a lack of information, rather than an indication that no latest version exists on the server.
+
 ## AddSnapshot
 
 The request is a `POST` to `<base_url>/v1/client/add-snapshot/<versionId>`.
