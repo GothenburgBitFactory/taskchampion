@@ -20,11 +20,11 @@ use uuid::Uuid;
 /// Fixed namespace for deriving an iterative task's successor UUID via UUIDv5.
 ///
 /// This is derived (per RFC 4122) as
-/// `v5(NAMESPACE_URL, "https://taskwarrior.org/")`.
+/// `v5(NAMESPACE_URL, "taskchampion-iterative-task")`.
 /// `Uuid::new_v5` is not `const`, so the precomputed value is inlined here. The
 /// test verifies it still matches.
 #[cfg(feature = "iterative-tasks")]
-const ITERATIVE_NAMESPACE: Uuid = Uuid::from_u128(0xa01f1227_a6e2_5a88_95c7_a37b6b2e0991);
+const ITERATIVE_NAMESPACE: Uuid = Uuid::from_u128(0x6ab813ab_3ff5_56f4_820e_31ada24844af);
 
 /// A task, with a high-level interface.
 ///
@@ -504,7 +504,7 @@ impl Task {
                 // Skip properties that shouldn't be copied.
                 let skip = matches!(
                     prop.as_str(),
-                    "status" | "modified" | "end" | "start" | "due" | "entry" | "parent"
+                    "status" | "modified" | "end" | "start" | "due" | "entry" | "prior"
                 ) || prop.starts_with("dep_");
                 if skip {
                     continue;
@@ -518,7 +518,7 @@ impl Task {
             )?;
             successor.set_due(Some(due), ops)?;
             successor.set_entry(Some(now), ops)?;
-            successor.set_value("parent", Some(self_uuid.into()), ops)?;
+            successor.set_value("prior", Some(self_uuid.into()), ops)?;
             // If this task had no series id treat it as the series root.
             // Shouldn't happen, but prevents possible cross-version corruption.
             if successor.data.get("series").is_none() {
@@ -796,7 +796,7 @@ impl Task {
     /// Keys the iterative-tasks system uses.
     #[cfg(feature = "iterative-tasks")]
     fn is_iterative_key(key: &str) -> bool {
-        matches!(key, "rrule" | "series" | "parent")
+        matches!(key, "rrule" | "series" | "prior")
     }
     #[cfg(not(feature = "iterative-tasks"))]
     fn is_iterative_key(_key: &str) -> bool {
@@ -1472,7 +1472,7 @@ mod test {
         // The inlined constant must match its documented RFC 4122 derivation.
         assert_eq!(
             ITERATIVE_NAMESPACE,
-            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"https://taskwarrior.org/")
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"taskchampion-iterative-task")
         );
     }
 
@@ -1522,7 +1522,7 @@ mod test {
         assert_eq!(log.get_value("rrule"), None);
         assert_eq!(log.get_value("iter_type"), None);
 
-        // The successor is the new live instance: schedule copied, parent points
+        // The successor is the new live instance: schedule copied, prior points
         // back to the log, entry is now, status Iterative.
         let succ = all
             .get(&successor_of(uuid))
@@ -1532,7 +1532,7 @@ mod test {
         assert!(succ.get_value("rrule").is_some());
         assert!(succ.get_value("iter_type").is_some());
         assert_eq!(
-            succ.get_value("parent")
+            succ.get_value("prior")
                 .and_then(|p| Uuid::parse_str(p).ok()),
             Some(uuid)
         );
@@ -2179,7 +2179,7 @@ mod test {
                     .set_user_defined_attribute("rrule", "FREQ=DAILY", ops)
                     .is_err());
                 assert!(task.set_user_defined_attribute("series", "x", ops).is_err());
-                assert!(task.set_user_defined_attribute("parent", "x", ops).is_err());
+                assert!(task.set_user_defined_attribute("prior", "x", ops).is_err());
                 task.set_user_defined_attribute("iter", "weekly", ops)
                     .unwrap();
                 task.set_user_defined_attribute("iter_type", "fixed", ops)
@@ -2192,7 +2192,7 @@ mod test {
                 assert!(keys.contains(&"iter_type"));
                 assert!(!keys.contains(&"series"));
                 assert!(!keys.contains(&"rrule"));
-                assert!(!keys.contains(&"parent"));
+                assert!(!keys.contains(&"prior"));
             },
         )
         .await

@@ -1,12 +1,17 @@
 # TaskChampion Iterative Tasks
 
-There are several issues with how the TaskWarrior/TaskChampion ecosystem handles recurring tasks. See the TaskWarrior [issue list](https://github.com/GothenburgBitFactory/taskwarrior/issues?q=is%3Aissue%20state%3Aopen%20label%3Atopic%3Arecurrence) for examples.
+Iterative tasks are a feature for handling repeating tasks inside of TaskChampion that can replace or live alongside TaskWarrior's recurring system.
 
-This proposal is for a significant redesign of the recurrence system, with a different set of trade offs. Therefore, it is currently being proposed in a way that it could either replace or live alongside the current recurring task system.
+The primary goals are:
+
+- 1. Provide a more intuitive repeating task model
+- 2. Handle synchronizing repeating tasks across replicas cleanly
+- 3. Support any TaskChampion front end
+- 4. Fix many of TaskWarrior's recurring tasks [issues](https://github.com/GothenburgBitFactory/taskwarrior/issues?q=is%3Aissue%20state%3Aopen%20label%3Atopic%3Arecurrence)
 
 ### Nomenclature
 
-In order to help keep things clear and for a few technical reasons, the proposed system will be referred to as iterative tasks, while the current system will be referred to as recurring tasks.
+In order to help keep things clear and for a few technical reasons, the new system is referred to as `Iterative` tasks, while the current system is referred to as `Recurring` tasks.
 
 ## Iterative Tasks Main Ideas
 
@@ -20,33 +25,29 @@ The major components of the iterative task system are:
 
 ### Iteration Handling in TaskChampion
 
-Currently, task recurrence is handled by the various frontends: primarily TaskWarrior, but also the mobile apps, web apps, and other platforms. This means that each frontend has to implement their own recurrence handler, each with its own quirks and syncing issues.
-
-Task iteration will be handled in TaskChampion, as discussed in [issue 595](https://github.com/GothenburgBitFactory/taskchampion/issues/595). This will primarily be done in the Task struct with additions to the constructor and set_status functions. This does mean that frontends that primarily rely on the underlying TaskData struct will miss out on task iteration.
-
-The frontends will see iterative tasks as normal tasks, with due, start, wait, end, and other properties as expected. The primary difference will be the new Iterative status and a few UDAs.
+All task iteration is handled in TaskChampion. Front ends like TaskWarrior only need to be updated to accept the new `Iterative` task status and call the provided `Task::set_status()/done()` functions instead of directly manipulating raw `TaskData`.
 
 ### New Task Status
 
-A new task status will be created, Iterative, for iterative tasks. This will prevent current recurrence code from interfering with the iteration system and vice versa.
+A new task status, Iterative, is used for iterative tasks. This prevents current recurrence code from interfering with the iteration system and vice versa.
 
-Note: This could be changed, see [Upgrading](#Upgrading) for more discussion.
+### Iteration Interval Types
 
-### Iteration Types
+There are three types of iteration supported by iterative tasks.
 
-There are several styles of iteration used in todo applications generally, but two stand out as most common:
+#### Fixed
 
-#### Fixed Interval
+When a `fixed` interval task is completed, the next due date is set to the next interval from when it was originally due. As an example, if rent is due on the 20th of the month, the next due date will be on the 20th of the next month, regardless of if I paid it on the 15th, the 20th or the 25th. These are called "fixed" tasks.
 
-When a fixed interval task is completed, the next due date is set to the next interval from when it was originally due. As an example, if rent is due on the 20th of the month, the next due date will be on the 20th of the next month, regardless of if I paid it on the 15th, the 20th or the 25th.
+#### Fixed+
 
-This does invite the question of how to handle tasks that are overdue by more than their iteration period. If I missed January and February's payments, should completing the task once move the next due date to February 20th or March 20th? Lets call just moving to the next interval "fixed" and the next interval in the future "fixed+"
+When a `fixed+` interval task is completed, the next due date is set to the next interval from when it was originally due _on or after right now_. For example, if I have to take out the garbage bins every week but miss two because I'm on vacation, I shouldn't take them out multiple days in a row to make up for it.
 
 #### Chained
 
 When a chained interval task is completed, the next due date is set to the next interval from when it was completed. As an example, if I normally get a haircut every six weeks and I got one today, my next one should be six weeks from today, even if I got this one three weeks late, or two days early.
 
-In order to handle these iteration styles, an "iter_type" UDA will be added, which can be one of "fixed", "fixed+", and "chained".
+In order to handle these iteration styles, an "iter_type" UDA is added, which can be one of "fixed", "fixed+", and "chained".
 
 ### RRULE Based Iteration Definition
 
@@ -54,16 +55,17 @@ There are a lot of ways to define iteration periods, which can be extremely comp
 
 Implementing those kinds of rules is difficult, but luckily RFC 5545 Section 3.8.5.3 exists for just this kind of thing. RRules are capable of representing many, though of course not all, iteration periods and there is a well tested RRule library for Rust.
 
-Combining RRules with the iteration types takes a bit of thought. The rule is stored in an unbaked, anchor-independent form (no `DTSTART`); the anchor lives in the task's `due`. On completion the rule is re-anchored to compute the next due: fixed and fixed+ anchor off the current due, chained anchors off the completion time ("now").
+Combining RRules with the iteration types takes a bit of thought. The rule is stored in an unbaked, anchor-independent form (no `DTSTART`); the anchor lives in the task's `due`. On completion the rule is re-anchored to compute the next due: fixed anchors off the current due, fixed+ also anchors off the due but advances to the next occurrence on or after now, and chained anchors off the completion time ("now").
 
 #### RRule Generation
 
-For all advantages of RRules, they are a unique syntax that no one wants to write regularly. The `iter` value is therefore accepted in two flavors:
+For all advantages of RRules, they are a unique syntax that (almost) no one wants to write regularly. The `iter` value is therefore accepted in three flavors:
 
 1. TaskWarrior-style shorthand: The same style as the recurring tasks: `daily`, `3wk`, `weekdays`, `fortnight`, `2year`, etc. These are mapped mechanically to RRules by a built-in parser.
 2. Free-form natural language: handled by the [`text2rrule`](https://crates.io/crates/text2rrule) crate. Phrases such as `every Monday`, `every other Tuesday`, or `every two weeks on friday` are parsed into an RRULE string and then into an `RRule` value. `text2rrule` supports multiple locales.
+3. Raw RRules, for people who wish to use them directly.
 
-Parsing tries the shorthand parser first and falls back to `text2rrule` on failure, so existing `recur` values keep working unchanged.
+Parsing tries a raw RRULE first, then the shorthand parser, then `text2rrule`, so existing `recur` values keep working unchanged.
 
 ### Iterative Task Flow
 
@@ -84,7 +86,7 @@ If `iter_type` is not set, it defaults to `chained`. At this point, an iterative
 
 The second time that an Iterative task has special handling is when it has its status set to “Completed” using Task::set_status or Task::done.
 
-The iterative task closes itself spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (`v5(ITERATIVE_NAMESPACE, completed_uuid)`), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates. The successor's `parent` points at the task it succeeded, forming a chain, and it carries the same `series` value as every other instance.
+The iterative task closes itself spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (`v5(ITERATIVE_NAMESPACE, completed_uuid)`), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates. The successor's `prior` points at the task it succeeded, forming a chain, and it carries the same `series` value as every other instance.
 
 The attribute changes, where `self` is the task being completed and `successor` is the new instance:
 
@@ -94,7 +96,7 @@ The attribute changes, where `self` is the task being completed and `successor` 
 | end                    | now            | none               |
 | start                  | unchanged      | none               |
 | entry                  | unchanged      | now                |
-| parent                 | unchanged      | `self`'s UUID      |
+| prior                  | unchanged      | `self`'s UUID      |
 | series                 | unchanged      | copied from `self` |
 | iter, rrule, iter_type | none (cleared) | copied from `self` |
 | dep\_<UUID>            | unchanged      | none               |
@@ -103,52 +105,26 @@ The attribute changes, where `self` is the task being completed and `successor` 
 
 Because the task the dependents point at is the one that becomes Completed, dependent tasks are unblocked automatically with no dep rewriting. This means completion only ever changes the task itself and the successor it creates.
 
-The next due date is computed from the stored (unbaked) rule, re-anchored per iteration type: fixed and fixed+ anchor off the current due, chained off the completion time. The successor is created with this due.
+The successor's due date is computed from the stored rule, re-anchored per iteration type:
 
-Note: because completing a task makes its own status `Completed`, the handle used to complete it now refers to the competed occurrence.
+- fixed anchors off the current due
+- fixed+ anchors off the due but advancing to the next occurrence on or after now
+- chained anchors off the completion time.
 
-Yes, this is basically an inversion of the current recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that there is only ever one live task in a series, so it is not possible to end up with multiple pending tasks that are all copies of each other. With the deterministic successor UUID, two replicas completing the same task before syncing converge to a single completed log and a single successor rather than diverging. Iterative tasks also require less special handling, as there is no hidden parent template to maintain.
+Note: because completing a task makes its own status `Completed`, the handle used to complete it now refers to the completed occurrence.
 
-### Integration With TaskWarrior
+This is basically an inversion of the recurring system, where a hidden “parent” task spawns new pending tasks. The advantage is that there is only ever one live task in a series, so it is not possible to end up with multiple pending tasks that are all copies of each other. With the deterministic successor UUID, two replicas completing the same task before syncing converge to a single completed task and a single successor rather than diverging. Iterative tasks also require less special handling in the codebase, as there is no hidden parent template to maintain.
 
-Integration with TaskChampion primarily involves adding the new Iterative status, handling hooks in task creation and status change, and the RRule generator.
-
-Integration with TaskWarrior will require adding the new Iterative status so that Iterative tasks are visible, and ‘iter’ as a built in UDA.
-
-## Potential Issues and Limitations
-
-There are a few potential issues with this approach
+## Issues and Limitations
 
 ### Legacy Applications
 
-First, pre-3.0 based applications are completely left out as all iterative functionality is implemented in TaskChampion.
+Pre-3.0 based applications are completely left out as all iterative functionality is implemented in TaskChampion.
 
-Second, all applications that haven’t been updated to recognize the Iterative status may hide or mishandle Iterative tasks. The biggest issue is likely to be marking an Iterative task done and then losing it as an iterative task. If that happens, it will disappear from that client's perspective and the iteration never advances. There are a few possible mitigations, such as a secondary UDA flag that legacy clients wouldn't set, but this might just need to be documented as a possible issue during a transition phase. This is the largest risk in the proposal.
-
-### Reconstructing History
-
-The rule is stored unbaked and re-anchored on each completion rather than back-calculable as a single fixed schedule, especially for chained tasks. Searching for things like “give me the last five dates this was done” is done by walking the completed instances of the series.
-
-### Multiple Upcoming Tasks
-
-The recurring task system supports having multiple open upcoming tasks based on the recurring template task. Iterative tasks don’t support that, but calculating the next arbitrary number of due dates is trivial, which should cover most use cases.
+All applications that haven’t been updated to recognize the Iterative status may hide or mishandle Iterative tasks. The biggest issue is likely to be marking an Iterative task done and then losing it as an iterative task. If that happens, it will disappear from that client's perspective and the iteration never advances.
 
 ### Scheduling Timezone and Cross-Replica Convergence
 
-Schedules are computed in the completing replica's local timezone, the same as Taskwarrior's recurrence.
+Schedules are computed in the completing replica's local timezone, the same as TaskWarrior's recurrence.
 
 If two replicas in different timezones complete the same occurrence before syncing, each computes the next occurrence in its own timezone. When syncing the time/date based field values are resolved last-writer-wins by sync order. This will cause a one-off discrepancy that self-corrects on the next completion, not duplicate tasks or corruption.
-
-## Alternatives
-
-### Upgrading
-
-One possible alternative to maintaining two separate systems for periodic tasks would be to upgrade existing recurring tasks to the new system.
-
-The first approach would be to have TaskChampion just start treating recurring tasks as iterative tasks. This would need to be a major breaking version, as using task recurrence with legacy tools would cause many problems.
-
-The second would be to have TaskChampion migrate existing recurring tasks to iterative tasks. Migration of existing recurring tasks is deferred to TaskWarrior rather than handled in TaskChampion.
-
-### Just Moving Recurrence Handling
-
-It would be possible to move the current recurrence system to TaskChampion, either as is of with the changes suggested in the [abandoned RFC](https://github.com/GothenburgBitFactory/taskwarrior/blob/develop/doc/devel/rfcs/recurrence.md). This would be simpler in several ways, but would still have most of the same backwards compatibility issues and not fix many of the known problems with recurring tasks.
