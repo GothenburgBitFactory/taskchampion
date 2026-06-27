@@ -1,6 +1,6 @@
 [package]
 name = "taskchampion"
-version = "3.0.2-pre"
+version = "3.1.1-pre"
 authors = ["Dustin J. Mitchell <dustin@mozilla.com>"]
 description = "Personal task-tracking"
 homepage = "https://gothenburgbitfactory.github.io/taskchampion/"
@@ -83,9 +83,9 @@ async-trait = "0.1.89"
 byteorder = "1.5"
 chrono = { version = "^0.4.44", features = ["serde"] }
 flate2 = "1"
-serde_with = { version = "3.19.0", features = ["base64"], optional = true }
+serde_with = { version = "3.20.0", features = ["base64"], optional = true }
 idb = { version = "0.6.4", optional = true }
-log = "^0.4.17"
+log = "^0.4.30"
 # Reqwest is "stuck" at 0.12 because that's what google-cloud-storage depends on.
 reqwest = { version = "0.12", default-features = false, optional = true }
 ring = { version = "0.17", optional = true }
@@ -96,7 +96,7 @@ strum = "0.28"
 strum_macros = "0.28"
 tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
-uuid = { version = "^1.23.1", features = ["serde", "v4", "v5"] }
+uuid = { version = "^1.23.2", features = ["serde", "v4", "v5"] }
 url = { version = "2", optional = true }
 rrule = { version = "0.14.0", optional = true }
 text2rrule = { version = "0.1.2", optional = true }
@@ -130,10 +130,10 @@ web-sys = { version = "0.3.83", optional = true, features = [
 
 ## non-wasm dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aws-sdk-s3 = { version = "1.132", default-features = false, optional = true }
+aws-sdk-s3 = { version = "1.134", default-features = false, optional = true }
 aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1", default-features = false, features = ["hardcoded-credentials"], optional = true }
-aws-smithy-runtime-api = { version = "1.11", default-features = false, optional = true }
+aws-smithy-runtime-api = { version = "1.12", default-features = false, optional = true }
 aws-smithy-types = { version = "1.4", default-features = false, optional = true }
 google-cloud-storage = { version = "0.24.0", default-features = false, features = [
   "rustls-tls",
