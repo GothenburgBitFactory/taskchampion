@@ -1,4 +1,6 @@
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+#[cfg(feature = "iterative-tasks")]
+use rrule::Tz;
 
 pub(crate) type Timestamp = DateTime<Utc>;
 
@@ -9,3 +11,63 @@ pub fn utc_timestamp(secs: i64) -> Timestamp {
         _ => unreachable!("We're requesting UTC so daylight saving time isn't a factor."),
     }
 }
+/// Returns the local timezone for rrule scheduling.
+/// On WASM, `chrono::Local` is unavailable, so UTC is used as a fallback.
+#[cfg(feature = "iterative-tasks")]
+pub(crate) fn local_tz() -> Tz {
+    #[cfg(test)]
+    if let Some(tz) = mock_tz::get() {
+        return tz;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    return Tz::Local(chrono::Local);
+    #[cfg(target_arch = "wasm32")]
+    return Tz::UTC;
+}
+
+/// Test-only override of the timezone used by `local_tz`.
+#[cfg(all(feature = "iterative-tasks", test))]
+pub(crate) mod mock_tz {
+    use rrule::Tz;
+    use std::cell::Cell;
+    thread_local! {
+        static TZ: Cell<Option<Tz>> = const { Cell::new(None) };
+    }
+    pub(crate) fn get() -> Option<Tz> {
+        TZ.with(|t| t.get())
+    }
+    pub(crate) fn set(tz: Tz) {
+        TZ.with(|c| c.set(Some(tz)));
+    }
+    pub(crate) fn reset() {
+        TZ.with(|c| c.set(None));
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn utc_now() -> DateTime<Utc> {
+    Utc::now()
+}
+
+#[cfg(test)]
+pub(crate) mod mock_time {
+    use chrono::{DateTime, Utc};
+    use std::cell::Cell;
+    thread_local! {
+        static T: Cell<Option<i64>> = const {Cell::new(None)};
+    }
+    pub(crate) fn utc_now() -> DateTime<Utc> {
+        T.with(|t| match t.get() {
+            Some(secs) => DateTime::from_timestamp(secs, 0).unwrap(),
+            None => Utc::now(),
+        })
+    }
+    pub(crate) fn set(t: DateTime<Utc>) {
+        T.with(|c| c.set(Some(t.timestamp())));
+    }
+    pub(crate) fn reset() {
+        T.with(|c| c.set(None));
+    }
+}
+#[cfg(test)]
+pub(crate) use mock_time::utc_now;

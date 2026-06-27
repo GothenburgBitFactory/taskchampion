@@ -21,7 +21,7 @@ resolver = "2"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["sync", "bundled", "storage", "tls-webpki-roots"]
+default = ["sync", "bundled", "storage", "tls-webpki-roots", "iterative-tasks"]
 
 # Support for all sync solutions
 sync = ["server-sync", "server-gcp", "server-aws", "server-local", "server-git"]
@@ -50,6 +50,8 @@ server-aws = [
 server-local = ["dep:rusqlite"]
 # Support for sync via Git
 server-git = ["dep:serde_with", "dep:glob", "encryption"]
+# Support for iterative (recurring) tasks
+iterative-tasks = ["dep:rrule", "dep:text2rrule"]
 
 # Support for all task storage backends (except indexeddb, which only works on WASM builds)
 storage = ["storage-sqlite"]
@@ -94,8 +96,10 @@ strum = "0.28"
 strum_macros = "0.28"
 tokio = { version = "1", features = ["macros", "sync", "rt"] }
 thiserror = "2.0"
-uuid = { version = "^1.23.2", features = ["serde", "v4"] }
+uuid = { version = "^1.23.2", features = ["serde", "v4", "v5"] }
 url = { version = "2", optional = true }
+rrule = { version = "0.14.0", optional = true }
+text2rrule = { version = "0.1.2", optional = true }
 glob = { version = "0.3.3", optional = true }
 
 ## wasm-only dependencies.
