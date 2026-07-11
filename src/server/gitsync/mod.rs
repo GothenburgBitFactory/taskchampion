@@ -125,7 +125,16 @@ impl Git {
     /// stdout and stderr are captured and forwarded to the log at debug level.
     /// Returns `Err` only on I/O failure (e.g. git binary not found).
     fn cmd_ok(&self, dir: &Path, args: &[&str]) -> Result<bool> {
+        #[allow(unused_mut)]
+        let mut envs: Vec<(&'static str, &'static str)> = Vec::new();
+        // In tests, overwite $HOME and avoid using system-wide Git config
+        #[cfg(test)]
+        {
+            envs.push(("HOME", "/does/not/exist"));
+            envs.push(("GIT_CONFIG_NOSYSTEM", "1"));
+        }
         let output = Command::new(&self.path)
+            .envs(envs)
             .args(args)
             .current_dir(dir)
             .output()?;
