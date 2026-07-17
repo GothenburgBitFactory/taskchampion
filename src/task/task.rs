@@ -502,13 +502,31 @@ impl Task {
                     .map(|d| d.to_utc())
             }
             IterType::Chained => {
-                // Chained re-anchors the rule to now, so the next occurrence is
-                // one period from the completion time.
-                anchored_set(now_local)?
-                    .after(now_local + chrono::Duration::seconds(1))
-                    .all(1)
-                    .dates
-                    .first()
+                // Chained schedules the next occurrence one whole period after
+                // the completion time. If the rrule has a weekday or other
+                // specific date, make sure to advance by at least one perioid
+                // so that the task doesn't span one wit hthe same date.
+                let freq = unvalidated.get_freq();
+                let period = |dt: &DateTime<rrule::Tz>| -> Option<(i32, u32)> {
+                    match freq {
+                        rrule::Frequency::Daily => Some((dt.year(), dt.ordinal())),
+                        rrule::Frequency::Weekly => {
+                            let w = dt.iso_week();
+                            Some((w.year(), w.week()))
+                        }
+                        rrule::Frequency::Monthly => Some((dt.year(), dt.month())),
+                        rrule::Frequency::Yearly => Some((dt.year(), 0)),
+                        _ => None,
+                    }
+                };
+                let now_period = period(&now_local);
+                let set = anchored_set(now_local)?;
+                (&set)
+                    .into_iter()
+                    .find(|d| match now_period {
+                        Some(np) => period(d) != Some(np),
+                        None => *d > now_local,
+                    })
                     .map(|d| d.to_utc())
             }
         };
