@@ -24,6 +24,8 @@ pub use server::{Server, ServerConfig};
 pub use storage::indexeddb::IndexedDbStorage;
 #[cfg(feature = "storage-sqlite")]
 pub use storage::sqlite::SqliteStorage;
+#[cfg(feature = "iterative-tasks")]
+pub use task::IterType;
 pub use task::{utc_timestamp, Annotation, Status, Tag, Task, TaskData};
 pub use workingset::WorkingSet;
 
