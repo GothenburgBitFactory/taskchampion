@@ -29,18 +29,33 @@ Timestamps are stored as UNIX epoch timestamps, in the form of an integer.
 
 The following keys, and key formats, are defined:
 
-* `status` - one of `pending` for a pending task (the default), `completed`, `deleted`, or `recurring`
-* `description` - the one-line summary of the task
-* `modified` - the time of the last modification of this task
-* `start` - the most recent time at which this task was started (a task with no `start` key is not active)
-* `end` - if present, the time at which this task was completed or deleted (note that this key may not agree with `status`: it may be present for a pending task, or absent for a deleted or completed task)
-* `tag_<tag>` - indicates this task has tag `<tag>` (value is ignored)
-* `wait` - indicates the time before which this task should be hidden, as it is not actionable
-* `entry` - the time at which the task was created
-* `annotation_<timestamp>` - value is an annotation created at the given time; for example, `annotation_1693329505`.
-* `dep_<uuid>` - indicates this task depends on another task identified by `<uuid>`; the value is ignored; for example, `dep_8c4fed9c-c0d2-40c2-936d-36fc44e084a0`
+- `status` - one of `pending` for a pending task (the default), `completed`, `deleted`, `recurring`, or `iterative`
+- `description` - the one-line summary of the task
+- `modified` - the time of the last modification of this task
+- `start` - the most recent time at which this task was started (a task with no `start` key is not active)
+- `end` - if present, the time at which this task was completed or deleted (note that this key may not agree with `status`: it may be present for a pending task, or absent for a deleted or completed task)
+- `tag_<tag>` - indicates this task has tag `<tag>` (value is ignored)
+- `wait` - indicates the time before which this task should be hidden, as it is not actionable
+- `entry` - the time at which the task was created
+- `annotation_<timestamp>` - value is an annotation created at the given time; for example, `annotation_1693329505`.
+- `dep_<uuid>` - indicates this task depends on another task identified by `<uuid>`; the value is ignored; for example, `dep_8c4fed9c-c0d2-40c2-936d-36fc44e084a0`
 
 Note that while TaskChampion recognizes "R" as a status, it does not implement recurrence directly.
+
+### Iterative Tasks
+
+Iterative tasks, described in [Iterative Tasks](./iterative-tasks.md), are the one form of repetition TaskChampion does implement, under the `iterative` status. They use five further keys, which fall into two groups.
+
+Two are set by the user, or by a front end on the user's behalf, and are treated as UDAs:
+
+- `iter` - the iteration schedule, as a TaskWarrior-style shorthand, an ISO-8601 duration, a natural-language phrase, or a raw RRULE. A task with `iterative` status must have a non-empty value here
+- `iter_type` - how the next occurrence is anchored: `fixed` (the default), `fixed+`, or `chained`
+
+The other three are internal bookkeeping. Unlike the two above, they are recognized keys rather than UDAs, so they are not returned by the UDA accessors and `set_user_defined_attribute` refuses to write them:
+
+- `series` - the UUID of the first task in the series, carried unchanged by every later instance, giving a series one stable identity even though each individual task has its own UUID
+- `iter_prior` - the UUID of the instance this one succeeded, chaining the instances back to the first
+- `iter_count` - this instance's 1-based position in the series, used to stop at the rule's `COUNT`
 
 ### UDAs
 
