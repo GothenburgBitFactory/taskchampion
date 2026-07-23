@@ -588,7 +588,7 @@ impl Task {
                     | "scheduled"
                     | "wait"
                     | "entry"
-                    | "prior"
+                    | "iter_prior"
                     | "iter_count"
             ) || prop.starts_with("dep_");
             if !set_below {
@@ -640,7 +640,7 @@ impl Task {
         }
 
         successor.set_entry(Some(now), ops)?;
-        successor.set_value("prior", Some(self_uuid.into()), ops)?;
+        successor.set_value("iter_prior", Some(self_uuid.into()), ops)?;
         // If this task had no series id treat it as the series root.
         // Shouldn't happen, but prevents possible cross-version corruption.
         if successor.data.get("series").is_none() {
@@ -914,7 +914,7 @@ impl Task {
     /// Keys the iterative-tasks system uses.
     #[cfg(feature = "iterative-tasks")]
     fn is_iterative_key(key: &str) -> bool {
-        matches!(key, "rrule" | "series" | "prior" | "iter_count")
+        matches!(key, "rrule" | "series" | "iter_prior" | "iter_count")
     }
     #[cfg(not(feature = "iterative-tasks"))]
     fn is_iterative_key(_key: &str) -> bool {
@@ -1670,7 +1670,7 @@ mod test {
         assert!(succ.get_value("rrule").is_some());
         assert!(succ.get_value("iter_type").is_some());
         assert_eq!(
-            succ.get_value("prior")
+            succ.get_value("iter_prior")
                 .and_then(|p| Uuid::parse_str(p).ok()),
             Some(uuid)
         );
@@ -2640,7 +2640,7 @@ mod test {
                     .set_user_defined_attribute("rrule", "FREQ=DAILY", ops)
                     .is_err());
                 assert!(task.set_user_defined_attribute("series", "x", ops).is_err());
-                assert!(task.set_user_defined_attribute("prior", "x", ops).is_err());
+                assert!(task.set_user_defined_attribute("iter_prior", "x", ops).is_err());
                 task.set_user_defined_attribute("iter", "weekly", ops)
                     .unwrap();
                 task.set_user_defined_attribute("iter_type", "fixed", ops)
@@ -2653,7 +2653,7 @@ mod test {
                 assert!(keys.contains(&"iter_type"));
                 assert!(!keys.contains(&"series"));
                 assert!(!keys.contains(&"rrule"));
-                assert!(!keys.contains(&"prior"));
+                assert!(!keys.contains(&"iter_prior"));
             },
         )
         .await

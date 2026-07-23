@@ -70,7 +70,7 @@ async fn concurrent_iterative_completion_converges() -> anyhow::Result<()> {
     assert_eq!(successor.get_status(), Status::Iterative);
     assert_eq!(
         successor
-            .get_value("prior")
+            .get_value("iter_prior")
             .and_then(|p| Uuid::parse_str(p).ok()),
         Some(uuid),
         "successor's prior is the completed task"
