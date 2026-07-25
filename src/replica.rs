@@ -308,13 +308,14 @@ impl<S: Storage> Replica<S> {
     /// Use [Uuid::new_v4] to invent a new task ID, if necessary. If the task already
     /// exists, it is returned.
     pub async fn create_task(&mut self, uuid: Uuid, ops: &mut Operations) -> Result<Task> {
-        // Check for task existence without building the depmap if it doen't exist.
+        // Check for task existence without building the depmap if it doesn't exist.
         if let Some(taskdata) = self.get_task_data(uuid).await? {
             let depmap = self.dependency_map(false).await?;
             return Ok(Task::new(taskdata, depmap));
         }
-        // A brand new task doesn't have dependencies or dependants, so creating an empty
-        // map is fine and much faster.
+        // The returned Task only ever queries the depmap for its own UUID, and a
+        // brand-new task has no dependencies or dependents, so an empty map yields the
+        // same result as a full scan here, without the cost of a full scan..
         Ok(Task::new(
             TaskData::create(uuid, ops),
             Arc::new(DependencyMap::new()),
