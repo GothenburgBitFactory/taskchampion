@@ -92,7 +92,7 @@ If found, it returns the version's
  * parent version ID (matching that in the request), and
  * encrypted version data.
 
-If found, it returns a _not-found_ indication.
+If not found, it returns a _not-found_ indication.
 Note that this circumstance is not an error, and occurs during every successful sync process.
 
 Implementations may return a different error code if the version is "gone" (not found _and would not be accepted by AddVersion_) in order to provide better error messages to the user.
