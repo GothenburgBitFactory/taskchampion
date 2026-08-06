@@ -401,7 +401,7 @@ impl Task {
             // it to a new date without inheriting the original anchor's weekday,
             // and there is no stored DTSTART to go stale.
             self.set_value("rrule", Some(unvalidated.to_string()), ops)?;
-            // Set the first date. If the caller supplied one it directly,
+            // Set the first date. If the caller supplied one directly,
             // just use it. Otherwise take the first rrule occurrence on or
             // after dt_start.
             match anchor_kind {
@@ -503,9 +503,9 @@ impl Task {
             }
             IterType::Chained => {
                 // Chained schedules the next occurrence one whole period after
-                // the completion time. If the rrule has a weekday or other
-                // specific date, make sure to advance by at least one perioid
-                // so that the task doesn't span one wit hthe same date.
+                // the completion time. If the rrule is a non-specific period,
+                // make sure to advance by at least one period
+                // so that the task doesn't land on the same date.
                 let freq = unvalidated.get_freq();
                 let period = |dt: &DateTime<rrule::Tz>| -> Option<(i32, u32)> {
                     match freq {
@@ -540,7 +540,7 @@ impl Task {
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(1);
         let within_cap = cap.is_none_or(|c| pos.saturating_add(1) <= c);
-        if let Some(next_anchor) = next_anchor.filter(|_| within_cap) {
+        if within_cap && let Some(next_anchor) = next_anchor {
             self.spawn_successor(next_anchor, anchor_old, pos, now, ops)?;
         }
 
