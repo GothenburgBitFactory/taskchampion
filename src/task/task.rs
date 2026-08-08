@@ -333,17 +333,11 @@ impl Task {
                     self.set_timestamp(Prop::End.as_ref(), None, ops)?;
                 }
             }
-            Status::Completed => {
-                #[cfg(feature = "iterative-tasks")]
-                if self.get_status() == Status::Iterative {
-                    return self.set_iterative_completed(ops);
-                }
-                // set "end" when a task is deleted or completed
-                if !self.data.has(Prop::End.as_ref()) {
-                    self.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
-                }
+            #[cfg(feature = "iterative-tasks")]
+            Status::Completed if self.get_status() == Status::Iterative => {
+                return self.set_iterative_completed(ops);
             }
-            Status::Deleted => {
+            Status::Completed | Status::Deleted => {
                 // set "end" when a task is deleted or completed
                 if !self.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
@@ -539,11 +533,11 @@ impl Task {
             .get("iter_count")
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(1);
-        let within_cap = cap.is_none_or(|c| pos.saturating_add(1) <= c);
-        if within_cap && let Some(next_anchor) = next_anchor {
-            self.spawn_successor(next_anchor, anchor_old, pos, now, ops)?;
+        if cap.is_none_or(|c| pos.saturating_add(1) <= c) {
+            if let Some(next_anchor) = next_anchor {
+                self.spawn_successor(next_anchor, anchor_old, pos, now, ops)?;
+            }
         }
-
         // Finally, complete the task.
         self.set_value(
             Prop::Status.as_ref(),
@@ -2640,7 +2634,9 @@ mod test {
                     .set_user_defined_attribute("rrule", "FREQ=DAILY", ops)
                     .is_err());
                 assert!(task.set_user_defined_attribute("series", "x", ops).is_err());
-                assert!(task.set_user_defined_attribute("iter_prior", "x", ops).is_err());
+                assert!(task
+                    .set_user_defined_attribute("iter_prior", "x", ops)
+                    .is_err());
                 task.set_user_defined_attribute("iter", "weekly", ops)
                     .unwrap();
                 task.set_user_defined_attribute("iter_type", "fixed", ops)

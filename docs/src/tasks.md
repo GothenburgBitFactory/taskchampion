@@ -1,14 +1,21 @@
 # Task Model
 
-Tasks are stored internally as a key/value map with string keys and values. Display layers should apply appropriate defaults where necessary.
+Tasks are stored internally as a key/value map with string keys and values.
+Display layers should apply appropriate defaults where necessary.
 
 ## Validity
 
-_Any_ key/value map is a valid task, including an empty task. Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information. For example, a task with status "completed" but no "end" key present should be interpreted as completed at an unknown time.
+_Any_ key/value map is a valid task, including an empty task.
+Consumers of task data must make a best effort to interpret any map, even if it contains apparently contradictory information.
+For example, a task with status "completed" but no "end" key present should be interpreted as completed at an unknown time.
 
 ## Atomicity
 
-Replicas only synchronize with one another occasionally, so it is impossible to know the "current" state of a task with certainty. This makes some kinds of modifications challenging. For example, suppose task tags were updated by reading a list of tags from a property of the key/value map, adding a tag, and writing the result back. Suppose two such modifications are made in different replicas, one setting `tags` to "oldtag,newtag1" and one setting `tags` to "oldtag,newtag2". Reconciling these two changes on a sync operation would result in one change winning, losing one of the new tags.
+Replicas only synchronize with one another occasionally, so it is impossible to know the "current" state of a task with certainty.
+This makes some kinds of modifications challenging.
+For example, suppose task tags were updated by reading a list of tags from a property of the key/value map, adding a tag, and writing the result back.
+Suppose two such modifications are made in different replicas, one setting `tags` to "oldtag,newtag1" and one setting `tags` to "oldtag,newtag2".
+Reconciling these two changes on a sync operation would result in one change winning, losing one of the new tags.
 
 The key names given below avoid this issue, allowing user updates such as adding a tag or deleting a dependency to be represented in a single modification.
 
@@ -38,6 +45,11 @@ Note that while TaskChampion recognizes "R" as a status, it does not implement r
 
 ### UDAs
 
-Any unrecognized keys are treated as "user-defined attributes" (UDAs). These attributes can be used to store additional data associated with a task. For example, applications that synchronize tasks with other systems such as calendars or team planning services might store unique identifiers for those systems as UDAs. The application defining a UDA defines the format of the value.
+Any unrecognized keys are treated as "user-defined attributes" (UDAs).
+These attributes can be used to store additional data associated with a task.
+For example, applications that synchronize tasks with other systems such as calendars or team planning services might store unique identifiers for those systems as UDAs.
+The application defining a UDA defines the format of the value.
 
-Note: as of 4.0.0, `scheduled` is a recognized key rather than a UDA. Any data previously stored under a `scheduled` UDA is no longer returned by the UDA accessors (`get_user_defined_attribute`, `get_udas`, and related iterators) and can no longer be written through `set_user_defined_attribute`. The stored value is untouched, only its classification changed.
+Note: as of 4.0.0, `scheduled` is a recognized key rather than a UDA.
+Any data previously stored under a `scheduled` UDA is no longer returned by the UDA accessors (`get_user_defined_attribute`, `get_udas`, and related iterators) and can no longer be written through `set_user_defined_attribute`.
+The stored value is untouched, only its classification changed.
