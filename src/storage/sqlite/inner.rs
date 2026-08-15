@@ -97,6 +97,7 @@ impl SqliteStorageInner {
         let mut con = Connection::open_with_flags(db_file, flags)?;
 
         // Initialize database
+        #[cfg(not(target_os = "haiku"))]
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
 
@@ -484,6 +485,7 @@ mod test {
         let db_file = path.join("taskchampion.sqlite3");
         let con = Connection::open(db_file)?;
 
+        #[cfg(not(target_os = "haiku"))]
         con.query_row("PRAGMA journal_mode=WAL", [], |_row| Ok(()))
             .context("Setting journal_mode=WAL")?;
         let queries = vec![

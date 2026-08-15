@@ -76,8 +76,8 @@ mod test {
     use tempfile::TempDir;
 
     async fn storage() -> Result<SqliteStorage> {
-        let tmp_dir = TempDir::new()?;
-        SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).await
+        let tmp_dir = TempDir::new()?.keep();
+        SqliteStorage::new(tmp_dir.as_path(), AccessMode::ReadWrite, true).await
     }
 
     crate::storage::test::storage_tests!(storage().await?);
