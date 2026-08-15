@@ -213,7 +213,7 @@ If found, it returns the version's</p>
 <li>parent version ID (matching that in the request), and</li>
 <li>encrypted version data.</li>
 </ul>
-<p>If found, it returns a <em>not-found</em> indication.
+<p>If not found, it returns a <em>not-found</em> indication.
 Note that this circumstance is not an error, and occurs during every successful sync process.</p>
 <p>Implementations may return a different error code if the version is &quot;gone&quot; (not found <em>and would not be accepted by AddVersion</em>) in order to provide better error messages to the user.
 This may occur if a client has not been synced for a long time and its base version has expired, or if the server storage has been corrupted.</p>
