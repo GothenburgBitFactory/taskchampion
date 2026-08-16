@@ -1,13 +1,37 @@
 //! Tests for storage backends. This tests consistency across multiple method calls, to ensure that
 //! all implementations are consistent.
 
-use super::{Storage, TaskMap};
+use super::{Storage, StorageTxn, TaskMap};
 use crate::errors::Result;
 use crate::storage::{taskmap_with, DEFAULT_BASE_VERSION};
 use crate::Operation;
+use async_trait::async_trait;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
 use uuid::Uuid;
+
+/// Add a value to [`Storage`], such as a `TempDir`, that needs to live as long
+/// the storage itself.
+pub(crate) struct GuardedStorage<S: Storage, G: Send> {
+    storage: S,
+    _guard: G,
+}
+
+impl<S: Storage, G: Send> GuardedStorage<S, G> {
+    pub(crate) fn new(storage: S, guard: G) -> Self {
+        Self {
+            storage,
+            _guard: guard,
+        }
+    }
+}
+
+#[async_trait]
+impl<S: Storage, G: Send> Storage for GuardedStorage<S, G> {
+    async fn txn<'a>(&'a mut self) -> Result<Box<dyn StorageTxn + Send + 'a>> {
+        self.storage.txn().await
+    }
+}
 
 /// Define a collection of storage tests that apply to all storage implementations.
 macro_rules! storage_tests_base {

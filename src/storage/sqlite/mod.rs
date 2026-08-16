@@ -72,12 +72,14 @@ mod test {
     use super::*;
     use crate::errors::Error;
     use crate::storage::config::AccessMode;
+    use crate::storage::test::GuardedStorage;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    async fn storage() -> Result<SqliteStorage> {
-        let tmp_dir = TempDir::new()?.keep();
-        SqliteStorage::new(tmp_dir.as_path(), AccessMode::ReadWrite, true).await
+    async fn storage() -> Result<impl Storage> {
+        let tmp_dir = TempDir::new()?;
+        let storage = SqliteStorage::new(tmp_dir.path(), AccessMode::ReadWrite, true).await?;
+        Ok(GuardedStorage::new(storage, tmp_dir))
     }
 
     crate::storage::test::storage_tests!(storage().await?);
