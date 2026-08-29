@@ -209,9 +209,14 @@ impl<SVC: Service> CloudServer<SVC> {
     }
 
     /// Determine the snapshot urgency. This is done probabalistically:
-    ///  - High urgency approximately 1% of the time.
+    ///  - If there is no snapshot, High urgency; else
+    ///  - High urgency approximately 1% of the time,
     ///  - Low urgency approximately 10% of the time.
-    fn snapshot_urgency(&self) -> Result<SnapshotUrgency> {
+    async fn snapshot_urgency(&mut self) -> Result<SnapshotUrgency> {
+        if self.snapshot_info().await?.is_none() {
+            return Ok(SnapshotUrgency::High);
+        }
+
         let r = self.randint()?;
         if r < 2 {
             Ok(SnapshotUrgency::High)
@@ -368,6 +373,19 @@ impl<SVC: Service> CloudServer<SVC> {
 
         Ok(())
     }
+
+    /// Determine the snapshot version and filename.
+    async fn snapshot_info(&mut self) -> Result<Option<(VersionId, String)>> {
+        // Pick the first snapshot we find.
+        let Some(name) = self.service.list("s-").await.next().await else {
+            return Ok(None);
+        };
+        let ObjectInfo { name, .. } = name?;
+        let Some(version_id) = Self::parse_snapshot_name(&name) else {
+            return Ok(None);
+        };
+        Ok(Some((version_id, name)))
+    }
 }
 
 #[async_trait(?Send)]
@@ -382,7 +400,7 @@ impl<SVC: Service + Send> Server for CloudServer<SVC> {
             if l != parent_version_id {
                 return Ok((
                     AddVersionResult::ExpectedParentVersion(l),
-                    self.snapshot_urgency()?,
+                    SnapshotUrgency::None,
                 ));
             }
         }
@@ -415,14 +433,17 @@ impl<SVC: Service + Send> Server for CloudServer<SVC> {
             let latest = latest.unwrap_or(Uuid::nil());
             return Ok((
                 AddVersionResult::ExpectedParentVersion(latest),
-                self.snapshot_urgency()?,
+                SnapshotUrgency::None,
             ));
         }
 
         // Attempt a cleanup, but ignore errors.
         let _ = self.maybe_cleanup().await;
 
-        Ok((AddVersionResult::Ok(version_id), self.snapshot_urgency()?))
+        Ok((
+            AddVersionResult::Ok(version_id),
+            self.snapshot_urgency().await?,
+        ))
     }
 
     async fn get_child_version(
@@ -492,12 +513,7 @@ impl<SVC: Service + Send> Server for CloudServer<SVC> {
     }
 
     async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
-        // Pick the first snapshot we find.
-        let Some(name) = self.service.list("s-").await.next().await else {
-            return Ok(None);
-        };
-        let ObjectInfo { name, .. } = name?;
-        let Some(version_id) = Self::parse_snapshot_name(&name) else {
+        let Some((version_id, name)) = self.snapshot_info().await? else {
             return Ok(None);
         };
         let Some(payload) = self.service.get(&name).await? else {
@@ -884,10 +900,12 @@ mod tests {
     async fn add_version_empty() {
         let mut server = make_server().await;
         let parent = Uuid::new_v4();
-        let (res, _) = server
+        let (res, urgency) = server
             .add_version(parent, b"history".to_vec())
             .await
             .unwrap();
+        // SnapshotUrgency is always High for an empty server.
+        assert_eq!(urgency, SnapshotUrgency::High);
         assert!(matches!(res, AddVersionResult::Ok(_)));
     }
 
@@ -898,7 +916,9 @@ mod tests {
         server.mock_add_version(v1, v2, 1000, b"first");
         server.mock_set_latest(v2);
 
-        let (res, _) = server.add_version(v2, b"history".to_vec()).await.unwrap();
+        let (res, urgency) = server.add_version(v2, b"history".to_vec()).await.unwrap();
+        // SnapshotUrgency is always High for a server with no snapshot.
+        assert_eq!(urgency, SnapshotUrgency::High);
         let AddVersionResult::Ok(new_version) = res else {
             panic!("expected OK");
         };

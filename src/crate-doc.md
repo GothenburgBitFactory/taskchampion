@@ -99,4 +99,4 @@ for more information about the design and usage of the tool.
 
 # Minimum Supported Rust Version (MSRV)
 
-This crate supports Rust version 1.91.1 and higher.
+This crate supports Rust version 1.94.1 and higher.
