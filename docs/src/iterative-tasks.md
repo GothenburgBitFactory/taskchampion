@@ -66,7 +66,7 @@ When an iterative task is closed, the `due`, `scheduled`, `wait` and `until` are
 
 Finally, RRules support a `COUNT` that limits the number of times a task iterates. Each iterative task records its position in the series in an `iter_count` UDA. When that count reaches the rule's `COUNT` no successor is created, ending the series after the intended number of iterations.
 
-Counting up in a separate attribute, rather than decrementing the `COUNT` in the rule itself, keeps the stored rule identical to the one that `iter` describes. Decrementing would mean re-parsing and rewriting the rule on every iteration, and would leave the rule and `iter` disagreeing, which in turn breaks the date anchoring that `fixed` and `fixed+` depend on.
+Counting up in a separate attribute, rather than decrementing the `COUNT`, keeps `iter` as the user wrote it. Since the rule is not stored, the only place left to decrement is `iter` itself, and of the four accepted forms only a raw RRULE could carry a decremented count. A shorthand, an ISO-8601 duration and a natural-language phrase have nowhere to put one, so decrementing would mean replacing the user's own text with a generated RRULE on the first completion. Counting up also records position rather than remainder, so an instance knows it is the third of five.
 
 ### RRULE Based Iteration Definition
 
@@ -74,7 +74,7 @@ There are a lot of ways to define iteration periods, which can be extremely comp
 
 Implementing those kinds of rules is difficult, but luckily RFC 5545 Section 3.8.5.3 exists for just this kind of thing. RRules are capable of representing many, though of course not all, iteration periods and there is a well tested RRule library for Rust.
 
-Combining RRules with the iteration types takes a bit of thought. The rule is stored in an unbaked, anchor-independent form (no `DTSTART`). The anchor is the task's highest-priority date (`due` > `scheduled` > `wait`). On completion the rule is re-anchored to compute the next occurrence for that date: fixed anchors off the current anchor date, fixed+ also anchors off the anchor date but advances to the next occurrence on or after now, and chained anchors off the completion time ("now"). The remaining dates then shift by the same delta, as described above.
+Combining RRules with the iteration types takes a bit of thought. The rule is derived in an unbaked, anchor-independent form (no `DTSTART`), so it carries no anchor of its own. The anchor is the task's highest-priority date (`due` > `scheduled` > `wait`). On completion the rule is re-anchored to compute the next occurrence for that date: fixed anchors off the current anchor date, fixed+ also anchors off the anchor date but advances to the next occurrence on or after now, and chained anchors off the completion time ("now"). The remaining dates then shift by the same delta, as described above.
 
 #### RRule Generation
 
@@ -95,7 +95,7 @@ Because the UUID of the current iteration changes on every completion, it can't 
 
 #### Creation / Status Change
 
-When an Iterative task is created, it must have Iterative as its status and a non-empty `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed into an RRule and stored, in unbaked form, as an `rrule` UDA. The `series` attribute is also set, and is the task's own UUID if not already present. Every later instance in the series carries this same value. An `iter_count` attribute is set to 1 and each successor increments it.
+When an Iterative task is created, it must have Iterative as its status and a non-empty `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed to check that it describes a usable schedule. The parsed rule is not stored. Instead it is derived again from `iter` on each completion, so an edit to `iter` takes effect however it was made. The `series` attribute is also set, and is the task's own UUID if not already present. Every later instance in the series carries this same value. An `iter_count` attribute is set to 1 and each successor increments it.
 
 The first date is chosen as follows:
 
@@ -132,7 +132,7 @@ The attribute changes, where `self` is the task being completed and `successor` 
 
 Because the task the dependents point at is the one that becomes Completed, dependent tasks are unblocked automatically with no dep rewriting. This means completion only ever changes the task itself and the successor it creates.
 
-The successor's `due`, `scheduled` and `wait` dates are computed from the stored rule, re-anchored per iteration type. The anchor is the highest-priority date. Once its next value is computed, the remainder shift by the same delta so their spacing is preserved:
+The successor's `due`, `scheduled`, `wait` and `until` dates are computed from the rule derived from `iter`, re-anchored per iteration type. The anchor is the highest-priority date. Once its next value is computed, the remainder shift by the same delta so their spacing is preserved:
 
 - fixed anchors off the current anchor date
 - fixed+ anchors off the anchor date but advancing to the next occurrence on or after now
