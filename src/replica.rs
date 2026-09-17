@@ -1023,6 +1023,9 @@ mod tests {
         let mut t = rep.create_task(uuid, &mut ops).await.unwrap();
         t.set_value("iter", Some("weekly".into()), &mut ops)
             .unwrap();
+        t.set_value("iter_type", Some("fixed".into()), &mut ops)
+            .unwrap();
+        t.set_due(Some(Utc::now()), &mut ops).unwrap();
         t.set_status(Status::Iterative, &mut ops).unwrap();
         rep.commit_operations(ops).await.unwrap();
 

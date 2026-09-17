@@ -6,23 +6,14 @@ use std::str::FromStr;
 use strum_macros::{Display, EnumString};
 
 /// The iteration type of a task.
-#[derive(Default, Debug, PartialEq, Eq, Clone, Display, EnumString)]
+#[derive(Debug, PartialEq, Eq, Clone, Display, EnumString)]
 pub(crate) enum IterType {
-    #[default]
     #[strum(to_string = "fixed", serialize = "fx")]
     Fixed,
     #[strum(to_string = "fixed+", serialize = "f+", serialize = "fp")]
     FixedPlus,
     #[strum(to_string = "chained", serialize = "ch")]
     Chained,
-}
-
-/// The primary anchor date for an iterative task.
-#[derive(Debug)]
-pub(super) enum AnchorKind {
-    Due,
-    Scheduled,
-    Wait,
 }
 
 enum DayKind {
@@ -140,7 +131,7 @@ fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
     // Parse the period into a frequency plus a multiplier on the interval, since
     // some periods are a multiple of their frequency - a fortnight is two weeks,
     // a quarter is three months, and so on.
-    let mut special_days: Option<DayKind> = None;
+    let mut day_kind: Option<DayKind> = None;
     let (freq, multiplier) = match period {
         "s" | "se" | "sec" | "secs" | "second" | "seconds" | "secondly" => (Frequency::Secondly, 1),
         "mi" | "min" | "mins" | "minute" | "minutes" | "minutely" => (Frequency::Minutely, 1),
@@ -148,11 +139,11 @@ fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
         "d" | "day" | "days" | "daily" => (Frequency::Daily, 1),
         "w" | "wk" | "wks" | "week" | "weeks" | "weekly" | "wkly" => (Frequency::Weekly, 1),
         "wkd" | "weekday" | "weekdays" | "weekdaily" => {
-            special_days = Some(DayKind::Weekday);
+            day_kind = Some(DayKind::Weekday);
             (Frequency::Weekly, 1)
         }
         "wknd" | "weekend" | "weekends" | "weekendly" => {
-            special_days = Some(DayKind::Weekend);
+            day_kind = Some(DayKind::Weekend);
             (Frequency::Weekly, 1)
         }
         "fortnight" | "fortnightly" | "sennight" | "biweekly" => (Frequency::Weekly, 2),
@@ -175,7 +166,7 @@ fn tw_shorthand_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
 
     // Generate the RRule.
     let rule = RRule::new(freq).interval(interval);
-    let rule = match special_days {
+    let rule = match day_kind {
         None => rule,
         Some(DayKind::Weekday) => rule.by_weekday(vec![
             NWeekday::Every(Weekday::Mon),
@@ -243,21 +234,21 @@ fn iso8601_to_rrule(value: &str) -> Result<RRule<Unvalidated>> {
         let [hours, minutes, seconds] = iso8601_components(time, ['H', 'M', 'S'])?;
 
         // Reduce each kind to its smallest unit
-        let calendar = u64::from(years) * 12 + u64::from(months);
-        let exact = u64::from(days) * 86400
+        let months = u64::from(years) * 12 + u64::from(months);
+        let seconds = u64::from(days) * 86400
             + u64::from(hours) * 3600
             + u64::from(minutes) * 60
             + u64::from(seconds);
 
         // Use the largest unit that divides the duration evenly
-        match (calendar, exact) {
+        match (months, seconds) {
             (0, 0) => return Err(Error::Usage(format!("Duration {value:?} is zero."))),
-            (_, 0) if calendar % 12 == 0 => (Frequency::Yearly, calendar / 12),
-            (_, 0) => (Frequency::Monthly, calendar),
-            (0, _) if exact % 86400 == 0 => (Frequency::Daily, exact / 86400),
-            (0, _) if exact % 3600 == 0 => (Frequency::Hourly, exact / 3600),
-            (0, _) if exact % 60 == 0 => (Frequency::Minutely, exact / 60),
-            (0, _) => (Frequency::Secondly, exact),
+            (_, 0) if months % 12 == 0 => (Frequency::Yearly, months / 12),
+            (_, 0) => (Frequency::Monthly, months),
+            (0, _) if seconds % 86400 == 0 => (Frequency::Daily, seconds / 86400),
+            (0, _) if seconds % 3600 == 0 => (Frequency::Hourly, seconds / 3600),
+            (0, _) if seconds % 60 == 0 => (Frequency::Minutely, seconds / 60),
+            (0, _) => (Frequency::Secondly, seconds),
             _ => {
                 return Err(Error::Usage(format!(
                     "Duration {value:?} mixes months or years with smaller units, \

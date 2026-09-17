@@ -49,7 +49,7 @@ When a chained interval task is completed, the next due date is set to the next 
 
 In order to handle these iteration styles, an `iter_type` UDA is added, which can be one of `fixed`, `fixed+`, and `chained`. Each also accepts a short form: `fx`, `f+` or `fp`, and `ch`.
 
-`iter_type` defaults to `fixed`, which is what TaskWarrior's older `recur:` already does, so a task moved from `recur:monthly` to `iter:monthly` keeps the same schedule.
+TaskChampion has no default `iter_type`, so choosing one is left to the front end. A command-line client like TaskWarrior might default to `fixed`, which is what its older `recur:` does and the same way it already defaults `rtype` to `periodic`, while a graphical client might make it a required choice.
 
 ### Dates and Counts
 
@@ -89,20 +89,13 @@ Parsing tries a raw RRULE first, then the shorthand parser, then ISO-8601, then 
 
 ### Iterative Task Flow
 
-At any moment a series has one live Iterative task object, handled like any other task. Each time it is completed it is replaced by a successor with a new UUID, so the live UUID advances over the life of the series. The completed instances remain as records. A `series` attribute (see below) ties all instances together. Iterative tasks need special handling in only two places.
-
-Because the UUID of the current iteration changes on every completion, it can't be used to refer to the entire series. The `series` attribute, which is the UUID of the first instance, can be as it is the same for every instance. It also makes "every instance of this series" a single filter, where following the `iter_prior` chain would be one lookup per instance.
+At any moment a series has one live Iterative task, handled like any other task. Each time it is completed it is replaced by a successor with a new deterministically derived UUID, so the live UUID advances over the life of the series. The completed instances remain as records. Iterative tasks need special handling in only two places.
 
 #### Creation / Status Change
 
-When an Iterative task is created, it must have Iterative as its status and a non-empty `iter` entry, similar to a recurring task. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed to check that it describes a usable schedule. The parsed rule is not stored. Instead it is derived again from `iter` on each completion, so an edit to `iter` takes effect however it was made. The `series` attribute is also set, and is the task's own UUID if not already present. Every later instance in the series carries this same value. An `iter_count` attribute is set to 1 and each successor increments it.
+When an Iterative task is created, it must have Iterative as its status, a non-empty `iter`, an `iter_type`, and at least one of `due`, `scheduled` or `wait`. Setting the status to Iterative without any of these is an error. When the status is set to Iterative (via `Task::new` or `Task::set_status`), the `iter` value is parsed to check that it describes a usable schedule. The parsed rule is not stored. Instead it is derived again from `iter` on each completion, so an edit to `iter` takes effect however it was made. An `iter_count` attribute is set to 1 and each successor increments it.
 
-The first date is chosen as follows:
-
-- If the caller has already set `due`, `scheduled`, or `wait` on the task before the transition, the highest priority value is used as the first anchor date and is preserved exactly.
-- If none of those are set, the first `due` date is the first RRule occurrence on or after now. For example, with `iter = weekdays` on a Saturday, the first due date will be the following Monday. With `iter = weekly` on any day, the first due date will be that same day.
-
-If `iter_type` is not set, it defaults to `fixed`, which is the behavior TaskWarrior's older `recur:` already has.
+The highest-priority of those dates is the first occurrence and is preserved exactly. TaskChampion does not pick a first date on the caller's behalf, in the same way that TaskWarrior's `recur:` requires a `due` date.
 
 At this point, an iterative task acts the same as any other task.
 
@@ -110,7 +103,9 @@ At this point, an iterative task acts the same as any other task.
 
 The second time that an Iterative task has special handling is when it has its status set to “Completed” using Task::set_status or Task::done.
 
-The iterative task closes itself and spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (`v5(ITERATIVE_NAMESPACE, completed_uuid)`), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates. The successor's `iter_prior` points at the task it succeeded, forming a chain, and it carries the same `series` value as every other instance.
+The iterative task closes itself and spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (`v5(ITERATIVE_NAMESPACE, completed_uuid)`), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates.
+
+If the task no longer has an `iter_type`, or has lost all of `due`, `scheduled` and `wait` since it became iterative, completion fails with an error message.
 
 The attribute changes, where `self` is the task being completed and `successor` is the new instance:
 
@@ -120,8 +115,6 @@ The attribute changes, where `self` is the task being completed and `successor` 
 | end               | now            | none               |
 | start             | unchanged      | none               |
 | entry             | unchanged      | now                |
-| iter_prior        | unchanged      | `self`'s UUID      |
-| series            | unchanged      | copied from `self` |
 | iter_count        | unchanged      | `self`'s + 1       |
 | iter, iter_type   | none (cleared) | copied from `self` |
 | `dep_<UUID>`      | unchanged      | none               |
@@ -157,6 +150,7 @@ There are two ways to end a series early:
 
 ### Legacy Applications
 
+:wq
 Pre-3.0 based applications are completely left out as all iterative functionality is implemented in TaskChampion.
 
 All applications that haven’t been updated to recognize the Iterative status may hide or mishandle Iterative tasks. The biggest issue is likely to be marking an Iterative task done and then losing it as an iterative task. If that happens, it will disappear from that client's perspective and the iteration never advances. However, TaskWarrior ignores tasks with unknown statuses so this is unlikely to happen.

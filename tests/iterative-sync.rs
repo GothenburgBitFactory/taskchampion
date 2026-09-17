@@ -25,6 +25,8 @@ async fn concurrent_iterative_completion_converges() -> anyhow::Result<()> {
     let mut ops = Operations::new();
     let mut t = rep1.create_task(uuid, &mut ops).await?;
     t.set_value("iter", Some("daily".into()), &mut ops)?;
+    t.set_value("iter_type", Some("fixed".into()), &mut ops)?;
+    t.set_due(Some(chrono::Utc::now()), &mut ops)?;
     t.set_status(Status::Iterative, &mut ops)?;
     rep1.commit_operations(ops).await?;
     rep1.sync(&mut server, false).await?;
@@ -62,19 +64,12 @@ async fn concurrent_iterative_completion_converges() -> anyhow::Result<()> {
     // The original is completed.
     assert_eq!(all1[&uuid].get_status(), Status::Completed);
 
-    // The other task is the successor, and points back.
+    // The other task is the successor.
     let successor = all1
         .values()
         .find(|t| t.get_uuid() != uuid)
         .expect("successor should exist");
     assert_eq!(successor.get_status(), Status::Iterative);
-    assert_eq!(
-        successor
-            .get_value("iter_prior")
-            .and_then(|p| Uuid::parse_str(p).ok()),
-        Some(uuid),
-        "successor's prior is the completed task"
-    );
 
     Ok(())
 }

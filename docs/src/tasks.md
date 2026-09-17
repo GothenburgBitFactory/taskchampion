@@ -44,17 +44,17 @@ Note that while TaskChampion recognizes "R" as a status, it does not implement r
 
 ### Iterative Tasks
 
-Iterative tasks, described in [Iterative Tasks](./iterative-tasks.md), are the one form of repetition TaskChampion does implement, under the `iterative` status. They use five further keys, which fall into two groups.
+Iterative tasks, described in [Iterative Tasks](./iterative-tasks.md), are the one form of repetition TaskChampion does implement, under the `iterative` status. They use three further keys.
 
 Two are set by the user, or by a front end on the user's behalf, and are treated as UDAs:
 
 - `iter` - the iteration schedule, as a TaskWarrior-style shorthand, an ISO-8601 duration, a natural-language phrase, or a raw RRULE. A task with `iterative` status must have a non-empty value here
-- `iter_type` - how the next occurrence is anchored: `fixed` (the default), `fixed+`, or `chained`
+- `iter_type` - how the next occurrence is anchored: `fixed`, `fixed+`, or `chained`. A task with `iterative` status must have one of these
 
-The other three are internal bookkeeping. Unlike the two above, they are recognized keys rather than UDAs, so they are not returned by the UDA accessors and `set_user_defined_attribute` refuses to write them:
+A task with `iterative` status must also have at least one of `due`, `scheduled` or `wait`, which the schedule is anchored on.
 
-- `series` - the UUID of the first task in the series, carried unchanged by every later instance, giving a series one stable identity even though each individual task has its own UUID
-- `iter_prior` - the UUID of the instance this one succeeded, chaining the instances back to the first
+The third is a recognized key rather than a UDA.
+
 - `iter_count` - this instance's 1-based position in the series, used to stop at the rule's `COUNT`
 
 ### UDAs
