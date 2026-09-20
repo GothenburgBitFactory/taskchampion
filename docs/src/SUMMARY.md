@@ -3,6 +3,7 @@
 - [Introduction](./introduction.md)
 - [Usage](./usage.md)
 - [Task Model](./tasks.md)
+  * [Iterative Tasks](./iterative-tasks.md)
 - [Synchronization and the Sync Server](./sync.md)
   * [Synchronization Model](./sync-model.md)
   * [Snapshots](./snapshots.md)
