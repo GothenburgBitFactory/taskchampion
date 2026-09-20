@@ -140,7 +140,7 @@ reqwest-middleware = { version = "0.4", optional = true }
 ## common dev-dependencies
 [dev-dependencies]
 tempfile = "3"
-rstest = "0.26"
+rstest = "0.27"
 pretty_assertions = "1"
 libc = "0.2"
 tokio = { version = "1", features = ["time", "rt"] }
