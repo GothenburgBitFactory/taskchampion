@@ -21,6 +21,7 @@ jobs:
           - "server-gcp,tls-native-roots"
           - "server-aws,tls-native-roots"
           - "storage,bundled"
+          - "iterative-tasks,storage,bundled"
 
     name: "taskchampion ${{ matrix.features == '' && 'with no features' || format('with features {0}', matrix.features) }}"
     runs-on: ubuntu-latest

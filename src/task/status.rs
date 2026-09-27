@@ -6,6 +6,8 @@ pub enum Status {
     Completed,
     Deleted,
     Recurring,
+    #[cfg(feature = "iterative-tasks")]
+    Iterative,
     /// Unknown signifies a status in the task DB that was not
     /// recognized.  This supports forward-compatibility if a
     /// new status is added.  Tasks with unknown status should
@@ -21,6 +23,8 @@ impl Status {
             "completed" => Status::Completed,
             "deleted" => Status::Deleted,
             "recurring" => Status::Recurring,
+            #[cfg(feature = "iterative-tasks")]
+            "iterative" => Status::Iterative,
             v => Status::Unknown(v.to_string()),
         }
     }
@@ -32,7 +36,19 @@ impl Status {
             Status::Completed => "completed",
             Status::Deleted => "deleted",
             Status::Recurring => "recurring",
+            #[cfg(feature = "iterative-tasks")]
+            Status::Iterative => "iterative",
             Status::Unknown(v) => v.as_ref(),
+        }
+    }
+
+    /// Does this status belong in the working set.
+    pub(crate) fn in_working_set(&self) -> bool {
+        match self {
+            Status::Pending | Status::Recurring => true,
+            #[cfg(feature = "iterative-tasks")]
+            Status::Iterative => true,
+            _ => false,
         }
     }
 }
@@ -48,6 +64,8 @@ mod test {
         assert_eq!(Status::Completed.to_taskmap(), "completed");
         assert_eq!(Status::Deleted.to_taskmap(), "deleted");
         assert_eq!(Status::Recurring.to_taskmap(), "recurring");
+        #[cfg(feature = "iterative-tasks")]
+        assert_eq!(Status::Iterative.to_taskmap(), "iterative");
         assert_eq!(Status::Unknown("wishful".into()).to_taskmap(), "wishful");
     }
 
@@ -57,6 +75,16 @@ mod test {
         assert_eq!(Status::from_taskmap("completed"), Status::Completed);
         assert_eq!(Status::from_taskmap("deleted"), Status::Deleted);
         assert_eq!(Status::from_taskmap("recurring"), Status::Recurring);
+        #[cfg(feature = "iterative-tasks")]
+        assert_eq!(Status::from_taskmap("iterative"), Status::Iterative);
+        #[cfg(not(feature = "iterative-tasks"))]
+        {
+            assert_eq!(
+                Status::from_taskmap("iterative"),
+                Status::Unknown("iterative".into())
+            );
+            assert!(!Status::from_taskmap("iterative").in_working_set());
+        }
         assert_eq!(
             Status::from_taskmap("something-else"),
             Status::Unknown("something-else".into())
@@ -69,6 +97,8 @@ mod test {
         assert_eq!(format!("{}", Status::Completed), "Completed");
         assert_eq!(format!("{}", Status::Deleted), "Deleted");
         assert_eq!(format!("{}", Status::Recurring), "Recurring");
+        #[cfg(feature = "iterative-tasks")]
+        assert_eq!(format!("{}", Status::Iterative), "Iterative");
         assert_eq!(format!("{}", Status::Unknown("wishful".into())), "Unknown");
     }
 }

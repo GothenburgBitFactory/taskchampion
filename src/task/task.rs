@@ -3,14 +3,28 @@ use super::{utc_timestamp, Annotation, Status, Tag, Timestamp};
 use crate::depmap::DependencyMap;
 use crate::errors::{Error, Result};
 use crate::storage::TaskMap;
+use crate::task::utc_now;
+#[cfg(feature = "iterative-tasks")]
+use crate::task::{iter, local_tz, IterType};
 use crate::{Operations, TaskData};
 use chrono::prelude::*;
 use log::trace;
+#[cfg(feature = "iterative-tasks")]
+use rrule::RRuleSet;
 use std::convert::AsRef;
 use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Fixed namespace for deriving an iterative task's successor UUID via UUIDv5.
+///
+/// This is derived (per RFC 4122) as
+/// `v5(NAMESPACE_URL, "taskchampion-iterative-task")`.
+/// `Uuid::new_v5` is not `const`, so the precomputed value is inlined here. The
+/// test verifies it still matches.
+#[cfg(feature = "iterative-tasks")]
+const ITERATIVE_NAMESPACE: Uuid = Uuid::from_u128(0x6ab813ab_3ff5_56f4_820e_31ada24844af);
 
 /// A task, with a high-level interface.
 ///
@@ -131,6 +145,11 @@ impl Task {
         self.get_timestamp(Prop::Wait.as_ref())
     }
 
+    /// Get the scheduled time a task can be started.
+    pub fn get_scheduled(&self) -> Option<Timestamp> {
+        self.get_timestamp("scheduled")
+    }
+
     /// Determine whether this task is waiting now.
     pub fn is_waiting(&self) -> bool {
         if let Some(ts) = self.get_wait() {
@@ -161,7 +180,12 @@ impl Task {
         match synth {
             SyntheticTag::Waiting => self.is_waiting(),
             SyntheticTag::Active => self.is_active(),
-            SyntheticTag::Pending => self.get_status() == Status::Pending,
+            SyntheticTag::Pending => match self.get_status() {
+                Status::Pending => true,
+                #[cfg(feature = "iterative-tasks")]
+                Status::Iterative => true,
+                _ => false,
+            },
             SyntheticTag::Completed => self.get_status() == Status::Completed,
             SyntheticTag::Deleted => self.get_status() == Status::Deleted,
             SyntheticTag::Blocked => self.is_blocked(),
@@ -305,23 +329,302 @@ impl Task {
     /// This also updates the task's "end" property appropriately.
     pub fn set_status(&mut self, status: Status, ops: &mut Operations) -> Result<()> {
         match status {
-            Status::Pending | Status::Recurring
+            Status::Pending | Status::Recurring => {
                 // clear "end" when a task becomes "pending" or "recurring"
-                if self.data.has(Prop::End.as_ref()) => {
+                if self.data.has(Prop::End.as_ref()) {
                     self.set_timestamp(Prop::End.as_ref(), None, ops)?;
                 }
-            Status::Completed | Status::Deleted
+            }
+            #[cfg(feature = "iterative-tasks")]
+            Status::Completed if self.get_status() == Status::Iterative => {
+                return self.set_iterative_completed(ops);
+            }
+            Status::Completed | Status::Deleted => {
                 // set "end" when a task is deleted or completed
-                if !self.data.has(Prop::End.as_ref()) => {
-                    self.set_timestamp(Prop::End.as_ref(), Some(Utc::now()), ops)?;
+                if !self.data.has(Prop::End.as_ref()) {
+                    self.set_timestamp(Prop::End.as_ref(), Some(utc_now()), ops)?;
                 }
-            _ => {}
+            }
+            #[cfg(feature = "iterative-tasks")]
+            Status::Iterative => {
+                self.set_iterative_status(ops)?;
+            }
+            Status::Unknown(_) => {}
         }
         self.set_value(
             Prop::Status.as_ref(),
             Some(String::from(status.to_taskmap())),
             ops,
         )
+    }
+
+    /// The task's highest-priority date
+    #[cfg(feature = "iterative-tasks")]
+    fn schedule_anchor(&self) -> Option<DateTime<Utc>> {
+        self.get_due()
+            .or_else(|| self.get_scheduled())
+            .or_else(|| self.get_wait())
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    fn set_iterative_status(&mut self, ops: &mut Operations) -> Result<()> {
+        if let Some(iter) = self.data.get("iter") {
+            // There is no default iteration type or first date. Choosing them is
+            // left to the client.
+            match self.data.get("iter_type") {
+                Some(t) => {
+                    IterType::from_str(t).map_err(|e| {
+                        Error::Usage(format!(
+                            "iter_type {t:?} is not fixed, fixed+ or chained ({e})."
+                        ))
+                    })?;
+                }
+                None => {
+                    return Err(Error::Usage(
+                        "Iterative tasks require an 'iter_type' of fixed, fixed+ or chained."
+                            .into(),
+                    ))
+                }
+            }
+            // The highest-priority date the caller set is the first occurrence.
+            let Some(anchor_date) = self.schedule_anchor() else {
+                return Err(Error::Usage(
+                    "Iterative tasks require a 'due', 'scheduled' or 'wait' date.".into(),
+                ));
+            };
+            let dt_start = anchor_date.with_timezone(&local_tz());
+            // Check that the `iter` is parseable
+            iter::bake(iter, dt_start)?;
+            // Set the initial series count if not set. 1-based, since it is a count.
+            if self.data.get("iter_count").is_none() {
+                self.set_value("iter_count", Some("1".to_string()), ops)?;
+            }
+            // Stamp `entry` if absent.
+            if self.get_entry().is_none() {
+                self.set_entry(Some(utc_timestamp(utc_now().timestamp())), ops)?;
+            }
+            Ok(())
+        } else {
+            Err(Error::Usage(
+                "Iterative tasks require an 'iter' value.".into(),
+            ))
+        }
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    fn set_iterative_completed(&mut self, ops: &mut Operations) -> Result<()> {
+        let now = utc_timestamp(utc_now().timestamp());
+        let uuid = self.get_uuid();
+
+        // Compute the next occurrence's date from the current schedule before
+        // changing anything.
+        let iter_type = match self.data.get("iter_type") {
+            Some(t) => IterType::from_str(t)
+                .map_err(|e| Error::Iterative(format!("Couldn't parse iter type {}", e)))?,
+            None => {
+                return Err(Error::Iterative(format!(
+                    "Task {uuid}: has no iter_type. Set it to fixed, fixed+ or chained with `task edit`."
+                )))
+            }
+        };
+        let iter_str = self.data.get("iter").ok_or_else(|| {
+            Error::Iterative(format!("Task {uuid}: has iterative status but no iter."))
+        })?;
+        let unvalidated = iter::str2rrule(iter_str).map_err(|e| {
+            Error::Iterative(format!(
+                "Task {uuid}: iter {iter_str:?} could not be parsed ({e}).."
+            ))
+        })?;
+        let schedule = iter::without_count(&unvalidated)?;
+        // A rule whose UNTIL has passed is an exhausted series rather than an
+        // error, so it yields no set instead of failing.
+        let anchored_set = |anchor: DateTime<rrule::Tz>| -> Result<Option<RRuleSet>> {
+            match schedule.clone().validate(anchor) {
+                Ok(rule) => Ok(Some(RRuleSet::new(anchor).rrule(rule))),
+                Err(rrule::RRuleError::ValidationError(
+                    rrule::ValidationError::UntilBeforeStart { .. },
+                )) => Ok(None),
+                Err(e) => Err(Error::Iterative(format!(
+                    "Task {uuid}: stored iter is not valid for this task's dates ({e})."
+                ))),
+            }
+        };
+        // The first occurrence strictly after `cutoff`. This filters the
+        // iterator directly because rrule's `after()` is inclusive despite its
+        // docs, and `limit()` keeps rrule's iteration guard armed.
+        let first_after = |set: RRuleSet, cutoff: DateTime<rrule::Tz>| {
+            let set = set.limit();
+            (&set).into_iter().find(|d| *d > cutoff).map(|d| d.to_utc())
+        };
+        // Anchor the schedule off the highest-priority present date.
+        let anchor_old = self
+            .schedule_anchor()
+            .map(|t| t.with_timezone(&local_tz()))
+            .ok_or_else(|| {
+                Error::Iterative(format!(
+                    "Task {uuid}: has no due, scheduled or wait date to schedule from. Add one with `task edit`."
+                ))
+            })?;
+        let now_local = utc_now().with_timezone(&local_tz());
+        let next_anchor = match iter_type {
+            IterType::Fixed => {
+                // First occurrence strictly after the anchor date.
+                anchored_set(anchor_old)?.and_then(|set| first_after(set, anchor_old))
+            }
+            IterType::FixedPlus => {
+                // Strictly after both now and the completed occurrence, so it
+                // skips missed occurrences but still advances when completed early.
+                let cutoff = std::cmp::max(now_local, anchor_old);
+                anchored_set(anchor_old)?.and_then(|set| first_after(set, cutoff))
+            }
+            IterType::Chained => {
+                // Chained schedules the next occurrence after the completion
+                // time. Anchoring at "now" makes now itself the first
+                // occurrence, so it has to be skipped.
+                let freq = unvalidated.get_freq();
+                let period = |dt: &DateTime<rrule::Tz>| -> Option<(i32, u32)> {
+                    match freq {
+                        rrule::Frequency::Daily => Some((dt.year(), dt.ordinal())),
+                        rrule::Frequency::Weekly => {
+                            let w = dt.iso_week();
+                            Some((w.year(), w.week()))
+                        }
+                        rrule::Frequency::Monthly => Some((dt.year(), dt.month())),
+                        rrule::Frequency::Yearly => Some((dt.year(), 0)),
+                        _ => None,
+                    }
+                };
+                let now_period = if iter::selects_within_period(&unvalidated) {
+                    None
+                } else {
+                    period(&now_local)
+                };
+                anchored_set(now_local)?.and_then(|set| {
+                    let set = set.limit();
+                    (&set)
+                        .into_iter()
+                        .find(|d| match now_period {
+                            Some(np) => period(d) != Some(np),
+                            None => *d > now_local,
+                        })
+                        .map(|d| d.to_utc())
+                })
+            }
+        };
+
+        // Spawn the next instance only if the schedule yields a future occurrence
+        // and the series has not reached its rrule COUNT length.
+        let cap = unvalidated.get_count();
+        let pos = match self.data.get("iter_count") {
+            Some(s) => s.parse::<u32>().map_err(|e| {
+                Error::Iterative(format!(
+                    "Task {uuid}: iter_count {s:?} is not a number ({e}). Correct it with `task edit`."
+                ))
+            })?,
+            None => 1,
+        };
+        if cap.is_none_or(|c| pos.saturating_add(1) <= c) {
+            if let Some(next_anchor) = next_anchor {
+                self.spawn_successor(next_anchor, anchor_old, pos, now, ops)?;
+            }
+        }
+        // Finally, complete the task.
+        self.set_value(
+            Prop::Status.as_ref(),
+            Some(String::from(Status::Completed.to_taskmap())),
+            ops,
+        )?;
+        self.set_timestamp(Prop::End.as_ref(), Some(now), ops)?;
+        self.set_value("iter", None, ops)?;
+        self.set_value("iter_type", None, ops)?;
+        Ok(())
+    }
+
+    /// Build the successor for a completed iterative occurrence.
+    ///
+    /// The successor is a copy of `self` under a deterministic UUID, its schedule
+    /// re-anchored to `next_anchor` and its dates advanced by the same wall-clock
+    /// delta. `iter_count` is the completed instance's count, the successor's
+    /// `iter_count` is `iter_count + 1`.
+    #[cfg(feature = "iterative-tasks")]
+    fn spawn_successor(
+        &self,
+        next_anchor: Timestamp,
+        anchor_old: DateTime<rrule::Tz>,
+        iter_count: u32,
+        now: Timestamp,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        let self_uuid = self.get_uuid();
+        let successor_uuid = Uuid::new_v5(&ITERATIVE_NAMESPACE, self_uuid.as_bytes());
+        let mut successor = Task::new(
+            TaskData::create(successor_uuid, ops),
+            Arc::new(DependencyMap::new()),
+        );
+
+        // Copy the source properties, except those handled explicitly below.
+        for (prop, value) in self.data.iter() {
+            let set_below = matches!(
+                prop.as_str(),
+                "status"
+                    | "modified"
+                    | "end"
+                    | "start"
+                    | "due"
+                    | "scheduled"
+                    | "wait"
+                    | "entry"
+                    | "iter_count"
+                    | "until"
+            ) || prop.starts_with("dep_")
+                || prop.starts_with("annotation_");
+            if !set_below {
+                successor.data.update(prop, Some(value.to_owned()), ops);
+            }
+        }
+
+        successor.set_value(
+            Prop::Status.as_ref(),
+            Some(String::from(Status::Iterative.to_taskmap())),
+            ops,
+        )?;
+
+        successor.set_value(
+            "iter_count",
+            Some(iter_count.saturating_add(1).to_string()),
+            ops,
+        )?;
+
+        // Advance each present date by the same delta as the anchor, with local
+        // DST awareness.
+        let naive_delta =
+            next_anchor.with_timezone(&local_tz()).naive_local() - anchor_old.naive_local();
+        let raw_delta = next_anchor - anchor_old.with_timezone(&Utc);
+        let shift = |date: Timestamp| -> Timestamp {
+            let naive = date.with_timezone(&local_tz()).naive_local() + naive_delta;
+            match local_tz().from_local_datetime(&naive) {
+                chrono::LocalResult::Single(t) => t.with_timezone(&Utc),
+                chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
+                // Nonexistent local time due to spring-forward, leap seconds etc:
+                // fall back to raw UTC delta for this date.
+                chrono::LocalResult::None => date + raw_delta,
+            }
+        };
+        if let Some(due) = self.get_due() {
+            successor.set_due(Some(shift(due)), ops)?;
+        }
+        if let Some(scheduled) = self.get_scheduled() {
+            successor.set_scheduled(Some(shift(scheduled)), ops)?;
+        }
+        if let Some(wait) = self.get_wait() {
+            successor.set_wait(Some(shift(wait)), ops)?;
+        }
+        if let Some(until) = self.get_timestamp("until") {
+            successor.set_timestamp("until", Some(shift(until)), ops)?;
+        }
+
+        successor.set_entry(Some(now), ops)?;
+        Ok(())
     }
 
     pub fn set_description(&mut self, description: String, ops: &mut Operations) -> Result<()> {
@@ -334,6 +637,14 @@ impl Task {
 
     pub fn set_entry(&mut self, entry: Option<Timestamp>, ops: &mut Operations) -> Result<()> {
         self.set_timestamp(Prop::Entry.as_ref(), entry, ops)
+    }
+
+    pub fn set_scheduled(
+        &mut self,
+        scheduled: Option<Timestamp>,
+        ops: &mut Operations,
+    ) -> Result<()> {
+        self.set_timestamp("scheduled", scheduled, ops)
     }
 
     pub fn set_wait(&mut self, wait: Option<Timestamp>, ops: &mut Operations) -> Result<()> {
@@ -359,7 +670,7 @@ impl Task {
 
         // update the modified timestamp unless we are setting it explicitly
         if &property != "modified" && !self.updated_modified {
-            let now = format!("{}", Utc::now().timestamp());
+            let now = format!("{}", utc_now().timestamp());
             trace!("task {}: set property modified={:?}", self.get_uuid(), now);
             self.data.update(Prop::Modified.as_ref(), Some(now), ops);
             self.updated_modified = true;
@@ -575,6 +886,12 @@ impl Task {
             || key.starts_with("tag_")
             || key.starts_with("annotation_")
             || key.starts_with("dep_")
+            || Task::is_iterative_key(key)
+    }
+
+    /// Keys the iterative-tasks system uses.
+    fn is_iterative_key(key: &str) -> bool {
+        key == "iter_count"
     }
 }
 
@@ -582,7 +899,9 @@ impl Task {
 #[allow(deprecated)]
 mod test {
     use super::*;
-    use crate::{storage::inmemory::InMemoryStorage, Replica};
+    #[cfg(feature = "iterative-tasks")]
+    use crate::task::time::mock_tz;
+    use crate::{storage::inmemory::InMemoryStorage, task::time::mock_time, Replica};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -1087,6 +1406,881 @@ mod test {
         .await;
     }
 
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_basic() {
+        let due = Utc.with_ymd_and_hms(2026, 1, 10, 12, 0, 0).unwrap();
+        with_mut_task(
+            |task, ops| {
+                task.data.update("iter", Some("daily".into()), ops);
+                task.data.update("iter_type", Some("fixed".into()), ops);
+                task.set_due(Some(due), ops).unwrap();
+                task.set_status(Status::Iterative, ops).unwrap();
+            },
+            |task| {
+                assert_eq!(task.get_status(), Status::Iterative);
+                assert_eq!(task.get_due(), Some(due));
+                assert_eq!(task.data.get("iter_type"), Some("fixed"));
+                assert_eq!(task.data.get("iter_count"), Some("1"));
+            },
+        )
+        .await;
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_requires_iter_type() {
+        // There is no default iteration type, so the transition refuses to guess.
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let mut task = replica.create_task(Uuid::new_v4(), &mut ops).await.unwrap();
+        task.data.update("iter", Some("daily".into()), &mut ops);
+        task.set_due(Some(Utc::now()), &mut ops).unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+        assert_eq!(task.data.get("iter_type"), None);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_rejects_invalid_iter_type() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let mut task = replica.create_task(Uuid::new_v4(), &mut ops).await.unwrap();
+        task.data.update("iter", Some("daily".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("sideways".into()), &mut ops);
+        task.set_due(Some(Utc::now()), &mut ops).unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_uses_due_when_set() {
+        let preset_due = Utc.with_ymd_and_hms(2026, 1, 10, 12, 0, 0).unwrap();
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.set_due(Some(preset_due), &mut ops).unwrap();
+        task.data.update("iter", Some("weekly".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        task.set_status(Status::Iterative, &mut ops).unwrap();
+        assert_eq!(task.get_due(), Some(preset_due));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_requires_anchor_date() {
+        // There is no default first date, so a task with none of due, scheduled
+        // or wait cannot become iterative.
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let mut task = replica.create_task(Uuid::new_v4(), &mut ops).await.unwrap();
+        task.data.update("iter", Some("weekdays".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+        assert_eq!(task.get_due(), None);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_no_iter() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        task.set_due(Some(Utc::now()), &mut ops).unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_set_status_iterative_invalid_iter() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data.update("iter", Some("3blarg".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        task.set_due(Some(Utc::now()), &mut ops).unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    async fn setup_iterative_task(
+        iter: &str,
+        iter_type: &str,
+    ) -> (Replica<InMemoryStorage>, Task, Operations, Uuid) {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data.update("iter", Some(iter.into()), &mut ops);
+        task.data
+            .update("iter_type", Some(iter_type.into()), &mut ops);
+        task.set_due(Some(utc_timestamp(utc_now().timestamp())), &mut ops)
+            .unwrap();
+        task.set_status(Status::Iterative, &mut ops).unwrap();
+        (replica, task, ops, uuid)
+    }
+
+    /// UUID of the successor a task spawns when it is completed.
+    #[cfg(feature = "iterative-tasks")]
+    fn successor_of(uuid: Uuid) -> Uuid {
+        Uuid::new_v5(&ITERATIVE_NAMESPACE, uuid.as_bytes())
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[test]
+    fn iterative_namespace_is_derived() {
+        // The inlined constant must match its documented RFC 4122 derivation.
+        assert_eq!(
+            ITERATIVE_NAMESPACE,
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"taskchampion-iterative-task")
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_without_dates_errors() {
+        // A task that has lost all of due, scheduled and wait has nothing to
+        // schedule from, so completion reports that rather than inventing a date.
+        mock_time::set(time_start());
+        let (_replica, mut task, mut ops, uuid) = setup_iterative_task("daily", "fixed").await;
+        task.set_due(None, &mut ops).unwrap();
+        let result = task.set_status(Status::Completed, &mut ops);
+        mock_time::reset();
+        assert!(matches!(result, Err(Error::Iterative(_))));
+        assert_eq!(task.get_status(), Status::Iterative);
+        assert!(ops.iter().all(
+            |op| !matches!(op, crate::Operation::Create { uuid: u } if *u == successor_of(uuid))
+        ));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_without_iter_type_errors() {
+        mock_time::set(time_start());
+        let (_replica, mut task, mut ops, _uuid) = setup_iterative_task("daily", "fixed").await;
+        task.set_value("iter_type", None, &mut ops).unwrap();
+        let result = task.set_status(Status::Completed, &mut ops);
+        mock_time::reset();
+        assert!(matches!(result, Err(Error::Iterative(_))));
+        assert_eq!(task.get_status(), Status::Iterative);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_status_is_completed() {
+        // Completing an iterative task makes the handle itself Completed (it is now
+        // the log); the live instance is the separate successor.
+        let (_, mut task, mut ops, _) = setup_iterative_task("daily", "fixed").await;
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        assert_eq!(task.get_status(), Status::Completed);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_spawns_successor() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", "fixed").await;
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let all = replica.all_tasks().await.unwrap();
+        assert_eq!(
+            all.len(),
+            2,
+            "should have the completed log + its successor"
+        );
+
+        // `self` is now the completed log: status Completed, end set, no schedule.
+        let log = all.get(&uuid).unwrap();
+        assert_eq!(log.get_status(), Status::Completed);
+        assert!(log.data.has("end"));
+        assert_eq!(log.get_value("iter"), None);
+        assert_eq!(log.get_value("iter_type"), None);
+
+        // The successor is the new live instance: schedule copied, entry is now,
+        // status Iterative.
+        let succ = all
+            .get(&successor_of(uuid))
+            .expect("successor should exist");
+        assert_eq!(succ.get_status(), Status::Iterative);
+        assert!(succ.get_value("iter").is_some());
+        assert!(succ.get_value("iter_type").is_some());
+        assert_eq!(
+            succ.get_value("entry"),
+            Some(time_start().timestamp().to_string().as_str())
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_unblocks_dependents() {
+        // An iterative task with a dependent on it.
+        let (mut replica, _, ops, iter_uuid) = setup_iterative_task("daily", "fixed").await;
+        replica.commit_operations(ops).await.unwrap();
+
+        let mut ops = Operations::new();
+        let dep_uuid = Uuid::new_v4();
+        let mut dep_task = replica.create_task(dep_uuid, &mut ops).await.unwrap();
+        dep_task.set_status(Status::Pending, &mut ops).unwrap();
+        dep_task.add_dependency(iter_uuid, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        // Complete the iterative task.
+        let mut ops = Operations::new();
+        let mut iter_task = replica.get_task(iter_uuid).await.unwrap().unwrap();
+        iter_task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        // No dependency rewriting happened: the dependent still points at the same
+        // uuid, which is now Completed, so it is unblocked.
+        let dep_task = replica.get_task(dep_uuid).await.unwrap().unwrap();
+        let deps: Vec<Uuid> = dep_task.get_dependencies().collect();
+        assert_eq!(deps, vec![iter_uuid], "dependent edge is unchanged");
+        assert!(
+            !deps.contains(&successor_of(iter_uuid)),
+            "dependent is not rerouted to the successor"
+        );
+        let completed = replica.get_task(iter_uuid).await.unwrap().unwrap();
+        assert_eq!(completed.get_status(), Status::Completed);
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_undo_iterative_completion_leaves_dependent_untouched() {
+        // Completing an iterative task never mutates a dependent, so undoing the
+        // completion restores prior state exactly (the dependent's modified and dep
+        // edge are preserved).
+        let (mut replica, _, ops, iter_uuid) = setup_iterative_task("daily", "fixed").await;
+        replica.commit_operations(ops).await.unwrap();
+
+        let mut ops = Operations::new();
+        let dep_uuid = Uuid::new_v4();
+        let mut dep_task = replica.create_task(dep_uuid, &mut ops).await.unwrap();
+        dep_task.set_status(Status::Pending, &mut ops).unwrap();
+        dep_task.add_dependency(iter_uuid, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        let before = replica.get_task(dep_uuid).await.unwrap().unwrap();
+        let modified_before = before.get_value("modified").map(str::to_owned);
+        let deps_before: Vec<Uuid> = before.get_dependencies().collect();
+
+        // Complete behind an undo point, then undo.
+        let mut ops = Operations::new();
+        ops.push(crate::Operation::UndoPoint);
+        let mut iter_task = replica.get_task(iter_uuid).await.unwrap().unwrap();
+        iter_task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        let undo_ops = replica.get_undo_operations().await.unwrap();
+        assert!(replica.commit_reversed_operations(undo_ops).await.unwrap());
+
+        let after = replica.get_task(dep_uuid).await.unwrap().unwrap();
+        assert_eq!(
+            after.get_value("modified").map(str::to_owned),
+            modified_before,
+            "dependent's modified should be preserved"
+        );
+        assert_eq!(
+            after.get_dependencies().collect::<Vec<_>>(),
+            deps_before,
+            "dependent's dependency edge should be preserved"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_complete_iterative_no_rrule_error() {
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        // Manually set status=iterative without going through set_status(Iterative),
+        // so no "rrule" property is stored.
+        task.data
+            .update("status", Some("iterative".into()), &mut ops);
+        let result = task.set_status(Status::Completed, &mut ops);
+        assert!(matches!(result, Err(Error::Iterative(_))));
+    }
+
+    // time_start = 2026-01-01 00:00:00 UTC.  Weekly occurrences: Jan 8, Jan 15, Jan 22, Jan 29 …
+    // time_twenty_four_days_later = 2026-01-25 00:00:00 UTC (task is ~2.5 weeks overdue when completed).
+    #[cfg(feature = "iterative-tasks")]
+    fn time_start() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+    }
+    #[cfg(feature = "iterative-tasks")]
+    fn time_twenty_four_days_later() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 25, 0, 0, 0).unwrap()
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_fixed_advances_from_schedule() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed").await;
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // Fixed: orig_due is Jan 1; first weekly occurrence strictly after Jan 1 = Jan 8.
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_due(),
+            Some(time_start() + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_fixed_plus_advances_from_now() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed+").await;
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // FixedPlus: first weekly occurrence strictly after now (Jan 25) = Jan 29
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_due(),
+            Some(time_start() + chrono::Duration::weeks(4))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_fixed_plus_advances_when_completed_early() {
+        // The first due date is at Jan 1. Complete it early. FixedPlus must still
+        // advance past the occurrence just completed rather than returning it
+        // again.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed+").await;
+        mock_time::set(time_start() - chrono::Duration::days(1));
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // Next weekly occurrence strictly after the completed one (Jan 1) = Jan 8.
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_due(),
+            Some(time_start() + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_advances_period_from_now() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("weekly", "chained").await;
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // Chained: rule anchored to now (Jan 25), first occurrence after now = Feb 1
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_due(),
+            Some(time_twenty_four_days_later() + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_byday_advances_within_the_period() {
+        mock_tz::set(rrule::Tz::UTC);
+        // 2026-01-05 is a Monday.
+        let monday = Utc.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap();
+        mock_time::set(monday);
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("FREQ=WEEKLY;BYDAY=MO,WE,FR", "chained").await;
+        // The first due is the occurrence on or after now, i.e. that Monday.
+        assert_eq!(task.get_due(), Some(monday));
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        mock_tz::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_due(),
+            Some(Utc.with_ymd_and_hms(2026, 1, 7, 0, 0, 0).unwrap()),
+            "chained Mon/Wed/Fri completed on Monday should advance to Wednesday"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_weekdays_advances_a_day_not_a_week() {
+        mock_tz::set(rrule::Tz::UTC);
+        for (completed_on, expected_next) in [
+            // Monday -> Tuesday.
+            ((2026, 1, 5), (2026, 1, 6)),
+            // Friday -> the following Monday.
+            ((2026, 1, 9), (2026, 1, 12)),
+        ] {
+            let now = Utc
+                .with_ymd_and_hms(completed_on.0, completed_on.1, completed_on.2, 0, 0, 0)
+                .unwrap();
+            mock_time::set(now);
+            let (mut replica, mut task, mut ops, uuid) =
+                setup_iterative_task("weekdays", "chained").await;
+            assert_eq!(task.get_due(), Some(now));
+            task.set_status(Status::Completed, &mut ops).unwrap();
+            replica.commit_operations(ops).await.unwrap();
+
+            let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+            assert_eq!(
+                succ.get_due(),
+                Some(
+                    Utc.with_ymd_and_hms(
+                        expected_next.0,
+                        expected_next.1,
+                        expected_next.2,
+                        0,
+                        0,
+                        0
+                    )
+                    .unwrap()
+                ),
+                "chained weekdays completed on {completed_on:?}"
+            );
+        }
+        mock_time::reset();
+        mock_tz::reset();
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_then_fixed_anchors_to_current_due() {
+        // A task completed as Chained advances its successor's due to a new
+        // weekday. Switching that successor to Fixed must then anchor off its
+        // current due, not a stale original anchor.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("weekly", "chained").await;
+        // Complete once as Chained: successor due = Jan 25 + 1 week = Feb 1.
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        let succ_uuid = successor_of(uuid);
+        let chained_due = replica
+            .get_task(succ_uuid)
+            .await
+            .unwrap()
+            .unwrap()
+            .get_due()
+            .unwrap();
+        assert_eq!(
+            chained_due,
+            time_twenty_four_days_later() + chrono::Duration::weeks(1)
+        );
+        // Switch the successor to Fixed and complete it. Fixed anchors off its
+        // current due (Feb 1), so its successor's due is one week on (Feb 8).
+        let mut ops = Operations::new();
+        let mut succ = replica.get_task(succ_uuid).await.unwrap().unwrap();
+        succ.set_value("iter_type", Some("fixed".into()), &mut ops)
+            .unwrap();
+        succ.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        let succ2 = replica
+            .get_task(successor_of(succ_uuid))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            succ2.get_due(),
+            Some(chained_due + chrono::Duration::weeks(1))
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_iterative_is_pending_synthetic_tag() {
+        let (_replica, task, _ops, _uuid) = setup_iterative_task("weekly", "fixed").await;
+        assert_eq!(task.get_status(), Status::Iterative);
+        assert!(task.has_tag(&stag(SyntheticTag::Pending)));
+        assert!(!task.has_tag(&stag(SyntheticTag::Completed)));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_exhausted_rrule_completes_without_successor() {
+        // A finite RRULE (COUNT/UNTIL) must complete the task as its final
+        // occurrence.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("FREQ=DAILY;COUNT=1", "fixed").await;
+        // Re-assert the mocked time after the setup await (the thread-local may
+        // not survive it), so completion anchors at the mocked time.
+        mock_time::set(time_start());
+        // Previously this returned Err and left the task stuck as Iterative.
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        // The original task is Completed, not stuck as Iterative.
+        let done = replica.get_task(uuid).await.unwrap().unwrap();
+        assert_eq!(done.get_status(), Status::Completed);
+        // No successor was spawned for the exhausted schedule.
+        assert!(replica
+            .get_task(successor_of(uuid))
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_chained_daily_keeps_local_wall_clock_across_dst() {
+        use chrono::Timelike;
+        // 2026-03-07 13:00 UTC = 08:00 EST, the day before US spring-forward
+        let completed_at = Utc.with_ymd_and_hms(2026, 3, 7, 13, 0, 0).unwrap();
+        mock_tz::set(rrule::Tz::America__New_York);
+        mock_time::set(completed_at);
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", "fixed").await;
+        // Re-assert the mocked zone and time after the setup.
+        mock_tz::set(rrule::Tz::America__New_York);
+        mock_time::set(completed_at);
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let due = succ.get_due().unwrap();
+        mock_tz::reset();
+        // Next daily occurrence is 08:00 local the following day, after
+        // after spring-forward.
+        let due_local = due.with_timezone(&rrule::Tz::America__New_York);
+        assert_eq!(
+            due_local.hour(),
+            8,
+            "daily task keeps 08:00 local, got {due_local}"
+        );
+        assert_eq!(
+            due_local.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap()
+        );
+        assert_eq!(due, Utc.with_ymd_and_hms(2026, 3, 8, 12, 0, 0).unwrap());
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_scheduled_wait_keep_wall_clock_across_dst() {
+        use chrono::Timelike;
+        let ny = rrule::Tz::America__New_York;
+        // Anchor `due` = Fri 2026-03-06 12:00 EST, the week before US spring-forward.
+        let due = Utc.with_ymd_and_hms(2026, 3, 6, 17, 0, 0).unwrap();
+        mock_tz::set(ny);
+        mock_time::set(due);
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed").await;
+        mock_tz::set(ny);
+        mock_time::set(due);
+        // `scheduled` 3 days before due: its span (03-03 -> 03-10) crosses the
+        // 03-08 boundary. `wait` 10 days before due: its span (02-24 -> 03-03)
+        // does NOT cross it, which is where a raw UTC delta drifts the wall clock.
+        task.set_due(Some(due), &mut ops).unwrap();
+        task.set_scheduled(Some(due - chrono::Duration::days(3)), &mut ops)
+            .unwrap();
+        task.set_wait(Some(due - chrono::Duration::days(10)), &mut ops)
+            .unwrap();
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let new_due = succ.get_due().unwrap().with_timezone(&ny);
+        let new_scheduled = succ.get_scheduled().unwrap().with_timezone(&ny);
+        let new_wait = succ.get_wait().unwrap().with_timezone(&ny);
+        mock_tz::reset();
+
+        // Fixed weekly: next due is 2026-03-13 12:00 EDT. Every date keeps its
+        // 12:00 local time, including `wait` whose span does not cross the DST
+        // boundary the anchor crosses.
+        assert_eq!(new_due.hour(), 12, "due keeps 12:00 local, got {new_due}");
+        assert_eq!(
+            new_scheduled.hour(),
+            12,
+            "scheduled keeps 12:00 local, got {new_scheduled}"
+        );
+        assert_eq!(
+            new_wait.hour(),
+            12,
+            "wait keeps 12:00 local, got {new_wait}"
+        );
+        // Calendar-day spacing is preserved (due-3d, due-10d).
+        assert_eq!(
+            new_due.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 13).unwrap()
+        );
+        assert_eq!(
+            new_scheduled.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 10).unwrap()
+        );
+        assert_eq!(
+            new_wait.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 3).unwrap()
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_scheduled_and_wait_advance_fixed() {
+        // `scheduled` and `wait` advance by the same delta as the anchoring
+        // `due`, so their spacing relative to `due` is preserved.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed").await;
+        mock_time::set(time_start());
+        task.set_scheduled(Some(time_start() - chrono::Duration::days(2)), &mut ops)
+            .unwrap();
+        task.set_wait(Some(time_start() - chrono::Duration::days(5)), &mut ops)
+            .unwrap();
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let due = succ.get_due().unwrap();
+        // Fixed anchors off the original due (Jan 1); next weekly is Jan 8.
+        assert_eq!(due, time_start() + chrono::Duration::weeks(1));
+        assert_eq!(
+            succ.get_scheduled(),
+            Some(due - chrono::Duration::days(2)),
+            "scheduled keeps its 2-day lead on due"
+        );
+        assert_eq!(
+            succ.get_wait(),
+            Some(due - chrono::Duration::days(5)),
+            "wait keeps its 5-day lead on due"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_scheduled_and_wait_advance_fixed_plus() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed+").await;
+        mock_time::set(time_start());
+        task.set_scheduled(Some(time_start() - chrono::Duration::days(2)), &mut ops)
+            .unwrap();
+        task.set_wait(Some(time_start() - chrono::Duration::days(5)), &mut ops)
+            .unwrap();
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let due = succ.get_due().unwrap();
+        // FixedPlus skips missed occurrences: first weekly after now (Jan 25) is Jan 29.
+        assert_eq!(due, time_start() + chrono::Duration::weeks(4));
+        assert_eq!(succ.get_scheduled(), Some(due - chrono::Duration::days(2)));
+        assert_eq!(succ.get_wait(), Some(due - chrono::Duration::days(5)));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_scheduled_and_wait_advance_chained() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("weekly", "chained").await;
+        mock_time::set(time_start());
+        task.set_scheduled(Some(time_start() - chrono::Duration::days(2)), &mut ops)
+            .unwrap();
+        task.set_wait(Some(time_start() - chrono::Duration::days(5)), &mut ops)
+            .unwrap();
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        let due = succ.get_due().unwrap();
+        // Chained anchors to now (Jan 25); next weekly is Feb 1.
+        assert_eq!(
+            due,
+            time_twenty_four_days_later() + chrono::Duration::weeks(1)
+        );
+        assert_eq!(succ.get_scheduled(), Some(due - chrono::Duration::days(2)));
+        assert_eq!(succ.get_wait(), Some(due - chrono::Duration::days(5)));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_count_limits_series_length() {
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("FREQ=DAILY;COUNT=2", "fixed").await;
+        mock_time::set(time_start());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        let succ_uuid = successor_of(uuid);
+        let succ = replica.get_task(succ_uuid).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_value("iter"),
+            Some("FREQ=DAILY;COUNT=2"),
+            "successor carries the schedule unchanged"
+        );
+        assert_eq!(
+            succ.get_value("iter_count"),
+            Some("2"),
+            "successor is the second instance in the series"
+        );
+
+        // Complete the second (final) instance; the count is now exhausted.
+        mock_time::set(time_start());
+        let mut ops = Operations::new();
+        let mut succ = replica.get_task(succ_uuid).await.unwrap().unwrap();
+        succ.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        assert_eq!(
+            replica
+                .get_task(succ_uuid)
+                .await
+                .unwrap()
+                .unwrap()
+                .get_status(),
+            Status::Completed
+        );
+        assert!(
+            replica
+                .get_task(successor_of(succ_uuid))
+                .await
+                .unwrap()
+                .is_none(),
+            "no third instance is spawned once COUNT is exhausted"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_blank_iter_rejected() {
+        // A blank `iter` has no schedule, so setting Iterative status is an error.
+        let mut replica = Replica::new(InMemoryStorage::new());
+        let mut ops = Operations::new();
+        let uuid = Uuid::new_v4();
+        let mut task = replica.create_task(uuid, &mut ops).await.unwrap();
+        task.data.update("iter", Some("".into()), &mut ops);
+        task.data
+            .update("iter_type", Some("fixed".into()), &mut ops);
+        task.set_due(Some(Utc::now()), &mut ops).unwrap();
+        let result = task.set_status(Status::Iterative, &mut ops);
+        assert!(matches!(result, Err(Error::Usage(_))));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_status_roundtrip_preserves_series_position() {
+        // A live successor's series position is stored in `iter_count`. Toggling
+        // its status Iterative -> Pending -> Iterative re-bakes the rule from
+        // `iter` but leaves `iter_count` untouched, so the series stays capped.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) =
+            setup_iterative_task("FREQ=DAILY;COUNT=2", "fixed").await;
+        mock_time::set(time_start());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ_uuid = successor_of(uuid);
+        let mut succ = replica.get_task(succ_uuid).await.unwrap().unwrap();
+        assert_eq!(succ.get_value("iter_count"), Some("2"));
+
+        // Round-trip the successor's status through Pending and back.
+        let mut ops = Operations::new();
+        succ.set_status(Status::Pending, &mut ops).unwrap();
+        succ.set_status(Status::Iterative, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        let succ = replica.get_task(succ_uuid).await.unwrap().unwrap();
+        assert_eq!(
+            succ.get_value("iter_count"),
+            Some("2"),
+            "status round-trip must not change the series position"
+        );
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_iter_count_increments_across_the_series() {
+        // Each instance records its 1-based position in `iter_count`, the
+        // completed record keeps its own position, and successors keep counting up.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("daily", "fixed").await;
+        mock_time::set(time_start());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+
+        // The completed root keeps its own position (1).
+        let root = replica.get_task(uuid).await.unwrap().unwrap();
+        assert_eq!(
+            root.get_value("iter_count"),
+            Some("1"),
+            "the completed record keeps its position"
+        );
+
+        // The second instance is position 2.
+        let succ2_uuid = successor_of(uuid);
+        let mut succ2 = replica.get_task(succ2_uuid).await.unwrap().unwrap();
+        assert_eq!(succ2.get_value("iter_count"), Some("2"));
+
+        // Completing it spawns a third instance at position 3.
+        mock_time::set(time_start());
+        let mut ops = Operations::new();
+        succ2.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ3 = replica
+            .get_task(successor_of(succ2_uuid))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(succ3.get_value("iter_count"), Some("3"));
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_anchors_off_scheduled_when_no_due() {
+        // With no `due`, the highest-priority present date (`scheduled`) anchors
+        // the schedule and advances; the successor still has no `due`.
+        mock_time::set(time_start());
+        let (mut replica, mut task, mut ops, uuid) = setup_iterative_task("weekly", "fixed").await;
+        mock_time::set(time_start());
+        task.set_due(None, &mut ops).unwrap();
+        task.set_scheduled(Some(time_start()), &mut ops).unwrap();
+        mock_time::set(time_twenty_four_days_later());
+        task.set_status(Status::Completed, &mut ops).unwrap();
+        replica.commit_operations(ops).await.unwrap();
+        mock_time::reset();
+
+        let succ = replica.get_task(successor_of(uuid)).await.unwrap().unwrap();
+        assert_eq!(succ.get_due(), None);
+        assert_eq!(
+            succ.get_scheduled(),
+            Some(time_start() + chrono::Duration::weeks(1)),
+            "scheduled anchors the schedule and advances one week"
+        );
+    }
+
     #[tokio::test]
     async fn test_set_get_value() {
         let property = "property-name";
@@ -1379,6 +2573,30 @@ mod test {
                     .is_err());
             },
             |_task| {},
+        )
+        .await
+    }
+
+    #[cfg(feature = "iterative-tasks")]
+    #[tokio::test]
+    async fn test_iterative_keys_not_udas() {
+        with_mut_task(
+            |task, ops| {
+                assert!(task
+                    .set_user_defined_attribute("iter_count", "1", ops)
+                    .is_err());
+                task.set_user_defined_attribute("iter", "weekly", ops)
+                    .unwrap();
+                task.set_user_defined_attribute("iter_type", "fixed", ops)
+                    .unwrap();
+                task.set_value("iter_count", Some("1".into()), ops).unwrap();
+            },
+            |task| {
+                let keys: Vec<&str> = task.get_user_defined_attributes().map(|(k, _)| k).collect();
+                assert!(keys.contains(&"iter"));
+                assert!(keys.contains(&"iter_type"));
+                assert!(!keys.contains(&"iter_count"));
+            },
         )
         .await
     }
