@@ -432,8 +432,12 @@ impl<S: Storage> Replica<S> {
     /// Commit the reverse of the given operations, beginning with the last operation in the given
     /// operations and proceeding to the first.
     ///
-    /// This method only supports reversing operations if they precisely match local operations
-    /// that have not yet been synchronized, and will return `false` if this is not the case.
+    /// If the given operations are exactly the most recent un-synchronized local operations, they
+    /// are removed and their effect reversed. Otherwise a fresh reversed operation is generated for
+    /// each and committed, so that operations can be undone even after they have been synchronized.
+    /// In either case this returns `false` without making any change if a reversal cannot be
+    /// applied cleanly (a reversed Create whose task is absent, a reversed Delete whose task still
+    /// exists, or a reversed Update whose current value does not match).
     pub async fn commit_reversed_operations(&mut self, operations: Operations) -> Result<bool> {
         if !self.taskdb.commit_reversed_operations(operations).await? {
             return Ok(false);
@@ -905,11 +909,9 @@ mod tests {
         rep.commit_operations(ops).await?;
         assert_eq!(rep.num_undo_points().await.unwrap(), 2);
 
-        // Trying to reverse-commit the wrong operations fails.
-        let ops = vec![Operation::Delete {
-            uuid: uuid3,
-            old_task: TaskMap::new(),
-        }];
+        // Reversing a Create requires the task to exist; uuid3 was never created, so a reversed
+        // Create (a Delete) cannot be applied cleanly and the commit fails.
+        let ops = vec![Operation::Create { uuid: uuid3 }];
         assert!(!rep.commit_reversed_operations(ops).await?);
 
         // Commiting the correct operations succeeds
