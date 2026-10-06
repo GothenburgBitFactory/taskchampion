@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+#[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
+mod buffered;
 mod config;
 #[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
 pub mod indexeddb;

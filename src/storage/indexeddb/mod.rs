@@ -4,4 +4,5 @@ compile_error!("IndexdDBStorage is only available on WASM targets");
 mod storage;
 pub use storage::IndexedDbStorage;
 
+mod lock;
 mod schema;

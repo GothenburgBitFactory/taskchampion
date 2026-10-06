@@ -1,6 +1,7 @@
-use super::schema;
+use super::{lock, schema};
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
+use crate::storage::buffered;
 use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn, Wrapper};
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use async_trait::async_trait;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use wasm_bindgen::JsValue;
+use web_sys::js_sys::{global, Reflect};
 
 struct Inner {
     db: idb::Database,
@@ -410,15 +412,41 @@ impl Drop for InnerTxn {
 /// [`StorageManager.persist()`](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/persist)
 /// method to ensure the browser does not discard the database under storage pressure.
 ///
+/// Each transaction holds an exclusive [Web
+/// Lock](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API) named for the database,
+/// so the browser must provide `navigator.locks`, which it does only in a secure context. A panic
+/// while a transaction is open keeps the lock held until the page that panicked is unloaded or the
+/// worker that panicked is terminated.
+///
 /// WARNING: Do not read or write the database except via this storage implementation. Later
 /// versions of this library may change the schema incompatibly. pub struct
 /// IndexedDbStorage(Wrapper);
 pub struct IndexedDbStorage(Wrapper);
 
+struct Locked {
+    inner: Inner,
+    lock_name: String,
+}
+
+#[async_trait(?Send)]
+impl WrappedStorage for Locked {
+    async fn txn<'a>(&'a mut self) -> Result<Box<dyn WrappedStorageTxn + 'a>> {
+        let lock = lock::acquire(self.lock_name.clone()).await?;
+        Ok(Box::new(buffered::Txn::new(&mut self.inner, lock)))
+    }
+}
+
 impl IndexedDbStorage {
     /// Create a new IndexedDbStorage, using the given name for the database.
     pub async fn new(db_name: impl Into<String>) -> Result<IndexedDbStorage> {
+        let navigator = Reflect::get(&global(), &"navigator".into()).unwrap_or_default();
+        if !Reflect::get(&navigator, &"locks".into()).is_ok_and(|locks| locks.is_object()) {
+            return Err(Error::Database(
+                "IndexedDbStorage requires the Web Locks API (navigator.locks)".into(),
+            ));
+        }
         let db_name = db_name.into();
+        let lock_name = format!("taskchampion-{db_name}");
         Ok(IndexedDbStorage(
             Wrapper::new(async move || {
                 let factory = idb::Factory::new()?;
@@ -434,7 +462,10 @@ impl IndexedDbStorage {
                 });
                 let db = open_request.await?;
 
-                Ok(Inner { db })
+                Ok(Locked {
+                    inner: Inner { db },
+                    lock_name,
+                })
             })
             .await?,
         ))
