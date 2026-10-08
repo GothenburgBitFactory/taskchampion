@@ -137,6 +137,11 @@ macro_rules! storage_tests_base {
         }
 
         #[$macro]
+        async fn operations_after_sync_complete() -> Result<()> {
+            $crate::storage::test::operations_after_sync_complete($storage).await
+        }
+
+        #[$macro]
         async fn set_working_set_item() -> Result<()> {
             $crate::storage::test::set_working_set_item($storage).await
         }
@@ -774,6 +779,27 @@ pub(super) async fn sync_complete(mut storage: impl Storage) -> Result<()> {
         assert_eq!(ops.len(), 1);
         let ops = txn.get_task_operations(uuid2).await?;
         assert_eq!(ops.len(), 0);
+    }
+
+    Ok(())
+}
+
+pub(super) async fn operations_after_sync_complete(mut storage: impl Storage) -> Result<()> {
+    let uuid = Uuid::new_v4();
+
+    {
+        let mut txn = storage.txn().await?;
+        txn.create_task(uuid).await?;
+        txn.add_operation(Operation::Create { uuid }).await?;
+        txn.sync_complete().await?;
+        txn.add_operation(Operation::UndoPoint).await?;
+        txn.commit().await?;
+    }
+
+    {
+        let mut txn = storage.txn().await?;
+        let ops = txn.unsynced_operations().await?;
+        assert_eq!(ops, vec![Operation::UndoPoint]);
     }
 
     Ok(())
