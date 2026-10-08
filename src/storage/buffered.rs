@@ -311,3 +311,27 @@ impl<S: WrappedStorage, L> WrappedStorageTxn for Txn<'_, S, L> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub(super) mod test {
+    use super::Txn;
+    use crate::errors::Result;
+    use crate::storage::inmemory::InMemoryStorage;
+    use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn, Wrapper};
+    use async_trait::async_trait;
+
+    pub(crate) struct Buffered<S>(pub(crate) S);
+
+    #[async_trait(?Send)]
+    impl<S: WrappedStorage> WrappedStorage for Buffered<S> {
+        async fn txn<'a>(&'a mut self) -> Result<Box<dyn WrappedStorageTxn + 'a>> {
+            Ok(Box::new(Txn::new(&mut self.0, ())))
+        }
+    }
+
+    async fn storage() -> Result<Wrapper> {
+        Wrapper::new(async || Ok(Buffered(InMemoryStorage::new()))).await
+    }
+
+    crate::storage::test::storage_tests!(storage().await.unwrap());
+}
