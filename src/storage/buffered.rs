@@ -74,6 +74,7 @@ impl State {
 pub(super) struct Txn<'a, S, L> {
     inner: &'a mut S,
     state: State,
+    /// A value dropped when the transaction commits or is dropped, such as a lock guard.
     lock: Option<L>,
 }
 
@@ -318,7 +319,9 @@ pub(super) mod test {
     use crate::errors::Result;
     use crate::storage::inmemory::InMemoryStorage;
     use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn, Wrapper};
+    use crate::{Operation, Operations, Replica};
     use async_trait::async_trait;
+    use uuid::Uuid;
 
     pub(crate) struct Buffered<S>(pub(crate) S);
 
@@ -334,4 +337,18 @@ pub(super) mod test {
     }
 
     crate::storage::test::storage_tests!(storage().await.unwrap());
+
+    #[tokio::test]
+    async fn undo_commits() -> Result<()> {
+        let uuid = Uuid::new_v4();
+        let mut rep = Replica::new(storage().await?);
+        let mut ops = Operations::new();
+        ops.push(Operation::UndoPoint);
+        rep.create_task(uuid, &mut ops).await?;
+        rep.commit_operations(ops).await?;
+        let ops = rep.get_undo_operations().await?;
+        assert!(rep.commit_reversed_operations(ops).await?);
+        assert_eq!(rep.get_task_data(uuid).await?, None);
+        Ok(())
+    }
 }

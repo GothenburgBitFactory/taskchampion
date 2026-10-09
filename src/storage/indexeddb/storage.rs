@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use wasm_bindgen::JsValue;
-use web_sys::js_sys::{global, Reflect};
 
 struct Inner {
     db: idb::Database,
@@ -439,12 +438,7 @@ impl WrappedStorage for Locked {
 impl IndexedDbStorage {
     /// Create a new IndexedDbStorage, using the given name for the database.
     pub async fn new(db_name: impl Into<String>) -> Result<IndexedDbStorage> {
-        let navigator = Reflect::get(&global(), &"navigator".into()).unwrap_or_default();
-        if !Reflect::get(&navigator, &"locks".into()).is_ok_and(|locks| locks.is_object()) {
-            return Err(Error::Database(
-                "IndexedDbStorage requires the Web Locks API (navigator.locks)".into(),
-            ));
-        }
+        lock::check_available()?;
         let db_name = db_name.into();
         let lock_name = format!("taskchampion-{db_name}");
         Ok(IndexedDbStorage(
@@ -489,6 +483,7 @@ mod test {
     use crate::storage::inmemory::InMemoryStorage;
     use crate::{Operations, Replica, TaskData};
     use wasm_bindgen_test::*;
+    use web_sys::js_sys::Reflect;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 

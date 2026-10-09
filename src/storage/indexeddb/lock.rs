@@ -10,6 +10,17 @@ pub(super) struct Lock {
     _release: oneshot::Sender<()>,
 }
 
+/// Return an error unless the browser provides the Web Locks API.
+pub(super) fn check_available() -> Result<()> {
+    let navigator = Reflect::get(&global(), &"navigator".into()).unwrap_or_default();
+    if !Reflect::get(&navigator, &"locks".into()).is_ok_and(|locks| locks.is_object()) {
+        return Err(Error::Database(
+            "IndexedDbStorage requires the Web Locks API (navigator.locks)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Wait for the exclusive Web Lock with the given name.
 pub(super) async fn acquire(name: String) -> Result<Lock> {
     let (granted_tx, mut granted_rx) = mpsc::unbounded_channel();
