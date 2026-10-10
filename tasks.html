@@ -82,7 +82,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="chapter-item expanded "><a href="tasks.html" class="active"><strong aria-hidden="true">3.</strong> Task Model</a></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">4.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">4.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">4.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="encryption.html"><strong aria-hidden="true">4.4.</strong> Encryption</a></li><li class="chapter-item expanded "><a href="http.html"><strong aria-hidden="true">4.5.</strong> HTTP Implementation</a></li><li class="chapter-item expanded "><a href="object-store.html"><strong aria-hidden="true">4.6.</strong> Object-Store Implementation</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">5.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">5.2.</strong> Task Database</a></li></ol></li></ol>            </div>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="chapter-item expanded "><a href="tasks.html" class="active"><strong aria-hidden="true">3.</strong> Task Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="iterative-tasks.html"><strong aria-hidden="true">3.1.</strong> Iterative Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">4.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">4.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">4.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="encryption.html"><strong aria-hidden="true">4.4.</strong> Encryption</a></li><li class="chapter-item expanded "><a href="http.html"><strong aria-hidden="true">4.5.</strong> HTTP Implementation</a></li><li class="chapter-item expanded "><a href="object-store.html"><strong aria-hidden="true">4.6.</strong> Object-Store Implementation</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">5.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">5.2.</strong> Task Database</a></li></ol></li></ol>            </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
 
@@ -163,7 +163,7 @@ Reconciling these two changes on a sync operation would result in one change win
 <h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
 <p>The following keys, and key formats, are defined:</p>
 <ul>
-<li><code>status</code> - one of <code>pending</code> for a pending task (the default), <code>completed</code>, <code>deleted</code>, or <code>recurring</code></li>
+<li><code>status</code> - one of <code>pending</code> for a pending task (the default), <code>completed</code>, <code>deleted</code>, <code>recurring</code>, or <code>iterative</code></li>
 <li><code>description</code> - the one-line summary of the task</li>
 <li><code>modified</code> - the time of the last modification of this task</li>
 <li><code>start</code> - the most recent time at which this task was started (a task with no <code>start</code> key is not active)</li>
@@ -175,6 +175,18 @@ Reconciling these two changes on a sync operation would result in one change win
 <li><code>dep_&lt;uuid&gt;</code> - indicates this task depends on another task identified by <code>&lt;uuid&gt;</code>; the value is ignored; for example, <code>dep_8c4fed9c-c0d2-40c2-936d-36fc44e084a0</code></li>
 </ul>
 <p>Note that while TaskChampion recognizes &quot;R&quot; as a status, it does not implement recurrence directly.</p>
+<h3 id="iterative-tasks"><a class="header" href="#iterative-tasks">Iterative Tasks</a></h3>
+<p>Iterative tasks, described in <a href="./iterative-tasks.html">Iterative Tasks</a>, are the one form of repetition TaskChampion does implement, under the <code>iterative</code> status. They use three further keys.</p>
+<p>Two are set by the user, or by a front end on the user's behalf, and are treated as UDAs:</p>
+<ul>
+<li><code>iter</code> - the iteration schedule, as a TaskWarrior-style shorthand, an ISO-8601 duration, a natural-language phrase, or a raw RRULE. A task with <code>iterative</code> status must have a non-empty value here</li>
+<li><code>iter_type</code> - how the next occurrence is anchored: <code>fixed</code>, <code>fixed+</code>, or <code>chained</code>. A task with <code>iterative</code> status must have one of these</li>
+</ul>
+<p>A task with <code>iterative</code> status must also have at least one of <code>due</code>, <code>scheduled</code> or <code>wait</code>, which the schedule is anchored on.</p>
+<p>The third is a recognized key rather than a UDA.</p>
+<ul>
+<li><code>iter_count</code> - this instance's 1-based position in the series, used to stop at the rule's <code>COUNT</code></li>
+</ul>
 <h3 id="udas"><a class="header" href="#udas">UDAs</a></h3>
 <p>Any unrecognized keys are treated as &quot;user-defined attributes&quot; (UDAs).
 These attributes can be used to store additional data associated with a task.
@@ -189,7 +201,7 @@ The application defining a UDA defines the format of the value.</p>
                                 <i class="fa fa-angle-left"></i>
                             </a>
                         
-                                                    <a rel="next" href="sync.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                                    <a rel="next" href="iterative-tasks.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -203,7 +215,7 @@ The application defining a UDA defines the format of the value.</p>
                         <i class="fa fa-angle-left"></i>
                     </a>
                 
-                                    <a rel="next" href="sync.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                    <a rel="next" href="iterative-tasks.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                             </nav>

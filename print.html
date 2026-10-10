@@ -83,7 +83,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">3.</strong> Task Model</a></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">4.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">4.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">4.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="encryption.html"><strong aria-hidden="true">4.4.</strong> Encryption</a></li><li class="chapter-item expanded "><a href="http.html"><strong aria-hidden="true">4.5.</strong> HTTP Implementation</a></li><li class="chapter-item expanded "><a href="object-store.html"><strong aria-hidden="true">4.6.</strong> Object-Store Implementation</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">5.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">5.2.</strong> Task Database</a></li></ol></li></ol>            </div>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="usage.html"><strong aria-hidden="true">2.</strong> Usage</a></li><li class="chapter-item expanded "><a href="tasks.html"><strong aria-hidden="true">3.</strong> Task Model</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="iterative-tasks.html"><strong aria-hidden="true">3.1.</strong> Iterative Tasks</a></li></ol></li><li class="chapter-item expanded "><a href="sync.html"><strong aria-hidden="true">4.</strong> Synchronization and the Sync Server</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="sync-model.html"><strong aria-hidden="true">4.1.</strong> Synchronization Model</a></li><li class="chapter-item expanded "><a href="snapshots.html"><strong aria-hidden="true">4.2.</strong> Snapshots</a></li><li class="chapter-item expanded "><a href="sync-protocol.html"><strong aria-hidden="true">4.3.</strong> Server-Replica Protocol</a></li><li class="chapter-item expanded "><a href="encryption.html"><strong aria-hidden="true">4.4.</strong> Encryption</a></li><li class="chapter-item expanded "><a href="http.html"><strong aria-hidden="true">4.5.</strong> HTTP Implementation</a></li><li class="chapter-item expanded "><a href="object-store.html"><strong aria-hidden="true">4.6.</strong> Object-Store Implementation</a></li></ol></li><li class="chapter-item expanded "><a href="internals.html"><strong aria-hidden="true">5.</strong> Internal Details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="storage.html"><strong aria-hidden="true">5.1.</strong> Replica Storage</a></li><li class="chapter-item expanded "><a href="taskdb.html"><strong aria-hidden="true">5.2.</strong> Task Database</a></li></ol></li></ol>            </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
 
@@ -211,7 +211,7 @@ Reconciling these two changes on a sync operation would result in one change win
 <h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
 <p>The following keys, and key formats, are defined:</p>
 <ul>
-<li><code>status</code> - one of <code>pending</code> for a pending task (the default), <code>completed</code>, <code>deleted</code>, or <code>recurring</code></li>
+<li><code>status</code> - one of <code>pending</code> for a pending task (the default), <code>completed</code>, <code>deleted</code>, <code>recurring</code>, or <code>iterative</code></li>
 <li><code>description</code> - the one-line summary of the task</li>
 <li><code>modified</code> - the time of the last modification of this task</li>
 <li><code>start</code> - the most recent time at which this task was started (a task with no <code>start</code> key is not active)</li>
@@ -223,11 +223,115 @@ Reconciling these two changes on a sync operation would result in one change win
 <li><code>dep_&lt;uuid&gt;</code> - indicates this task depends on another task identified by <code>&lt;uuid&gt;</code>; the value is ignored; for example, <code>dep_8c4fed9c-c0d2-40c2-936d-36fc44e084a0</code></li>
 </ul>
 <p>Note that while TaskChampion recognizes &quot;R&quot; as a status, it does not implement recurrence directly.</p>
+<h3 id="iterative-tasks"><a class="header" href="#iterative-tasks">Iterative Tasks</a></h3>
+<p>Iterative tasks, described in <a href="./iterative-tasks.html">Iterative Tasks</a>, are the one form of repetition TaskChampion does implement, under the <code>iterative</code> status. They use three further keys.</p>
+<p>Two are set by the user, or by a front end on the user's behalf, and are treated as UDAs:</p>
+<ul>
+<li><code>iter</code> - the iteration schedule, as a TaskWarrior-style shorthand, an ISO-8601 duration, a natural-language phrase, or a raw RRULE. A task with <code>iterative</code> status must have a non-empty value here</li>
+<li><code>iter_type</code> - how the next occurrence is anchored: <code>fixed</code>, <code>fixed+</code>, or <code>chained</code>. A task with <code>iterative</code> status must have one of these</li>
+</ul>
+<p>A task with <code>iterative</code> status must also have at least one of <code>due</code>, <code>scheduled</code> or <code>wait</code>, which the schedule is anchored on.</p>
+<p>The third is a recognized key rather than a UDA.</p>
+<ul>
+<li><code>iter_count</code> - this instance's 1-based position in the series, used to stop at the rule's <code>COUNT</code></li>
+</ul>
 <h3 id="udas"><a class="header" href="#udas">UDAs</a></h3>
 <p>Any unrecognized keys are treated as &quot;user-defined attributes&quot; (UDAs).
 These attributes can be used to store additional data associated with a task.
 For example, applications that synchronize tasks with other systems such as calendars or team planning services might store unique identifiers for those systems as UDAs.
 The application defining a UDA defines the format of the value.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="taskchampion-iterative-tasks"><a class="header" href="#taskchampion-iterative-tasks">TaskChampion Iterative Tasks</a></h1>
+<p>Iterative tasks are tasks that repeat on a schedule. Completing one closes it and creates the next instance in the series.</p>
+<h2 id="iteration-handling-in-taskchampion"><a class="header" href="#iteration-handling-in-taskchampion">Iteration Handling in TaskChampion</a></h2>
+<p>All task iteration is handled in TaskChampion. Front ends only need to accept the <code>Iterative</code> task status and call the provided <code>Task::set_status()/done()</code> functions instead of directly manipulating raw <code>TaskData</code>. Front ends such as TaskWarrior that do not support iteration see these tasks as an unrecognized status and generally ignore them.</p>
+<h2 id="iteration-types"><a class="header" href="#iteration-types">Iteration Types</a></h2>
+<p>There are three types of iteration supported by iterative tasks.</p>
+<h3 id="fixed"><a class="header" href="#fixed">Fixed</a></h3>
+<p>When a <code>fixed</code> interval task is completed, the next due date is set to the next interval from when it was originally due. As an example, if rent is due on the 20th of the month, the next due date will be on the 20th of the next month, regardless of if I paid it on the 15th, the 20th or the 25th.</p>
+<h3 id="fixed-1"><a class="header" href="#fixed-1">Fixed+</a></h3>
+<p>When a <code>fixed+</code> interval task is completed, the next due date is set to the next interval from when it was originally due <em>on or after right now</em>. For example, if I have to take out the garbage bins every week but miss two because I'm on vacation, I shouldn't take them out multiple days in a row to make up for it.</p>
+<h3 id="chained"><a class="header" href="#chained">Chained</a></h3>
+<p>When a chained interval task is completed, the next due date is set to the next interval from when it was completed. As an example, if I normally get a haircut every six weeks and I got one today, my next one should be six weeks from today, even if I got this one three weeks late, or two days early.</p>
+<p>The iteration type is stored in the <code>iter_type</code> property, which can be one of <code>fixed</code>, <code>fixed+</code>, and <code>chained</code>. Each also accepts a short form: <code>fx</code>, <code>f+</code> or <code>fp</code>, and <code>ch</code>.</p>
+<p>TaskChampion has no default <code>iter_type</code>, so choosing one is left to the front end.</p>
+<h2 id="dates-and-counts"><a class="header" href="#dates-and-counts">Dates and Counts</a></h2>
+<p>Four optional date properties interact with iterative tasks.</p>
+<ul>
+<li><code>due</code> - The hard date that a task must be completed by. e.g. rent is due on the 15th.</li>
+<li><code>scheduled</code> - The date after which a task can be done. e.g. Christmas decorations can't be put up until after Thanksgiving</li>
+<li><code>wait</code> - Hides a task until after the <code>wait</code> so as to not clutter up the task list.</li>
+<li><code>until</code> - When the task should be closed because its deadline was missed by too much. Closing a task that is past its <code>until</code> is the responsibility of the front end, not TaskChampion. To end a whole series on a date, use the rule's <code>UNTIL</code> option instead.</li>
+</ul>
+<p>Front ends generally assume, but do not strictly enforce, that <code>due</code> &gt;= <code>scheduled</code> &gt;= <code>wait</code>, i.e. a task should be <code>due</code> after it is <code>scheduled</code>, and shouldn't be either of those while <code>wait</code>ing.</p>
+<p>When an iterative task is closed, the <code>due</code>, <code>scheduled</code>, <code>wait</code> and <code>until</code> are all advanced by the same amount of time if they exist. The advancement period is calculated for the highest priority date (the &quot;anchor&quot;), and then the others are moved forward by the same time delta. This preserves the spacing between them.</p>
+<p>Additionally, each iterative task records its position in the series in an <code>iter_count</code> property. This is used to end iterative tasks that have a specific number of iterations requested. </p>
+<h2 id="rrule-based-iteration-definition"><a class="header" href="#rrule-based-iteration-definition">RRULE Based Iteration Definition</a></h2>
+<p>There are a lot of ways to define iteration periods, which can be extremely complex. &quot;Every four years on the second Tuesday in November&quot;, &quot;The first weekday that isn't a Monday, on or after the 15th of April&quot;, and &quot;Weekly on Monday, Tuesday, Thursday and Friday, except for the third Friday of the month&quot; are all real-world examples.</p>
+<p>RFC 5545 Section 3.8.5.3 defines RRules for exactly this. RRules are capable of representing many, though of course not all, iteration periods and there is a well tested RRule library for Rust.</p>
+<p>Combining RRules with the iteration types takes a bit of thought. The rule is derived in an unbaked, anchor-independent form (no <code>DTSTART</code>), so it carries no anchor of its own. The anchor is the task's highest-priority date (<code>due</code> &gt; <code>scheduled</code> &gt; <code>wait</code>). On completion the rule is re-anchored to compute the next occurrence for that date: fixed anchors off the current anchor date, fixed+ also anchors off the anchor date but advances to the next occurrence on or after now, and chained anchors off the completion time (&quot;now&quot;). The remaining dates then shift by the same delta, as described above.</p>
+<p>Counting up in the <code>iter_count</code> property, rather than decrementing the <code>COUNT</code> of the rrule, keeps <code>iter</code> as it was originally written. Since the rule is not stored, the only place left to decrement is <code>iter</code> itself, and of the four accepted forms only a raw RRULE could carry a decremented count. A shorthand, an ISO-8601 duration and a natural-language phrase have nowhere to put one, so decrementing would mean replacing the user's own text with a generated RRULE on the first completion. Counting up also records position rather than remainder, so an instance knows it is the third of five.</p>
+<p>Note: RRules represent time to the nearest whole second, so all iterative task dates and times are also tracked to the nearest whole second.</p>
+<h3 id="rrule-generation"><a class="header" href="#rrule-generation">RRule Generation</a></h3>
+<p>For all the advantages of RRules, they are a unique syntax that (almost) no one wants to write regularly. The <code>iter</code> value is therefore accepted in four flavors:</p>
+<ol>
+<li>Raw RRules, for people who wish to use them directly.</li>
+<li>TaskWarrior-style duration shorthand, such as <code>daily</code>, <code>3wk</code>, <code>weekdays</code>, <code>fortnight</code>, <code>2year</code>, etc.</li>
+<li>ISO-8601 durations, such as <code>P2W</code>, <code>P3D</code> or <code>PT12H</code>, as long as they don't mix months or years with smaller units, such as <code>P1Y3D</code>, or a duration combining weeks with any other component, such as <code>P2W3D</code>, which ISO-8601 also doesn't allow.</li>
+<li>Free-form natural language: handled by the <a href="https://crates.io/crates/text2rrule"><code>text2rrule</code></a> crate. Phrases such as <code>every Monday</code>, <code>every other Tuesday</code>, or <code>every two weeks on friday</code> are parsed into an RRULE string and then into an <code>RRule</code> value. <code>text2rrule</code> supports multiple locales.</li>
+</ol>
+<p>The rrule generator tries to parse the <code>iter</code> value as raw RRULE first, then the TaskWarrior shorthand parser, then ISO-8601, then <code>text2rrule</code>.</p>
+<h2 id="iterative-task-flow"><a class="header" href="#iterative-task-flow">Iterative Task Flow</a></h2>
+<p>At any moment a series has one live Iterative task, handled like any other task. Each time it is completed it is replaced by a successor with a new deterministically derived UUID, so the live UUID advances over the life of the series. The completed instances remain as records. Iterative tasks need special handling in only two places.</p>
+<h3 id="creation--status-change"><a class="header" href="#creation--status-change">Creation / Status Change</a></h3>
+<p>To make a task iterative with <code>Task::new</code> or <code>Task::set_status</code>, it must have a non-empty <code>iter</code>, an <code>iter_type</code>, and at least one of <code>due</code>, <code>scheduled</code> or <code>wait</code>. If any of these is missing or invalid, the call returns an error and the status is not changed. When the status is set to Iterative, the <code>iter</code> value is checked that it can be parsed into a useable rrule, but the parsed rule is not stored. Instead it is derived again from <code>iter</code> when the task is completed, so an edit to <code>iter</code> always takes effect, however it was made. An <code>iter_count</code> property is set to 1 and each successor task increments it.</p>
+<p>The highest-priority of the <code>due</code>, <code>scheduled</code>, or <code>wait</code> dates is used as the first occurrence.</p>
+<p>At this point, an iterative task acts the same as any other task.</p>
+<h3 id="done"><a class="header" href="#done">Done</a></h3>
+<p>The second time that an Iterative task has special handling is when it has its status set to “Completed” using Task::set_status or Task::done.</p>
+<p>The iterative task closes itself and spawns its successor, a new Iterative task for the next occurrence. The successor's UUID is derived deterministically as a UUIDv5 from the completed task's UUID (<code>v5(ITERATIVE_NAMESPACE, completed_uuid)</code>), so two replicas completing the same task before syncing derive the same successor UUID and converge rather than producing duplicates.</p>
+<p>The property changes, where <code>self</code> is the task being completed and <code>successor</code> is the new instance:</p>
+<table><thead><tr><th>Property</th><th><code>self</code></th><th><code>successor</code></th></tr></thead><tbody>
+<tr><td>status</td><td>Completed</td><td>Iterative</td></tr>
+<tr><td>end</td><td>now</td><td>none</td></tr>
+<tr><td>start</td><td>unchanged</td><td>none</td></tr>
+<tr><td>entry</td><td>unchanged</td><td>now</td></tr>
+<tr><td>iter_count</td><td>unchanged</td><td><code>self</code>'s + 1</td></tr>
+<tr><td>iter, iter_type</td><td>none (cleared)</td><td>copied from <code>self</code></td></tr>
+<tr><td><code>dep_&lt;UUID&gt;</code></td><td>unchanged</td><td>none</td></tr>
+<tr><td><code>annotation_&lt;ts&gt;</code></td><td>unchanged</td><td>none</td></tr>
+<tr><td><code>tag_&lt;tag&gt;</code></td><td>unchanged</td><td>copied from <code>self</code></td></tr>
+<tr><td>modified</td><td>now</td><td>now</td></tr>
+<tr><td>all others</td><td>unchanged</td><td>copied from <code>self</code></td></tr>
+</tbody></table>
+<p>Because the task the dependents point at is the one that becomes Completed, dependent tasks are unblocked automatically with no dep rewriting. This means completion only ever changes the task itself and the successor it creates.</p>
+<p>The successor's <code>due</code>, <code>scheduled</code>, <code>wait</code> and <code>until</code> dates are computed from the rule derived from <code>iter</code> and re-anchored based on the iteration type and the highest-priority date. Once its next value is computed, the remainder shift by the same amount of time so their spacing is preserved:</p>
+<ul>
+<li>fixed anchors off the current anchor date</li>
+<li>fixed+ anchors off the anchor date but advancing to the next occurrence on or after now</li>
+<li>chained anchors off the completion time.</li>
+</ul>
+<p>The successor's <code>iter_count</code> is one greater than the completed instance's. If the rule carries a <code>COUNT</code>, the series ends once an instance's <code>iter_count</code> reaches the <code>COUNT</code>. The rule is copied unchanged.</p>
+<p>Note: because completing a task makes its own status <code>Completed</code>, the handle used to complete it now refers to the completed occurrence.</p>
+<p>Because there is only ever one live task in a series, it is not possible to end up with multiple pending tasks that are all copies of each other. Since the successor UUIDs are deterministic, two replicas completing the same task before syncing converge to a single completed task and a single successor task.</p>
+<h3 id="ending-a-series"><a class="header" href="#ending-a-series">Ending a Series</a></h3>
+<p>A series ends on its own when the iteration rule runs out: either an instance's <code>iter_count</code> reaches the rule's <code>COUNT</code>, or the rule's <code>UNTIL</code> has passed. In both cases the last instance completes normally and no successor is created.</p>
+<p>There are two ways to end a series early:</p>
+<ul>
+<li>Delete the current instance. Deletion does not create a successor, so the series stops there.</li>
+<li>Clear <code>iter</code>, which makes the task an ordinary one that can then be completed or deleted like any other.</li>
+</ul>
+<h3 id="interpreting-incomplete-iterative-tasks"><a class="header" href="#interpreting-incomplete-iterative-tasks">Interpreting Incomplete Iterative Tasks</a></h3>
+<p>As with any task, an <code>iterative</code> task must be have a reasonable interpretation even when it does not fully meet the requirements for an iterative task, for example if <code>iter</code> is manually cleared without changing the status. A task with status <code>iterative</code> that is missing <code>iter</code>, <code>iter_type</code>, or all of <code>due</code>, <code>scheduled</code> and <code>wait</code>, or whose <code>iter</code> or <code>iter_type</code> cannot be parsed is interpreted as a pending task that does not iterate. It stays in the working set and carries the <code>PENDING</code> synthetic tag like any other live iterative task.</p>
+<p>Attempting to complete a broken iterative task returns an error describing what is missing and leaves the task unchanged, so the front end can prompt the user to repair it or deal with it some other way.</p>
+<h2 id="issues-and-limitations"><a class="header" href="#issues-and-limitations">Issues and Limitations</a></h2>
+<h3 id="legacy-applications"><a class="header" href="#legacy-applications">Legacy Applications</a></h3>
+<p>Applications not built on TaskChampion 3.0 or later are completely left out, as all iterative functionality is implemented in TaskChampion.</p>
+<p>All applications that haven’t been updated to recognize the Iterative status may hide or mishandle Iterative tasks. The biggest issue is likely to be marking an Iterative task done and then losing it as an iterative task. If that happens, it will disappear from that client's perspective and the iteration never advances. However, TaskWarrior ignores tasks with unknown statuses so this is unlikely to happen.</p>
+<h3 id="scheduling-timezone-and-cross-replica-convergence"><a class="header" href="#scheduling-timezone-and-cross-replica-convergence">Scheduling Timezone and Cross-Replica Convergence</a></h3>
+<p>Schedules are computed in the completing replica's local timezone.</p>
+<p>If two replicas in different timezones complete the same occurrence before syncing, each computes the next occurrence in its own timezone. Because the successor UUID is deterministic, both replicas still produce the same successor task rather than duplicates.</p>
+<p>The successor's <code>due</code>, <code>scheduled</code>, and <code>wait</code> are separate operations, so they are not resolved as a group: each field is resolved independently, in a last-writer-wins system by that operation's own timestamp. In principle this means a successor could take <code>due</code> from one replica and <code>scheduled</code> from another. In practice, this could only happen if the task was simultaneously completed in different timezones in a way that interleaved the completion times.</p>
+<p>Either way the result converges to a single valid successor that self-corrects on the next completion, not duplicate tasks or corruption.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="synchronization-and-the-sync-server"><a class="header" href="#synchronization-and-the-sync-server">Synchronization and the Sync Server</a></h1>
 <p>This section covers <em>synchronization</em> of <em>replicas</em> containing the same set of tasks.
 A replica can perform all operations locally without connecting to a sync server, then share those operations with other replicas when it connects.
