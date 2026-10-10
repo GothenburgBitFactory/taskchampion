@@ -115,3 +115,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: default-features
+          features: sync,storage,storage-indexeddb
