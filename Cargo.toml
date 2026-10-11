@@ -21,7 +21,7 @@ resolver = "2"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["sync", "bundled", "storage", "tls-webpki-roots", "iterative-tasks"]
+default = ["sync", "bundled", "storage", "tls-webpki-roots"]
 
 # Support for all sync solutions
 sync = ["server-sync", "server-gcp", "server-aws", "server-local", "server-git"]
