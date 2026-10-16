@@ -71,7 +71,9 @@ impl Storage for SqliteStorage {
 mod test {
     use super::*;
     use crate::errors::Error;
+    use crate::storage::buffered::test::Buffered;
     use crate::storage::config::AccessMode;
+    use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn};
     use crate::storage::test::GuardedStorage;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -130,5 +132,48 @@ mod test {
         }
 
         Ok(())
+    }
+
+    struct AsWrapped<S>(S);
+
+    #[async_trait(?Send)]
+    impl<S: Storage> WrappedStorage for AsWrapped<S> {
+        async fn txn<'a>(&'a mut self) -> Result<Box<dyn WrappedStorageTxn + 'a>> {
+            Ok(Box::new(self.0.txn().await?))
+        }
+    }
+
+    mod buffered_sqlite_storage {
+        use super::*;
+
+        async fn storage() -> Result<impl Storage> {
+            let tmp_dir = TempDir::new()?;
+            let path = tmp_dir.path().to_path_buf();
+            let storage = Wrapper::new(async move || {
+                let storage = SqliteStorage::new(&path, AccessMode::ReadWrite, true).await?;
+                Ok(Buffered(AsWrapped(storage)))
+            })
+            .await?;
+            Ok(GuardedStorage::new(storage, tmp_dir))
+        }
+
+        crate::storage::test::storage_tests!(storage().await?);
+    }
+
+    mod buffered_sqlite_inner {
+        use super::*;
+
+        async fn storage() -> Result<impl Storage> {
+            let tmp_dir = TempDir::new()?;
+            let path = tmp_dir.path().to_path_buf();
+            let storage = Wrapper::new(async move || {
+                let inner = SqliteStorageInner::new(&path, AccessMode::ReadWrite, true)?;
+                Ok(Buffered(inner))
+            })
+            .await?;
+            Ok(GuardedStorage::new(storage, tmp_dir))
+        }
+
+        crate::storage::test::storage_tests!(storage().await?);
     }
 }

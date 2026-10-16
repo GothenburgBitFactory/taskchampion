@@ -1,6 +1,7 @@
-use super::schema;
+use super::{lock, schema};
 use crate::errors::{Error, Result};
 use crate::operation::Operation;
+use crate::storage::buffered;
 use crate::storage::send_wrapper::{WrappedStorage, WrappedStorageTxn, Wrapper};
 use crate::storage::{Storage, StorageTxn, TaskMap, VersionId, DEFAULT_BASE_VERSION};
 use async_trait::async_trait;
@@ -410,15 +411,36 @@ impl Drop for InnerTxn {
 /// [`StorageManager.persist()`](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/persist)
 /// method to ensure the browser does not discard the database under storage pressure.
 ///
+/// Each transaction holds an exclusive [Web
+/// Lock](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API) named for the database,
+/// so the browser must provide `navigator.locks`, which it does only in a secure context. A panic
+/// while a transaction is open keeps the lock held until the page that panicked is unloaded or the
+/// worker that panicked is terminated.
+///
 /// WARNING: Do not read or write the database except via this storage implementation. Later
 /// versions of this library may change the schema incompatibly. pub struct
 /// IndexedDbStorage(Wrapper);
 pub struct IndexedDbStorage(Wrapper);
 
+struct Locked {
+    inner: Inner,
+    lock_name: String,
+}
+
+#[async_trait(?Send)]
+impl WrappedStorage for Locked {
+    async fn txn<'a>(&'a mut self) -> Result<Box<dyn WrappedStorageTxn + 'a>> {
+        let lock = lock::acquire(self.lock_name.clone()).await?;
+        Ok(Box::new(buffered::Txn::new(&mut self.inner, lock)))
+    }
+}
+
 impl IndexedDbStorage {
     /// Create a new IndexedDbStorage, using the given name for the database.
     pub async fn new(db_name: impl Into<String>) -> Result<IndexedDbStorage> {
+        lock::check_available()?;
         let db_name = db_name.into();
+        let lock_name = format!("taskchampion-{db_name}");
         Ok(IndexedDbStorage(
             Wrapper::new(async move || {
                 let factory = idb::Factory::new()?;
@@ -434,7 +456,10 @@ impl IndexedDbStorage {
                 });
                 let db = open_request.await?;
 
-                Ok(Inner { db })
+                Ok(Locked {
+                    inner: Inner { db },
+                    lock_name,
+                })
             })
             .await?,
         ))
@@ -451,7 +476,14 @@ impl Storage for IndexedDbStorage {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::server::test::TestServer;
+    use crate::server::{
+        AddVersionResult, GetVersionResult, HistorySegment, Server, Snapshot, SnapshotUrgency,
+    };
+    use crate::storage::inmemory::InMemoryStorage;
+    use crate::{Operations, Replica, TaskData};
     use wasm_bindgen_test::*;
+    use web_sys::js_sys::Reflect;
 
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -464,4 +496,94 @@ mod test {
     }
 
     crate::storage::test::storage_tests_wasm!(storage().await);
+
+    const DELAY: i32 = 100;
+
+    async fn timer(ms: i32) {
+        let promise = web_sys::js_sys::Promise::new(&mut |resolve, _reject| {
+            web_sys::window()
+                .expect("window")
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .expect("setTimeout");
+        });
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .expect("timer");
+    }
+
+    async fn assert_timer_ends_transaction() -> Result<()> {
+        let mut open_request =
+            idb::Factory::new()?.open(&Uuid::new_v4().to_string(), Some(schema::DB_VERSION))?;
+        open_request.on_upgrade_needed(|event| {
+            let db = event.database().unwrap();
+            schema::upgrade(db, 0).unwrap()
+        });
+        let db = open_request.await?;
+        let txn = db.transaction(&[schema::TASKS], TransactionMode::ReadOnly)?;
+        timer(DELAY).await;
+        match txn.object_store(schema::TASKS) {
+            Err(idb::Error::ObjectStoreNotFound(e)) => {
+                assert_eq!(
+                    Reflect::get(&e, &"name".into()).unwrap(),
+                    "InvalidStateError"
+                );
+            }
+            other => panic!("expected InvalidStateError, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    struct SlowServer(TestServer);
+
+    #[async_trait(?Send)]
+    impl Server for SlowServer {
+        async fn add_version(
+            &mut self,
+            parent: VersionId,
+            segment: HistorySegment,
+        ) -> Result<(AddVersionResult, SnapshotUrgency)> {
+            timer(DELAY).await;
+            self.0.add_version(parent, segment).await
+        }
+
+        async fn get_child_version(&mut self, parent: VersionId) -> Result<GetVersionResult> {
+            timer(DELAY).await;
+            self.0.get_child_version(parent).await
+        }
+
+        async fn add_snapshot(&mut self, version: VersionId, snapshot: Snapshot) -> Result<()> {
+            timer(DELAY).await;
+            self.0.add_snapshot(version, snapshot).await
+        }
+
+        async fn get_snapshot(&mut self) -> Result<Option<(VersionId, Snapshot)>> {
+            timer(DELAY).await;
+            self.0.get_snapshot().await
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn sync_with_slow_server() -> Result<()> {
+        assert_timer_ends_transaction().await?;
+        let name = Uuid::new_v4().to_string();
+        let server = TestServer::new();
+        let mut rep = Replica::new(IndexedDbStorage::new(&name).await?);
+        let mut ops = Operations::new();
+        for i in 1..4 {
+            let mut t = TaskData::create(Uuid::from_u128(i), &mut ops);
+            t.update("status", Some("pending".into()), &mut ops);
+            t.update("description", Some(format!("task {i}")), &mut ops);
+        }
+        rep.commit_operations(ops).await?;
+        let mut slow: Box<dyn Server> = Box::new(SlowServer(server.clone()));
+        rep.sync(&mut slow, false).await?;
+        assert_eq!(rep.num_local_operations().await?, 0);
+        drop(rep);
+        let mut remote = Replica::new(InMemoryStorage::new());
+        remote.sync(&mut server.server(), false).await?;
+        assert_eq!(remote.all_task_uuids().await?.len(), 3);
+        let mut local = Replica::new(IndexedDbStorage::new(&name).await?);
+        assert_eq!(local.all_task_uuids().await?.len(), 3);
+        Ok(())
+    }
 }

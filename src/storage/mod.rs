@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+#[cfg(any(test, all(target_arch = "wasm32", feature = "storage-indexeddb")))]
+mod buffered;
 mod config;
 #[cfg(all(target_arch = "wasm32", feature = "storage-indexeddb"))]
 pub mod indexeddb;
@@ -27,6 +29,7 @@ mod test;
 pub use config::AccessMode;
 
 #[cfg(any(
+    test,
     feature = "storage-sqlite",
     all(target_arch = "wasm32", feature = "storage-indexeddb")
 ))]
