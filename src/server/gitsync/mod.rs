@@ -759,6 +759,10 @@ impl Server for GitSyncServer {
             Ok(None)
         }
     }
+
+    async fn latest_version_id(&mut self) -> Result<VersionId> {
+        Ok(self.meta.latest_version)
+    }
 }
 
 #[cfg(test)]
@@ -1344,6 +1348,24 @@ mod test {
             result
         );
         server.add_snapshot(v1, b"full state".to_vec()).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_latest_version_id() -> Result<()> {
+        let tmp = TempDir::new()?;
+        let mut server = make_server(tmp.path())?;
+        let parent_version_id = Uuid::new_v4();
+
+        let history = b"1234".to_vec();
+        let AddVersionResult::Ok(version_id) = server
+            .add_version(parent_version_id, history.clone())
+            .await?
+            .0
+        else {
+            panic!("add_version failed");
+        };
+        assert_eq!(server.latest_version_id().await?, version_id);
         Ok(())
     }
 }

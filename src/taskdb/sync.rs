@@ -6,6 +6,7 @@ use crate::Error;
 use log::{info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::str;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Version {
@@ -86,7 +87,26 @@ pub(super) async fn sync(
                     base_version_id = version_id;
                 } else {
                     info!("no child versions of {base_version_id:?}");
-                    // at the moment, no more child versions, so we can try adding our own
+                    // If the local repo is empty, verify that the server is also empty; otherwise
+                    // we have failed to sync.
+                    if base_version_id.is_nil() {
+                        let latest_version_id = match server.latest_version_id().await {
+                            Ok(latest_version_id) => latest_version_id,
+                            Err(Error::ServerUnimplemented) => {
+                                info!("Server does not implement GetLatestVersionId; see https://github.com/GothenburgBitFactory/taskchampion/issues/740");
+                                // Fingers crossed it's empty!
+                                Uuid::nil()
+                            }
+                            Err(e) => return Err(e),
+                        };
+                        if !latest_version_id.is_nil() {
+                            info!(
+                                "local replica is empty, while server has versions but no snapshot"
+                            );
+                            return Err(Error::OutOfSync);
+                        }
+                    }
+                    // There are no more child versions on the server, so we can try adding our own
                     break;
                 }
             }
@@ -750,6 +770,50 @@ mod test {
 
         sync(&mut server, db.storage.txn().await?.as_mut(), true).await?;
         assert_eq!(test_server.versions_len(), 2);
+
+        Ok(())
+    }
+
+    /// Test for a very specific situation:
+    ///  - server has one or more versions that do not chain back to the nil version
+    ///  - server has no snapshot
+    ///  - client is empty
+    ///
+    /// There is special-case code to detect this situation an error when trying to sync, where
+    /// otherwise the client might believe the server to be empty.
+    #[tokio::test]
+    async fn test_sync_no_snapshot() -> Result<()> {
+        let mut testserver = TestServer::new();
+        let mut server: Box<dyn Server> = testserver.server();
+
+        let mut db1 = TaskDb::new(InMemoryStorage::new());
+
+        // Push a version from db1 to the server. This will be the child of the nil version.
+        let mut ops = Operations::new();
+        ops.push(Operation::Create {
+            uuid: Uuid::new_v4(),
+        });
+        db1.commit_operations(ops, |_| false).await?;
+        sync(&mut server, db1.storage.txn().await?.as_mut(), true).await?;
+
+        // Push a second version to the server. This will be a child of the first.
+        let mut ops = Operations::new();
+        ops.push(Operation::Create {
+            uuid: Uuid::new_v4(),
+        });
+        db1.commit_operations(ops, |_| false).await?;
+        sync(&mut server, db1.storage.txn().await?.as_mut(), true).await?;
+
+        // Ensure the server has no snapshot
+        testserver.delete_snapshot();
+
+        // Delete the first version from the server
+        testserver.delete_version(Uuid::nil());
+
+        // Sync another replica to the server.
+        let mut db2 = TaskDb::new(InMemoryStorage::new());
+        let err = sync(&mut server, db2.storage.txn().await?.as_mut(), false).await;
+        assert!(err.is_err());
 
         Ok(())
     }

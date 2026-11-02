@@ -236,6 +236,27 @@ impl Server for SyncServer {
             Err(err) => Err(err.into()),
         }
     }
+
+    async fn latest_version_id(&mut self) -> Result<VersionId> {
+        let url = self.construct_endpoint_url("v1/client/latest-version-id")?;
+        match self
+            .client
+            .get(url)
+            .header("X-Client-Id", &self.client_id.to_string())
+            .send()
+            .await?
+            .error_for_status()
+        {
+            Ok(resp) => {
+                let latest_version_id = get_uuid_header(&resp, "X-Version-Id")?;
+                Ok(latest_version_id)
+            }
+            Err(err) if err.status() == Some(StatusCode::NOT_FOUND) => {
+                Err(Error::ServerUnimplemented)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
 }
 
 // httptest is not available on WASM32, so do not build these tests
@@ -532,6 +553,58 @@ mod test {
         );
         let mut svr = SyncServer::new(server.url("/").to_string(), CLIENT_ID, b"abc".to_vec())?;
         assert!(svr.get_snapshot().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_version_response() -> anyhow::Result<()> {
+        let server = Server::run();
+        let latest_version_id = Uuid::new_v4();
+        server.expect(
+            Expectation::matching(all_of!(
+                request::method_path("GET", "/v1/client/latest-version-id"),
+                request::headers(contains(("x-client-id", CLIENT_ID.to_string()))),
+            ))
+            .respond_with(
+                status_code(200).append_header("x-version-id", latest_version_id.to_string()),
+            ),
+        );
+        let mut svr = SyncServer::new(server.url("/").to_string(), CLIENT_ID, b"abc".to_vec())?;
+        assert_eq!(svr.latest_version_id().await?, latest_version_id,);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_version_not_impl() -> anyhow::Result<()> {
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(all_of!(
+                request::method_path("GET", "/v1/client/latest-version-id"),
+                request::headers(contains(("x-client-id", CLIENT_ID.to_string()))),
+            ))
+            // Older server versions respond with 404 to this path.
+            .respond_with(status_code(404)),
+        );
+        let mut svr = SyncServer::new(server.url("/").to_string(), CLIENT_ID, b"abc".to_vec())?;
+        assert!(matches!(
+            svr.latest_version_id().await.unwrap_err(),
+            Error::ServerUnimplemented
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_version_err() -> anyhow::Result<()> {
+        let server = Server::run();
+        server.expect(
+            Expectation::matching(all_of!(
+                request::method_path("GET", "/v1/client/latest-version-id"),
+                request::headers(contains(("x-client-id", CLIENT_ID.to_string()))),
+            ))
+            .respond_with(status_code(403)),
+        );
+        let mut svr = SyncServer::new(server.url("/").to_string(), CLIENT_ID, b"abc".to_vec())?;
+        assert!(svr.latest_version_id().await.is_err());
         Ok(())
     }
 }
