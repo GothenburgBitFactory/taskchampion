@@ -62,9 +62,11 @@ pub(crate) mod mock_time {
             None => Utc::now(),
         })
     }
+    #[cfg(feature = "iterative-tasks")]
     pub(crate) fn set(t: DateTime<Utc>) {
         T.with(|c| c.set(Some(t.timestamp())));
     }
+    #[cfg(feature = "iterative-tasks")]
     pub(crate) fn reset() {
         T.with(|c| c.set(None));
     }
