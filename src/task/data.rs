@@ -199,6 +199,70 @@ mod test {
     }
 
     #[test]
+    fn getters_defaults() {
+        let t = TaskData::new(TEST_UUID, TaskMap::new());
+        assert_eq!(t.get_status(), crate::Status::Pending);
+        assert_eq!(t.get_description(), "");
+        assert_eq!(t.get_priority(), "");
+        assert_eq!(t.get_entry(), None);
+        assert_eq!(t.get_wait(), None);
+        assert_eq!(t.get_scheduled(), None);
+        assert_eq!(t.get_due(), None);
+        assert_eq!(t.get_modified(), None);
+    }
+
+    #[test]
+    fn getters_values() {
+        let secs = |s: i64| DateTime::<Utc>::from_timestamp(s, 0).unwrap();
+        let t = TaskData::new(
+            TEST_UUID,
+            [
+                ("status", "completed"),
+                ("description", "a task"),
+                ("priority", "H"),
+                ("entry", "1631649600"),
+                ("wait", "1631649601"),
+                ("scheduled", "1631649602"),
+                ("due", "1631649603"),
+                ("modified", "1631649604"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        );
+        assert_eq!(t.get_status(), crate::Status::Completed);
+        assert_eq!(t.get_description(), "a task");
+        assert_eq!(t.get_priority(), "H");
+        assert_eq!(t.get_entry(), Some(secs(1631649600)));
+        assert_eq!(t.get_wait(), Some(secs(1631649601)));
+        assert_eq!(t.get_scheduled(), Some(secs(1631649602)));
+        assert_eq!(t.get_due(), Some(secs(1631649603)));
+        assert_eq!(t.get_modified(), Some(secs(1631649604)));
+    }
+
+    #[test]
+    fn getters_invalid_timestamp() {
+        let t = TaskData::new(
+            TEST_UUID,
+            [
+                ("entry", "not-a-number"),
+                ("wait", "not-a-number"),
+                ("scheduled", "not-a-number"),
+                ("due", "not-a-number"),
+                ("modified", "not-a-number"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        );
+        assert_eq!(t.get_entry(), None);
+        assert_eq!(t.get_wait(), None);
+        assert_eq!(t.get_scheduled(), None);
+        assert_eq!(t.get_due(), None);
+        assert_eq!(t.get_modified(), None);
+    }
+
+    #[test]
     fn update_new_prop() {
         let mut ops = Operations::new();
         let mut t = TaskData::new(TEST_UUID, TaskMap::new());
