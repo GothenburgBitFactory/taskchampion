@@ -157,8 +157,11 @@ impl<S: Storage> TaskDb<S> {
     /// Commit the reverse of the given operations, beginning with the last operation in the given
     /// operations and proceeding to the first.
     ///
-    /// This method only supports reversing operations if they precisely match local operations
-    /// that have not yet been synchronized, and will return `false` if this is not the case.
+    /// If the given operations are exactly the most recent un-synchronized local operations, they
+    /// are removed and their effect reversed. Otherwise a fresh reversed operation is generated for
+    /// each and committed. In either case this returns `false` without making any change if a
+    /// reversal cannot be applied cleanly (a reversed Create whose task is absent, a reversed
+    /// Delete whose task still exists, or a reversed Update whose current value does not match).
     pub(crate) async fn commit_reversed_operations(
         &mut self,
         undo_ops: Operations,
