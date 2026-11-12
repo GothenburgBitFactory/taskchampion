@@ -1,3 +1,5 @@
+use super::task::Prop;
+use super::{utc_timestamp, Status, Timestamp};
 use crate::{storage::TaskMap, Operation, Operations};
 use chrono::Utc;
 use uuid::Uuid;
@@ -63,6 +65,63 @@ impl TaskData {
     /// Enumerate all properties and their values on this task, in arbitrary order.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
         self.taskmap.iter()
+    }
+
+    /// Get the status of this task. This defaults to `Pending` if no status is set.
+    pub fn get_status(&self) -> Status {
+        self.get(Prop::Status.as_ref())
+            .map(Status::from_taskmap)
+            .unwrap_or(Status::Pending)
+    }
+
+    /// Get the description of this task. This is an empty string if no description is set.
+    pub fn get_description(&self) -> &str {
+        self.get(Prop::Description.as_ref()).unwrap_or("")
+    }
+
+    /// Get the entry time for this task.
+    pub fn get_entry(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Entry.as_ref())
+    }
+
+    /// Get the priority of this task. This is an empty string if no priority is set.
+    pub fn get_priority(&self) -> &str {
+        self.get(Prop::Priority.as_ref()).unwrap_or("")
+    }
+
+    /// Get the wait time.  If this value is set, it will be returned, even
+    /// if it is in the past.
+    pub fn get_wait(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Wait.as_ref())
+    }
+
+    /// Get the scheduled time a task can be started.
+    pub fn get_scheduled(&self) -> Option<Timestamp> {
+        self.get_timestamp("scheduled")
+    }
+
+    /// Get the modification time for this task.
+    pub fn get_modified(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Modified.as_ref())
+    }
+
+    /// Get the due time for this task.
+    pub fn get_due(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Due.as_ref())
+    }
+
+    /// Get the given timestamp property.
+    ///
+    /// This will return `None` if the property is not set, or if it is not a valid
+    /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
+    pub(in crate::task) fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
+        if let Some(ts) = self.get(property) {
+            if let Ok(ts) = ts.parse() {
+                return Some(utc_timestamp(ts));
+            }
+            // if the value does not parse as an integer, default to None
+        }
+        None
     }
 
     /// Set or remove a value on this task, adding an Update operation to the

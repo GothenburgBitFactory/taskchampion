@@ -62,7 +62,7 @@ impl PartialEq for Task {
 /// of the properties containing data (`tag_..`, etc.)
 #[derive(strum_macros::AsRefStr, strum_macros::EnumString)]
 #[strum(serialize_all = "kebab-case")]
-enum Prop {
+pub(super) enum Prop {
     Description,
     Due,
     Modified,
