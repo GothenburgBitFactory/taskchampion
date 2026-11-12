@@ -128,6 +128,43 @@ impl Task {
         self.data.get_taskmap()
     }
 
+    pub fn get_status(&self) -> Status {
+        self.data.get_status()
+    }
+
+    pub fn get_description(&self) -> &str {
+        self.data.get_description()
+    }
+
+    pub fn get_entry(&self) -> Option<Timestamp> {
+        self.data.get_entry()
+    }
+
+    pub fn get_priority(&self) -> &str {
+        self.data.get_priority()
+    }
+
+    /// Get the wait time.  If this value is set, it will be returned, even
+    /// if it is in the past.
+    pub fn get_wait(&self) -> Option<Timestamp> {
+        self.data.get_wait()
+    }
+
+    /// Get the scheduled time a task can be started.
+    pub fn get_scheduled(&self) -> Option<Timestamp> {
+        self.data.get_scheduled()
+    }
+
+    /// Get the modification time for this task.
+    pub fn get_modified(&self) -> Option<Timestamp> {
+        self.data.get_modified()
+    }
+
+    /// Get the due time for this task.
+    pub fn get_due(&self) -> Option<Timestamp> {
+        self.data.get_due()
+    }
+
     /// Determine whether this task is waiting now.
     pub fn is_waiting(&self) -> bool {
         if let Some(ts) = self.get_wait() {
