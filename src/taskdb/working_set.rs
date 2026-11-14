@@ -40,7 +40,9 @@ where
             }
         } else {
             // This item was already None.
-            new_ws.push(None);
+            if !renumber {
+                new_ws.push(None);
+            }
         }
     }
 
@@ -287,6 +289,62 @@ mod test {
         .await?;
 
         assert_eq!(db.working_set().await?, vec![None, Some(uuids[0])]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuild_working_renumber_removes_holes() -> Result<()> {
+        let mut db = TaskDb::new(InMemoryStorage::new());
+
+        let mut uuids = vec![];
+        uuids.push(Uuid::new_v4());
+        println!("uuids[0]: {:?} - not pending, in working set", uuids[0]);
+        uuids.push(Uuid::new_v4());
+        println!("uuids[1]: {:?} - not pending, in working set", uuids[1]);
+        uuids.push(Uuid::new_v4());
+        println!("uuids[2]: {:?} - pending, in working set", uuids[2]);
+
+        // add everything to the TaskDb
+        let mut ops = Operations::new();
+        for uuid in &uuids {
+            ops.push(Operation::Create { uuid: *uuid });
+        }
+        ops.push(Operation::Update {
+            uuid: uuids[2],
+            property: String::from("status"),
+            value: Some("pending".into()),
+            old_value: None,
+            timestamp: Utc::now(),
+        });
+        db.commit_operations(ops, |_| false).await?;
+
+        // set the existing working_set as we want it, with only uuids[2] at position 3
+        {
+            let mut txn = db.storage.txn().await?;
+            txn.clear_working_set().await?;
+
+            for uuid in &uuids {
+                txn.add_to_working_set(*uuid).await?;
+            }
+            txn.set_working_set_item(1, None).await?;
+            txn.set_working_set_item(2, None).await?;
+
+            txn.commit().await?;
+        }
+        rebuild(
+            db.storage.txn().await?.as_mut(),
+            |t| {
+                if let Some(status) = t.get("status") {
+                    status == "pending"
+                } else {
+                    false
+                }
+            },
+            true,
+        )
+        .await?;
+
+        assert_eq!(db.working_set().await?, vec![None, Some(uuids[2])]);
         Ok(())
     }
 }
