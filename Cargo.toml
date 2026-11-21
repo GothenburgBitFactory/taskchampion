@@ -79,7 +79,6 @@ additional-targets = ["wasm32-unknown-unknown"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1.89"
-byteorder = "1.5"
 chrono = { version = "^0.4.44", features = ["serde"] }
 flate2 = "1"
 serde_with = { version = "3.20.0", features = ["base64"], optional = true }
