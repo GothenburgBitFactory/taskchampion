@@ -62,7 +62,7 @@ impl PartialEq for Task {
 /// of the properties containing data (`tag_..`, etc.)
 #[derive(strum_macros::AsRefStr, strum_macros::EnumString)]
 #[strum(serialize_all = "kebab-case")]
-enum Prop {
+pub(super) enum Prop {
     Description,
     Due,
     Modified,
@@ -96,6 +96,14 @@ fn uda_tuple_to_string(namespace: impl AsRef<str>, key: impl AsRef<str>) -> Stri
     }
 }
 
+impl std::ops::Deref for Task {
+    type Target = TaskData;
+
+    fn deref(&self) -> &TaskData {
+        &self.data
+    }
+}
+
 impl Task {
     pub(crate) fn new(data: TaskData, depmap: Arc<DependencyMap>) -> Task {
         Task {
@@ -121,33 +129,40 @@ impl Task {
     }
 
     pub fn get_status(&self) -> Status {
-        self.data
-            .get(Prop::Status.as_ref())
-            .map(Status::from_taskmap)
-            .unwrap_or(Status::Pending)
+        self.data.get_status()
     }
 
     pub fn get_description(&self) -> &str {
-        self.data.get(Prop::Description.as_ref()).unwrap_or("")
+        self.data.get_description()
     }
 
     pub fn get_entry(&self) -> Option<Timestamp> {
-        self.get_timestamp(Prop::Entry.as_ref())
+        self.data.get_entry()
     }
 
     pub fn get_priority(&self) -> &str {
-        self.data.get(Prop::Priority.as_ref()).unwrap_or("")
+        self.data.get_priority()
     }
 
     /// Get the wait time.  If this value is set, it will be returned, even
     /// if it is in the past.
     pub fn get_wait(&self) -> Option<Timestamp> {
-        self.get_timestamp(Prop::Wait.as_ref())
+        self.data.get_wait()
     }
 
     /// Get the scheduled time a task can be started.
     pub fn get_scheduled(&self) -> Option<Timestamp> {
-        self.get_timestamp("scheduled")
+        self.data.get_scheduled()
+    }
+
+    /// Get the modification time for this task.
+    pub fn get_modified(&self) -> Option<Timestamp> {
+        self.data.get_modified()
+    }
+
+    /// Get the due time for this task.
+    pub fn get_due(&self) -> Option<Timestamp> {
+        self.data.get_due()
     }
 
     /// Determine whether this task is waiting now.
@@ -290,16 +305,6 @@ impl Task {
             .iter()
             .filter(|(p, _)| !Task::is_known_key(p))
             .map(|(p, v)| (p.as_ref(), v.as_ref()))
-    }
-
-    /// Get the modification time for this task.
-    pub fn get_modified(&self) -> Option<Timestamp> {
-        self.get_timestamp(Prop::Modified.as_ref())
-    }
-
-    /// Get the due time for this task.
-    pub fn get_due(&self) -> Option<Timestamp> {
-        self.get_timestamp(Prop::Due.as_ref())
     }
 
     /// Get the UUIDs of tasks on which this task depends.
@@ -860,13 +865,7 @@ impl Task {
     /// This will return `None` if the property is not set, or if it is not a valid
     /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
     pub fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
-        if let Some(ts) = self.data.get(property) {
-            if let Ok(ts) = ts.parse() {
-                return Some(utc_timestamp(ts));
-            }
-            // if the value does not parse as an integer, default to None
-        }
-        None
+        self.data.get_timestamp(property)
     }
 
     /// Set the given timestamp property, mapping the value correctly.
@@ -948,6 +947,19 @@ mod test {
     /// Create a synthetic tag
     fn stag(synth: SyntheticTag) -> Tag {
         Tag::from_inner(TagInner::Synthetic(synth))
+    }
+
+    #[test]
+    fn test_deref_to_task_data() {
+        let mut taskmap = TaskMap::new();
+        taskmap.insert("description".into(), "foo".into());
+        let data = TaskData::new(Uuid::new_v4(), taskmap);
+        let task = Task::new(data.clone(), dm());
+
+        // A Task derefs to its TaskData, and the getters work through it.
+        let deref: &TaskData = &task;
+        assert_eq!(deref, &data);
+        assert_eq!(task.get_description(), "foo");
     }
 
     #[test]

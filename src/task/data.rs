@@ -1,3 +1,5 @@
+use super::task::Prop;
+use super::{utc_timestamp, Status, Timestamp};
 use crate::{storage::TaskMap, Operation, Operations};
 use chrono::Utc;
 use uuid::Uuid;
@@ -63,6 +65,63 @@ impl TaskData {
     /// Enumerate all properties and their values on this task, in arbitrary order.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
         self.taskmap.iter()
+    }
+
+    /// Get the status of this task. This defaults to `Pending` if no status is set.
+    pub fn get_status(&self) -> Status {
+        self.get(Prop::Status.as_ref())
+            .map(Status::from_taskmap)
+            .unwrap_or(Status::Pending)
+    }
+
+    /// Get the description of this task. This is an empty string if no description is set.
+    pub fn get_description(&self) -> &str {
+        self.get(Prop::Description.as_ref()).unwrap_or("")
+    }
+
+    /// Get the entry time for this task.
+    pub fn get_entry(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Entry.as_ref())
+    }
+
+    /// Get the priority of this task. This is an empty string if no priority is set.
+    pub fn get_priority(&self) -> &str {
+        self.get(Prop::Priority.as_ref()).unwrap_or("")
+    }
+
+    /// Get the wait time.  If this value is set, it will be returned, even
+    /// if it is in the past.
+    pub fn get_wait(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Wait.as_ref())
+    }
+
+    /// Get the scheduled time a task can be started.
+    pub fn get_scheduled(&self) -> Option<Timestamp> {
+        self.get_timestamp("scheduled")
+    }
+
+    /// Get the modification time for this task.
+    pub fn get_modified(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Modified.as_ref())
+    }
+
+    /// Get the due time for this task.
+    pub fn get_due(&self) -> Option<Timestamp> {
+        self.get_timestamp(Prop::Due.as_ref())
+    }
+
+    /// Get the given timestamp property.
+    ///
+    /// This will return `None` if the property is not set, or if it is not a valid
+    /// timestamp. Otherwise, a correctly parsed Timestamp is returned.
+    pub(in crate::task) fn get_timestamp(&self, property: &str) -> Option<Timestamp> {
+        if let Some(ts) = self.get(property) {
+            if let Ok(ts) = ts.parse() {
+                return Some(utc_timestamp(ts));
+            }
+            // if the value does not parse as an integer, default to None
+        }
+        None
     }
 
     /// Set or remove a value on this task, adding an Update operation to the
@@ -196,6 +255,70 @@ mod test {
         let mut props: Vec<_> = t.iter().map(|(p, v)| (p.as_str(), v.as_str())).collect();
         props.sort();
         assert_eq!(props, vec![("prop1", "val1"), ("prop2", "val2")]);
+    }
+
+    #[test]
+    fn getters_defaults() {
+        let t = TaskData::new(TEST_UUID, TaskMap::new());
+        assert_eq!(t.get_status(), crate::Status::Pending);
+        assert_eq!(t.get_description(), "");
+        assert_eq!(t.get_priority(), "");
+        assert_eq!(t.get_entry(), None);
+        assert_eq!(t.get_wait(), None);
+        assert_eq!(t.get_scheduled(), None);
+        assert_eq!(t.get_due(), None);
+        assert_eq!(t.get_modified(), None);
+    }
+
+    #[test]
+    fn getters_values() {
+        let secs = |s: i64| DateTime::<Utc>::from_timestamp(s, 0).unwrap();
+        let t = TaskData::new(
+            TEST_UUID,
+            [
+                ("status", "completed"),
+                ("description", "a task"),
+                ("priority", "H"),
+                ("entry", "1631649600"),
+                ("wait", "1631649601"),
+                ("scheduled", "1631649602"),
+                ("due", "1631649603"),
+                ("modified", "1631649604"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        );
+        assert_eq!(t.get_status(), crate::Status::Completed);
+        assert_eq!(t.get_description(), "a task");
+        assert_eq!(t.get_priority(), "H");
+        assert_eq!(t.get_entry(), Some(secs(1631649600)));
+        assert_eq!(t.get_wait(), Some(secs(1631649601)));
+        assert_eq!(t.get_scheduled(), Some(secs(1631649602)));
+        assert_eq!(t.get_due(), Some(secs(1631649603)));
+        assert_eq!(t.get_modified(), Some(secs(1631649604)));
+    }
+
+    #[test]
+    fn getters_invalid_timestamp() {
+        let t = TaskData::new(
+            TEST_UUID,
+            [
+                ("entry", "not-a-number"),
+                ("wait", "not-a-number"),
+                ("scheduled", "not-a-number"),
+                ("due", "not-a-number"),
+                ("modified", "not-a-number"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        );
+        assert_eq!(t.get_entry(), None);
+        assert_eq!(t.get_wait(), None);
+        assert_eq!(t.get_scheduled(), None);
+        assert_eq!(t.get_due(), None);
+        assert_eq!(t.get_modified(), None);
     }
 
     #[test]
